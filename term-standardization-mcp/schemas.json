@@ -1,0 +1,515 @@
+{
+  "TermInput": {
+    "additionalProperties": false,
+    "properties": {
+      "term": {
+        "maxLength": 200,
+        "minLength": 1,
+        "title": "Term",
+        "type": "string"
+      }
+    },
+    "required": [
+      "term"
+    ],
+    "title": "TermInput",
+    "type": "object"
+  },
+  "SearchInput": {
+    "additionalProperties": false,
+    "properties": {
+      "term": {
+        "maxLength": 200,
+        "minLength": 1,
+        "title": "Term",
+        "type": "string"
+      },
+      "definition": {
+        "default": "",
+        "maxLength": 4000,
+        "title": "Definition",
+        "type": "string"
+      },
+      "limit": {
+        "default": 10,
+        "maximum": 30,
+        "minimum": 1,
+        "title": "Limit",
+        "type": "integer"
+      }
+    },
+    "required": [
+      "term"
+    ],
+    "title": "SearchInput",
+    "type": "object"
+  },
+  "Violation": {
+    "additionalProperties": false,
+    "properties": {
+      "code": {
+        "title": "Code",
+        "type": "string"
+      },
+      "reason": {
+        "title": "Reason",
+        "type": "string"
+      }
+    },
+    "required": [
+      "code",
+      "reason"
+    ],
+    "title": "Violation",
+    "type": "object"
+  },
+  "ValidationResult": {
+    "$defs": {
+      "Violation": {
+        "additionalProperties": false,
+        "properties": {
+          "code": {
+            "title": "Code",
+            "type": "string"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "reason"
+        ],
+        "title": "Violation",
+        "type": "object"
+      }
+    },
+    "additionalProperties": false,
+    "properties": {
+      "valid": {
+        "title": "Valid",
+        "type": "boolean"
+      },
+      "normalized_term": {
+        "title": "Normalized Term",
+        "type": "string"
+      },
+      "violations": {
+        "items": {
+          "$ref": "#/$defs/Violation"
+        },
+        "title": "Violations",
+        "type": "array"
+      },
+      "suggestions": {
+        "items": {
+          "type": "string"
+        },
+        "title": "Suggestions",
+        "type": "array"
+      },
+      "morphemes": {
+        "items": {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        "title": "Morphemes",
+        "type": "array"
+      }
+    },
+    "required": [
+      "valid",
+      "normalized_term",
+      "violations",
+      "suggestions",
+      "morphemes"
+    ],
+    "title": "ValidationResult",
+    "type": "object"
+  },
+  "Candidate": {
+    "additionalProperties": false,
+    "properties": {
+      "term_id": {
+        "title": "Term Id",
+        "type": "string"
+      },
+      "name": {
+        "title": "Name",
+        "type": "string"
+      },
+      "definition": {
+        "title": "Definition",
+        "type": "string"
+      },
+      "domain": {
+        "title": "Domain",
+        "type": "string"
+      },
+      "source": {
+        "default": "",
+        "title": "Source",
+        "type": "string"
+      },
+      "synonyms": {
+        "items": {
+          "type": "string"
+        },
+        "title": "Synonyms",
+        "type": "array"
+      },
+      "similarity": {
+        "anyOf": [
+          {
+            "type": "number"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Similarity"
+      },
+      "evidence_type": {
+        "default": "",
+        "title": "Evidence Type",
+        "type": "string"
+      }
+    },
+    "required": [
+      "term_id",
+      "name",
+      "definition",
+      "domain"
+    ],
+    "title": "Candidate",
+    "type": "object"
+  },
+  "SearchResult": {
+    "$defs": {
+      "Candidate": {
+        "additionalProperties": false,
+        "properties": {
+          "term_id": {
+            "title": "Term Id",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "definition": {
+            "title": "Definition",
+            "type": "string"
+          },
+          "domain": {
+            "title": "Domain",
+            "type": "string"
+          },
+          "source": {
+            "default": "",
+            "title": "Source",
+            "type": "string"
+          },
+          "synonyms": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Synonyms",
+            "type": "array"
+          },
+          "similarity": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Similarity"
+          },
+          "evidence_type": {
+            "default": "",
+            "title": "Evidence Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "term_id",
+          "name",
+          "definition",
+          "domain"
+        ],
+        "title": "Candidate",
+        "type": "object"
+      }
+    },
+    "additionalProperties": false,
+    "properties": {
+      "match_type": {
+        "enum": [
+          "EXACT_MATCH",
+          "SYNONYM_MATCH",
+          "SEMANTIC_SIMILAR",
+          "NEW_TERM",
+          "UNDETERMINED"
+        ],
+        "title": "Match Type",
+        "type": "string"
+      },
+      "query_term": {
+        "title": "Query Term",
+        "type": "string"
+      },
+      "exact_matches": {
+        "items": {
+          "$ref": "#/$defs/Candidate"
+        },
+        "title": "Exact Matches",
+        "type": "array"
+      },
+      "synonym_matches": {
+        "items": {
+          "$ref": "#/$defs/Candidate"
+        },
+        "title": "Synonym Matches",
+        "type": "array"
+      },
+      "semantic_matches": {
+        "items": {
+          "$ref": "#/$defs/Candidate"
+        },
+        "title": "Semantic Matches",
+        "type": "array"
+      },
+      "lexical_matches": {
+        "items": {
+          "$ref": "#/$defs/Candidate"
+        },
+        "title": "Lexical Matches",
+        "type": "array"
+      },
+      "candidates": {
+        "items": {
+          "$ref": "#/$defs/Candidate"
+        },
+        "title": "Candidates",
+        "type": "array"
+      },
+      "search_complete": {
+        "default": true,
+        "title": "Search Complete",
+        "type": "boolean"
+      },
+      "corpus_count": {
+        "default": 0,
+        "title": "Corpus Count",
+        "type": "integer"
+      },
+      "warnings": {
+        "items": {
+          "type": "string"
+        },
+        "title": "Warnings",
+        "type": "array"
+      }
+    },
+    "required": [
+      "match_type",
+      "query_term"
+    ],
+    "title": "SearchResult",
+    "type": "object"
+  },
+  "DefinitionJudgment": {
+    "additionalProperties": false,
+    "properties": {
+      "relation": {
+        "enum": [
+          "SAME_MEANING",
+          "RELATED_BUT_DISTINCT",
+          "DISTINCT",
+          "UNCERTAIN"
+        ],
+        "title": "Relation",
+        "type": "string"
+      },
+      "confidence": {
+        "maximum": 1,
+        "minimum": 0,
+        "title": "Confidence",
+        "type": "number"
+      },
+      "reason": {
+        "title": "Reason",
+        "type": "string"
+      },
+      "differences": {
+        "items": {
+          "type": "string"
+        },
+        "title": "Differences",
+        "type": "array"
+      }
+    },
+    "required": [
+      "relation",
+      "confidence",
+      "reason",
+      "differences"
+    ],
+    "title": "DefinitionJudgment",
+    "type": "object"
+  },
+  "ComparisonResult": {
+    "additionalProperties": false,
+    "properties": {
+      "relation": {
+        "enum": [
+          "SAME_MEANING",
+          "RELATED_BUT_DISTINCT",
+          "DISTINCT",
+          "UNCERTAIN"
+        ],
+        "title": "Relation",
+        "type": "string"
+      },
+      "confidence": {
+        "maximum": 1,
+        "minimum": 0,
+        "title": "Confidence",
+        "type": "number"
+      },
+      "reason": {
+        "title": "Reason",
+        "type": "string"
+      },
+      "differences": {
+        "items": {
+          "type": "string"
+        },
+        "title": "Differences",
+        "type": "array"
+      },
+      "existing_term_id": {
+        "title": "Existing Term Id",
+        "type": "string"
+      },
+      "recommended_action": {
+        "enum": [
+          "USE_EXISTING",
+          "CREATE_NEW",
+          "REVIEW_REQUIRED"
+        ],
+        "title": "Recommended Action",
+        "type": "string"
+      },
+      "method": {
+        "title": "Method",
+        "type": "string"
+      },
+      "model": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Model"
+      },
+      "definition_similarity": {
+        "anyOf": [
+          {
+            "type": "number"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Definition Similarity"
+      },
+      "error_code": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Error Code"
+      }
+    },
+    "required": [
+      "relation",
+      "confidence",
+      "reason",
+      "differences",
+      "existing_term_id",
+      "recommended_action",
+      "method"
+    ],
+    "title": "ComparisonResult",
+    "type": "object"
+  },
+  "RegistrationInput": {
+    "additionalProperties": false,
+    "properties": {
+      "term_name": {
+        "maxLength": 20,
+        "minLength": 2,
+        "title": "Term Name",
+        "type": "string"
+      },
+      "definition": {
+        "maxLength": 4000,
+        "minLength": 5,
+        "title": "Definition",
+        "type": "string"
+      },
+      "domain": {
+        "maxLength": 100,
+        "minLength": 1,
+        "title": "Domain",
+        "type": "string"
+      },
+      "synonyms": {
+        "items": {
+          "type": "string"
+        },
+        "maxItems": 30,
+        "title": "Synonyms",
+        "type": "array"
+      },
+      "requester": {
+        "maxLength": 200,
+        "minLength": 1,
+        "title": "Requester",
+        "type": "string"
+      },
+      "conversation_id": {
+        "maxLength": 200,
+        "minLength": 1,
+        "title": "Conversation Id",
+        "type": "string"
+      }
+    },
+    "required": [
+      "term_name",
+      "definition",
+      "domain",
+      "requester",
+      "conversation_id"
+    ],
+    "title": "RegistrationInput",
+    "type": "object"
+  }
+}

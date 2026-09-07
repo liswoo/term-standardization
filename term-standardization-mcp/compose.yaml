@@ -1,0 +1,20 @@
+name: term-standardization
+services:
+  database:
+    image: pgvector/pgvector:pg17
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: terms
+      POSTGRES_DB: terms
+      POSTGRES_PASSWORD: ${TERM_DB_PASSWORD:?Set TERM_DB_PASSWORD in .env}
+    ports:
+      - "127.0.0.1:55432:5432"
+    volumes:
+      - terms_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U terms -d terms"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+volumes:
+  terms_data:

@@ -1,0 +1,253 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>데이터 용어 표준화 플랫폼</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+<div class="app-shell">
+
+  <!-- 좌측 사이드바 -->
+  <aside class="sidebar">
+    <div class="sidebar-brand">
+      <div class="brand-mark">DG</div>
+      <div class="brand-text">
+        <strong>데이터 용어 표준화</strong>
+        <span>메타데이터 관리 시스템</span>
+      </div>
+    </div>
+
+    <nav class="sidebar-nav">
+      <div class="nav-section-label">모니터링</div>
+      <button class="nav-item is-active" data-view="dashboard">
+        <svg viewBox="0 0 24 24"><path d="M3 13h4v8H3zM10 3h4v18h-4zM17 8h4v13h-4z"/></svg>
+        <span>대시보드</span>
+      </button>
+
+      <div class="nav-section-label">메타데이터 관리</div>
+      <button class="nav-item" data-view="terms">
+        <svg viewBox="0 0 24 24"><path d="M4 4h16v3H4zM4 10.5h16v3H4zM4 17h10v3H4z"/></svg>
+        <span>용어 사전</span>
+      </button>
+      <button class="nav-item" data-view="domains">
+        <svg viewBox="0 0 24 24"><path d="M12 2 2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg>
+        <span>도메인 관리</span>
+      </button>
+      <button class="nav-item" data-view="history">
+        <svg viewBox="0 0 24 24"><path d="M12 2a10 10 0 1 0 10 10h-3a7 7 0 1 1-2-4.9L14 10h7V3l-2.6 2.6A10 10 0 0 0 12 2z"/></svg>
+        <span>표준화 이력</span>
+      </button>
+
+      <div class="nav-section-label">환경설정</div>
+      <button class="nav-item" data-view="settings">
+        <svg viewBox="0 0 24 24"><path d="M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8zM19 12a7 7 0 0 0-.1-1.2l2-1.6-2-3.4-2.4 1a7 7 0 0 0-2-1.2L14 2h-4l-.5 2.6a7 7 0 0 0-2 1.2l-2.4-1-2 3.4 2 1.6A7 7 0 0 0 5 12c0 .4 0 .8.1 1.2l-2 1.6 2 3.4 2.4-1a7 7 0 0 0 2 1.2L10 22h4l.5-2.6a7 7 0 0 0 2-1.2l2.4 1 2-3.4-2-1.6c.1-.4.1-.8.1-1.2z"/></svg>
+        <span>설정</span>
+      </button>
+      <button class="nav-item" id="dify-studio-nav-btn" type="button" title="새 창에서 Dify 관리자 콘솔이 열립니다 (Dify 계정 로그인 필요)">
+        <svg viewBox="0 0 24 24"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6M15 3h6v6M10 14 21 3"/></svg>
+        <span>Dify 관리자</span>
+      </button>
+    </nav>
+
+    <div class="sidebar-footer">
+      <div class="user-chip">
+        <div class="user-avatar">우</div>
+        <div class="user-meta">
+          <strong>우종민</strong>
+          <span>데이터 거버넌스팀</span>
+        </div>
+      </div>
+    </div>
+  </aside>
+
+  <!-- 메인 영역 -->
+  <div class="main-area">
+
+    <header class="topbar">
+      <div class="topbar-title">
+        <h1 id="view-title">대시보드</h1>
+        <p id="view-subtitle">용어 표준화 현황을 한눈에 확인하세요</p>
+      </div>
+      <div class="topbar-actions">
+        <div class="search-box">
+          <svg viewBox="0 0 24 24"><path d="M21 21l-4.35-4.35M18 11a7 7 0 1 1-14 0 7 7 0 0 1 14 0z"/></svg>
+          <input type="text" placeholder="용어, 도메인 검색..." />
+        </div>
+        <button class="btn btn-primary" id="open-register-btn">
+          <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
+          신규 용어 등록
+        </button>
+      </div>
+    </header>
+
+    <main class="content">
+
+      <!-- 대시보드 -->
+      <section class="view" id="view-dashboard">
+        <div class="stat-grid">
+          <div class="stat-card">
+            <span class="stat-label">등록된 표준 용어</span>
+            <strong class="stat-value" id="stat-total-terms">128</strong>
+            <span class="stat-delta up">▲ 12 이번 달</span>
+          </div>
+          <div class="stat-card">
+            <span class="stat-label">관리 도메인</span>
+            <strong class="stat-value">6</strong>
+            <span class="stat-delta neutral">변동 없음</span>
+          </div>
+          <div class="stat-card">
+            <span class="stat-label">검토 대기</span>
+            <strong class="stat-value">4</strong>
+            <span class="stat-delta warn">▲ 2 신규</span>
+          </div>
+          <div class="stat-card">
+            <span class="stat-label">챗봇 등록 처리</span>
+            <strong class="stat-value" id="stat-chat-registered">0</strong>
+            <span class="stat-delta neutral">이번 세션</span>
+          </div>
+        </div>
+
+        <div class="panel-grid">
+          <div class="panel">
+            <div class="panel-header">
+              <h2>도메인별 용어 분포</h2>
+            </div>
+            <div class="domain-bars" id="domain-bars"></div>
+          </div>
+
+          <div class="panel">
+            <div class="panel-header">
+              <h2>최근 등록 활동</h2>
+            </div>
+            <ul class="activity-list" id="activity-list"></ul>
+          </div>
+        </div>
+      </section>
+
+      <!-- 용어 사전 -->
+      <section class="view" id="view-terms" hidden>
+        <div class="panel">
+          <div class="panel-header panel-header-row">
+            <h2>표준 용어 사전</h2>
+            <span class="pill" id="term-count-pill">0건</span>
+          </div>
+          <div class="table-wrap">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>표준 용어명</th>
+                  <th>영문 약어</th>
+                  <th>정의</th>
+                  <th>도메인</th>
+                  <th>동의어</th>
+                  <th>상태</th>
+                  <th>등록일</th>
+                </tr>
+              </thead>
+              <tbody id="terms-tbody"></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <!-- 도메인 관리 -->
+      <section class="view" id="view-domains" hidden>
+        <div class="domain-grid" id="domain-grid"></div>
+      </section>
+
+      <!-- 표준화 이력 -->
+      <section class="view" id="view-history" hidden>
+        <div class="panel">
+          <div class="panel-header">
+            <h2>표준화 파이프라인 실행 이력</h2>
+            <p class="muted">챗봇을 통해 처리된 형태소분석 → 벡터검색 → RDB검색 → 신규등록 파이프라인 기록입니다.</p>
+          </div>
+          <ul class="history-list" id="history-list">
+            <li class="empty-state">아직 처리된 이력이 없습니다. 우측 하단 챗봇으로 용어를 등록해보세요.</li>
+          </ul>
+        </div>
+      </section>
+
+      <!-- 설정 (목업) -->
+      <section class="view" id="view-settings" hidden>
+        <div class="panel">
+          <div class="panel-header"><h2>연동 설정</h2></div>
+          <div class="settings-row">
+            <div>
+              <strong>Dify Chatflow 엔드포인트</strong>
+              <p class="muted">용어표준화-대화형(시나리오) 앱의 실제 백엔드 API 주소</p>
+            </div>
+            <code class="mono">http://localhost/v1/chat-messages</code>
+          </div>
+          <div class="settings-row">
+            <div>
+              <strong>연동 상태</strong>
+              <p class="muted">챗봇 메시지 전송 시 실시간으로 확인됩니다</p>
+            </div>
+            <span class="status-dot" id="api-status-dot">● 확인 전</span>
+          </div>
+          <div class="settings-row">
+            <div>
+              <strong>Dify 관리자 콘솔</strong>
+              <p class="muted">워크플로우·API 키 등을 직접 편집하는 관리자 화면입니다. Dify 계정 로그인이 필요합니다.</p>
+            </div>
+            <button class="btn btn-primary" id="open-dify-studio-btn" type="button">
+              <svg viewBox="0 0 24 24"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6M15 3h6v6M10 14 21 3"/></svg>
+              열기
+            </button>
+          </div>
+        </div>
+      </section>
+
+    </main>
+  </div>
+
+  <!-- 챗봇 -->
+  <button class="chat-fab" id="chat-fab" aria-label="용어 표준화 어시스턴트 열기">
+    <svg viewBox="0 0 24 24"><path d="M4 4h16v12H7l-3 3z"/></svg>
+  </button>
+
+  <aside class="chat-panel" id="chat-panel">
+    <header class="chat-header">
+      <div class="chat-header-title">
+        <div class="chat-avatar">AI</div>
+        <div>
+          <strong>용어 표준화 어시스턴트</strong>
+          <span id="chat-status">● 대기 중</span>
+        </div>
+      </div>
+      <button class="chat-close" id="chat-close" aria-label="닫기">
+        <svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg>
+      </button>
+    </header>
+
+    <div class="chat-body" id="chat-body">
+      <div class="msg msg-bot">
+        <div class="bubble">
+          등록하려는 용어를 알려주세요. 현재는 시나리오용 가상 표준용어 데이터로 동작합니다.<br />
+          예: <em>"일일권장칼로리를 신규 용어로 등록해줘"</em> · <em>"BMI를 신규 용어로 등록해줘"</em>
+        </div>
+      </div>
+    </div>
+
+    <form class="chat-input-row" id="chat-form">
+      <input type="text" id="chat-input" placeholder="예: 일일권장칼로리를 신규 용어로 등록해줘" autocomplete="off" />
+      <button type="submit" class="chat-send" aria-label="전송">
+        <svg viewBox="0 0 24 24"><path d="M3 11l18-8-8 18-2-8z"/></svg>
+      </button>
+    </form>
+  </aside>
+
+</div>
+
+<script src="runtime-config.js"></script>
+<script src="mock-data.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

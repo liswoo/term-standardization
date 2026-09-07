@@ -1,0 +1,20 @@
+{
+	admin off
+}
+
+:8090 {
+	# Dify Backend Service API - proxied so the browser can call it as same-origin
+	# relative paths (/v1/...) instead of a hardcoded localhost that breaks for
+	# anyone accessing this through a tunnel from outside this machine.
+	handle /v1/* {
+		reverse_proxy localhost:80
+	}
+
+	# term-standardization-ui static frontend. UI_DIR is exported by
+	# poc-start.ps1 / poc-start.sh before launching Caddy, so this file
+	# doesn't hardcode an OS-specific absolute path.
+	handle {
+		root * {$UI_DIR}
+		file_server
+	}
+}
