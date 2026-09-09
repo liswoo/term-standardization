@@ -135,19 +135,80 @@ workflow:
           context:
             type: string
             children: null
+          stage:
+            type: string
+            children: null
         code: "import json\n\ndef main(stored: list) -> dict:\n    result=stored[0]\
-          \ if stored else {}\n    state=result.get(\"state\",{})\n    context={\"\
-          revision\":result.get(\"revision\"),\"stage\":state.get(\"stage\"),\n  \
-          \      \"term_name\":state.get(\"term_name\"),\"selected_domain\":state.get(\"\
-          domain\"),\n        \"recommended_domain\":state.get(\"domains\",{}).get(\"\
-          recommended_domain\"),\n        \"recommended_domain_description\":state.get(\"\
-          domains\",{}).get(\"recommended_domain_description\"),\n        \"domain_options\"\
-          :state.get(\"domains\",{}).get(\"distribution\",[]),\n        \"known_domains\"\
-          :state.get(\"domains\",{}).get(\"known_domains\",[]),\n        \"suggestions\"\
-          :state.get(\"validation\",{}).get(\"suggestions\",[])}\n    return {\"context\"\
-          :json.dumps(context,ensure_ascii=False)}\n"
+          \ if stored else {}\n    state=result.get(\"state\",{})\n    stage=state.get(\"\
+          stage\") or \"awaiting_term_direct\"\n    context={\"revision\":result.get(\"\
+          revision\"),\"stage\":stage,\n        \"term_name\":state.get(\"term_name\"\
+          ),\"selected_domain\":state.get(\"domain\"),\n        \"recommended_domain\"\
+          :state.get(\"domains\",{}).get(\"recommended_domain\"),\n        \"recommended_domain_description\"\
+          :state.get(\"domains\",{}).get(\"recommended_domain_description\"),\n  \
+          \      \"domain_options\":state.get(\"domains\",{}).get(\"distribution\"\
+          ,[]),\n        \"known_domains\":state.get(\"domains\",{}).get(\"known_domains\"\
+          ,[]),\n        \"suggestions\":state.get(\"validation\",{}).get(\"suggestions\"\
+          ,[])}\n    return {\"context\":json.dumps(context,ensure_ascii=False),\"\
+          stage\":stage}\n"
       position:
         x: 680
+        y: 150
+      width: 260
+      height: 100
+      sourcePosition: right
+      targetPosition: left
+    - id: stage_rules
+      type: custom
+      data:
+        title: 현재 단계 규칙 선택
+        type: code
+        desc: ''
+        version: '1'
+        code_language: python3
+        variables:
+        - variable: stage
+          value_selector:
+          - intent_context
+          - stage
+        outputs:
+          rules:
+            type: string
+            children: null
+        code: "STAGE_RULES={'awaiting_term_direct': 'At awaiting_term_direct, extract\
+          \ just the term from a natural language registration request -> propose_term.',\
+          \ 'awaiting_term_confirm': 'At awaiting_term_confirm, explicit yes -> confirm_term\
+          \ confirmed=true; no -> confirm_term false;\\ndifferent term text -> propose_term.\
+          \ Preserve a confirmation step even for confident extraction.', 'awaiting_guideline_choice':\
+          \ 'At awaiting_guideline_choice, a selected correction or new name -> propose_term.',\
+          \ 'awaiting_domain_choice': 'At awaiting_domain_choice, set_domain value\
+          \ must be an actual domain code from domain_options/recommended_domain in\
+          \ the stored state (e.g. \"수N7\"), never the user\\'s raw wording.\\nA request\
+          \ to see, repeat, or explain the domain options (e.g. \\'제공해줘\\', \\'알려줘\\\
+          ', \\'뭐가 있어\\', \\'추천해줘\\', \\'보여줘\\') is NOT a selection -> show_candidates.\\\
+          nExample: \\'제공해줘\\' -> show_candidates, NOT set_domain.\\nOnly classify\
+          \ set_domain when the user names/picks an actual domain (by its code or\
+          \ its description) or explicitly repeats a code you already showed them.',\
+          \ 'awaiting_definition': 'At awaiting_definition, a description of what\
+          \ the term means -> set_definition.\\nAccept short noun phrases, informal\
+          \ Korean, and missing spaces/punctuation. Do not require a complete sentence\
+          \ or the word 정의.\\nPreserve the entire user definition verbatim in value.\
+          \ Do not judge its quality or similarity; the comparison tool handles that\
+          \ next.\\nExamples at awaiting_definition:\\n성인기준 하루에 권장하는 칼로리의 양 -> set_definition,\
+          \ value exactly that text.\\n하루 권장 에너지량 -> set_definition.\\n담당자가 검토한 이유\
+          \ -> set_definition.\\n정의는 어떻게 쓰면 돼? -> help.\\n기존 용어 정의 다시 보여줘 -> show_candidates.\\\
+          n취소할게 -> cancel.\\n도메인을 바꾸고 싶어 -> edit_domain.\\nOnly actual questions about\
+          \ the process or requests for assistance -> help. Never classify a descriptive\
+          \ phrase as help just because it is short.', 'awaiting_confirm': \"At awaiting_confirm,\
+          \ explicit yes/등록해줘 -> confirm_registration true; no/cancel -> cancel.\\\
+          nNever confirm registration in another stage. A general initial '등록해줘' is\
+          \ NOT final consent.\"}\nTERMINAL_RULE='At submitted/registration_failed/existing_term_found/definition_blocked/cancelled,\
+          \ a new name -> propose_term.'\nTERMINAL_STAGES=['submitted', 'registration_failed',\
+          \ 'existing_term_found', 'definition_blocked', 'cancelled']\n\ndef main(stage:\
+          \ str) -> dict:\n    if stage in STAGE_RULES:\n        return {\"rules\"\
+          :STAGE_RULES[stage]}\n    if stage in TERMINAL_STAGES:\n        return {\"\
+          rules\":TERMINAL_RULE}\n    return {\"rules\":\"\"}\n"
+      position:
+        x: 1020
         y: 150
       width: 260
       height: 100
@@ -162,7 +223,7 @@ workflow:
         version: '1'
         model:
           provider: langgenius/openai/openai
-          name: gpt-5.6
+          name: gpt-4o-mini
           mode: chat
           completion_params:
             temperature: 0.1
@@ -191,65 +252,7 @@ workflow:
 
             Example: ''잠깐, 기존 용어 정의 다시 보여줘'' -> show_candidates, NOT set_definition.
 
-            At awaiting_term_direct, extract just the term from a natural language
-            registration request -> propose_term.
-
-            At awaiting_term_confirm, explicit yes -> confirm_term confirmed=true;
-            no -> confirm_term false;
-
-            different term text -> propose_term. Preserve a confirmation step even
-            for confident extraction.
-
-            At awaiting_guideline_choice, a selected correction or new name -> propose_term.
-
-            At awaiting_domain_choice, set_domain value must be an actual domain code
-            from domain_options/recommended_domain in the stored state (e.g. "수N7"),
-            never the user''s raw wording.
-
-            A request to see, repeat, or explain the domain options (e.g. ''제공해줘'',
-            ''알려줘'', ''뭐가 있어'', ''추천해줘'', ''보여줘'') is NOT a selection -> show_candidates.
-
-            Example: ''제공해줘'' -> show_candidates, NOT set_domain.
-
-            Only classify set_domain when the user names/picks an actual domain (by
-            its code or its description) or explicitly repeats a code you already
-            showed them.
-
-            At awaiting_definition, a description of what the term means -> set_definition.
-
-            Accept short noun phrases, informal Korean, and missing spaces/punctuation.
-            Do not require a complete sentence or the word 정의.
-
-            Preserve the entire user definition verbatim in value. Do not judge its
-            quality or similarity; the comparison tool handles that next.
-
-            Examples at awaiting_definition:
-
-            성인기준 하루에 권장하는 칼로리의 양 -> set_definition, value exactly that text.
-
-            하루 권장 에너지량 -> set_definition.
-
-            담당자가 검토한 이유 -> set_definition.
-
-            정의는 어떻게 쓰면 돼? -> help.
-
-            기존 용어 정의 다시 보여줘 -> show_candidates.
-
-            취소할게 -> cancel.
-
-            도메인을 바꾸고 싶어 -> edit_domain.
-
-            Only actual questions about the process or requests for assistance ->
-            help. Never classify a descriptive phrase as help just because it is short.
-
-            At awaiting_confirm, explicit yes/등록해줘 -> confirm_registration true; no/cancel
-            -> cancel.
-
-            Never confirm registration in another stage. A general initial ''등록해줘''
-            is NOT final consent.
-
-            At submitted/registration_failed/existing_term_found/definition_blocked/cancelled,
-            a new name -> propose_term.
+            {{#stage_rules.rules#}}
 
             Edit definition/domain intents only change stage; ask for the replacement
             on the next turn.
@@ -269,7 +272,7 @@ workflow:
         vision:
           enabled: false
       position:
-        x: 1020
+        x: 1360
         y: 150
       width: 260
       height: 100
@@ -310,7 +313,7 @@ workflow:
         paramSchemas: []
         params: {}
       position:
-        x: 1360
+        x: 1700
         y: 150
       width: 260
       height: 100
@@ -335,7 +338,7 @@ workflow:
           score_threshold: 0.2
         metadata_filtering_mode: disabled
       position:
-        x: 1700
+        x: 2040
         y: 150
       width: 260
       height: 100
@@ -399,7 +402,7 @@ workflow:
           business_result\":result,\"supplemental_knowledge\":reference,\"domain_summary\"\
           :domain_summary,\"options\":options},ensure_ascii=False)}\n"
       position:
-        x: 2040
+        x: 2380
         y: 150
       width: 260
       height: 100
@@ -414,7 +417,7 @@ workflow:
         version: '1'
         model:
           provider: langgenius/openai/openai
-          name: gpt-5.6
+          name: gpt-4o-mini
           mode: chat
           completion_params:
             temperature: 0.1
@@ -488,7 +491,7 @@ workflow:
         vision:
           enabled: false
       position:
-        x: 2380
+        x: 2720
         y: 150
       width: 260
       height: 100
@@ -503,7 +506,7 @@ workflow:
         version: '1'
         answer: '{{#reply.text#}}'
       position:
-        x: 2720
+        x: 3060
         y: 150
       width: 260
       height: 100
@@ -528,9 +531,18 @@ workflow:
       data:
         sourceType: tool
         targetType: code
-    - id: intent_context-intent
+    - id: intent_context-stage_rules
       type: custom
       source: intent_context
+      target: stage_rules
+      sourceHandle: source
+      targetHandle: target
+      data:
+        sourceType: code
+        targetType: code
+    - id: stage_rules-intent
+      type: custom
+      source: stage_rules
       target: intent
       sourceHandle: source
       targetHandle: target
