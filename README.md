@@ -12,10 +12,9 @@
 
 Dify 자체(`dify/`)는 이 저장소에 포함하지 않습니다. 공식 저장소를 별도로 클론해서 이 저장소와 형제 폴더로 둡니다.
 
-## 처음 설정하는 경우
+## 처음 설정하는 경우 (Mac / Windows)
 
-- **Windows**: 기존에 설정된 환경을 그대로 사용합니다.
-- **다른 컴퓨터(예: Mac)로 처음 옮기는 경우**: [MAC_SETUP.md](MAC_SETUP.md)를 순서대로 따라하세요. Dify 안의 앱·지식베이스·API 키는 설치마다 새로 만들어야 합니다 — Windows에서 그대로 복사해 올 수 없습니다.
+[SETUP.md](SETUP.md)를 순서대로 따라하세요. Dify 안의 앱·지식베이스·API 키·모델 자격증명은 설치본마다 새로 만들어야 합니다(다른 컴퓨터에서 복사해 올 수 없음) — `term-standardization-mcp/setup_dify.py` 스크립트 하나가 Dify Studio를 손으로 클릭하는 과정 없이 이 전체 과정을 자동화합니다. 이 자동화 자체를 고치거나 새 에이전트를 추가하려면 [term-standardization-mcp/AUTOMATION.md](term-standardization-mcp/AUTOMATION.md)를 보세요.
 
 ## 실행
 

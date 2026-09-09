@@ -86,8 +86,8 @@ workflow:
         desc: ''
         version: '1'
         provider_id: term-standardization
-        provider_name: 용어표준화 MCP
-        provider_show_name: 용어표준화 MCP
+        provider_name: term-standardization
+        provider_show_name: term-standardization
         provider_type: mcp
         provider_icon:
           background: '#6366F1'

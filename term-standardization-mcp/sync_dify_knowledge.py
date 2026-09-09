@@ -14,12 +14,10 @@ from services.dataset_service import DatasetService
 from services.entities.knowledge_entities.knowledge_entities import RetrievalModel
 from controllers.service_api.dataset.document import _create_document_by_text
 from uuid import UUID
-account=session.get(Account,original.created_by)
-account.set_tenant_id_with_session(original.tenant_id,session=session)
 name='용어표준화-시나리오데이터(가상)'
-dataset=session.scalar(select(Dataset).where(Dataset.tenant_id==original.tenant_id,Dataset.name==name))
+dataset=session.scalar(select(Dataset).where(Dataset.tenant_id==tenant_id,Dataset.name==name))
 if dataset is None:
-    dataset=DatasetService.create_empty_dataset(tenant_id=original.tenant_id,name=name,
+    dataset=DatasetService.create_empty_dataset(tenant_id=tenant_id,name=name,
         description='시나리오 검증용 가상 데이터. 실제 공공기관 표준이 아님. 원본: scenario_catalog.json. 승인 대기 요청은 포함하지 않음.',
         indexing_technique='high_quality',account=account,permission='all_team_members',
         embedding_model_provider='langgenius/openai/openai',embedding_model_name='text-embedding-3-small',
@@ -38,7 +36,7 @@ for row in CATALOG['terms']:
         'process_rule':{'mode':'automatic'}}
     with app.test_request_context('/v1/datasets/'+dataset.id+'/document/create-by-text',method='POST',json=payload):
         g._login_user=account
-        document,batch=_create_document_by_text(session=session,tenant_id=original.tenant_id,dataset_id=UUID(dataset.id))
+        document,batch=_create_document_by_text(session=session,tenant_id=tenant_id,dataset_id=UUID(dataset.id))
         docs.append({'name':title,'document_id':document.id,'batch':batch})
 session.commit()
 print('RESULT='+json.dumps({'dataset_id':dataset.id,'name':name,'documents':docs},ensure_ascii=False))

@@ -15,14 +15,17 @@ from dify_admin import execute
 subprocess.run([sys.executable,str(ROOT/"build_list_terms_workflow.py")],check=True,cwd=ROOT)
 content=(ROOT/"dify-list-terms-workflow.yaml").read_text(encoding="utf-8")
 
+import yaml
+app_name=yaml.safe_load(content)["app"]["name"]
 tracking=ROOT/".runtime/list-terms-import.json"
 existing=json.loads(tracking.read_text(encoding="utf-8"))["app_id"] if tracking.exists() else None
 
 import_result=execute(
-    "account=session.get(Account,original.created_by)\n"
-    "account.set_tenant_id_with_session(original.tenant_id,session=session)\n"
-    "from services.app_dsl_service import AppDslService\n"
-    "result=AppDslService(session).import_app(account=account,import_mode='yaml-content',yaml_content="+repr(content)+",app_id="+repr(existing)+")\n"
+    "existing="+repr(existing)+"\n"
+    "if existing is None:\n"
+    "    found=session.scalar(select(App).where(App.tenant_id==tenant_id,App.name=="+repr(app_name)+"))\n"
+    "    existing=found.id if found else None\n"
+    "result=AppDslService(session).import_app(account=account,import_mode='yaml-content',yaml_content="+repr(content)+",app_id=existing)\n"
     "session.commit()\n"
     "print('RESULT='+result.model_dump_json())"
 )
@@ -31,8 +34,6 @@ tracking.write_text(json.dumps(import_result,ensure_ascii=False,indent=2),encodi
 publish_result=execute("APP_ID="+repr(import_result["app_id"])+"\n"+"""
 from services.workflow_service import WorkflowService
 from models.model import ApiToken
-account=session.get(Account,original.created_by)
-account.set_tenant_id_with_session(original.tenant_id,session=session)
 app=session.get(App,APP_ID)
 workflow=WorkflowService().publish_workflow(session=session,app_model=app,account=account,marked_name='List terms read API')
 app.workflow_id=workflow.id

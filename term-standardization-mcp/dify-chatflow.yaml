@@ -88,8 +88,8 @@ workflow:
         desc: ''
         version: '1'
         provider_id: term-standardization
-        provider_name: 용어표준화 MCP
-        provider_show_name: 용어표준화 MCP
+        provider_name: term-standardization
+        provider_show_name: term-standardization
         provider_type: mcp
         provider_icon:
           background: '#6366F1'
@@ -283,8 +283,8 @@ workflow:
         desc: ''
         version: '1'
         provider_id: term-standardization
-        provider_name: 용어표준화 MCP
-        provider_show_name: 용어표준화 MCP
+        provider_name: term-standardization
+        provider_show_name: term-standardization
         provider_type: mcp
         provider_icon:
           background: '#6366F1'
@@ -324,7 +324,7 @@ workflow:
         desc: ''
         version: '1'
         dataset_ids:
-        - e28031f9-78df-4fbf-85bb-6a83a8cf99a6
+        - de079e5b-219f-4a61-8da2-fd282fd785ea
         query_variable_selector:
         - sys
         - query

@@ -3,10 +3,10 @@ import copy
 import json
 from pathlib import Path
 import yaml
+from dify_mcp_config import MCP_PROVIDER_FIELDS as provider
 
 ROOT=Path(__file__).parent
-original=yaml.safe_load((ROOT/"backups/workflow-original.yaml").read_text(encoding="utf-8"))
-provider=next(n["data"] for n in original["workflow"]["graph"]["nodes"] if n["data"]["type"]=="tool")
+original=yaml.safe_load((ROOT/"templates/dify_app_base.yaml").read_text(encoding="utf-8"))
 knowledge=json.loads((ROOT/".runtime/dify-knowledge.json").read_text(encoding="utf-8"))["dataset_id"]
 nodes=[]
 def node(ident,title,kind,data):
