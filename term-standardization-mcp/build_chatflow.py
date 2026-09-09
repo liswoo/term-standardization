@@ -23,7 +23,7 @@ def tool(ident,name,params):
     return node(ident,name,"tool",data)
 
 def llm(ident,title,prompt,user):
-    return node(ident,title,"llm",{"model":{"provider":"langgenius/openai/openai","name":"gpt-4o-mini","mode":"chat",
+    return node(ident,title,"llm",{"model":{"provider":"langgenius/openai/openai","name":"gpt-5.6","mode":"chat",
         "completion_params":{"temperature":0.1,"max_tokens":1300}},
         "prompt_template":[{"id":ident+"s","role":"system","text":prompt},{"id":ident+"u","role":"user","text":user}],
         "context":{"enabled":False,"variable_selector":[]},"vision":{"enabled":False}})
@@ -58,7 +58,7 @@ Examples at awaiting_definition:
 Only actual questions about the process or requests for assistance -> help. Never classify a descriptive phrase as help just because it is short.
 At awaiting_confirm, explicit yes/등록해줘 -> confirm_registration true; no/cancel -> cancel.
 Never confirm registration in another stage. A general initial '등록해줘' is NOT final consent.
-At submitted/existing_term_found/definition_blocked/cancelled, a new name -> propose_term.
+At submitted/registration_failed/existing_term_found/definition_blocked/cancelled, a new name -> propose_term.
 Edit definition/domain intents only change stage; ask for the replacement on the next turn.
 No invented term/domain/definition. If unsure use unknown. value is empty when not applicable.
 confirmed is a JSON boolean and defaults false."""
@@ -75,6 +75,7 @@ awaiting_confirm: 정의 비교 relation/reason/differences를 설명. UNCERTAIN
 용어명/정의/도메인/검토 사유를 보여주고 등록 요청 진행 여부를 물을 것.
 existing_term_found 또는 SAME_MEANING 차단: 신규 등록이 차단되었음을 알리고 기존 용어 사용을 권장하세요. 이 상태에서는 등록 여부나 네/아니오 확인 질문을 절대로 만들지 마세요. 다른 용어를 검토하려면 새 이름을 입력할 수 있다고만 안내하세요.
 submitted: request_id/용어명/정의/도메인/PENDING_REVIEW를 보여주고 담당자 승인 전 정식 표준이 아님을 명시.
+registration_failed: registration.code를 근거로 등록이 완료되지 않은 이유를 안내하세요. PENDING_REQUEST_ALREADY_EXISTS면 이 용어는 이미 검토 대기 중인 다른 요청이 있어 중복 제출할 수 없다고 설명하고, 그 외 코드는 처음부터 다시 시도해야 함을 안내하세요. 등록이 완료됐다고 말하지 말고, 같은 확인 질문을 반복하지 마세요 — 대신 다른 용어를 입력하거나 취소할 수 있다고 안내하세요.
 cancelled/restart: 처리 결과 안내. help/show_candidates에서는 현재 상태를 유지하고 요청 정보만 설명.
 MCP 결과에 error가 있거나 applied=false면 해당 오류만 안내하고 검색 결과로 업무 판단을 대체하지 마세요. 오류 발생시 성공했다고 말하지 말 것. 한 번의 답변에서 다음 단계 질문은 하나만.
 기존 검색 결과나 정의를 지어내지 말고 부족한 정보는 사용자에게 질문하세요."""

@@ -104,8 +104,11 @@ def transition(state, action, requester, conversation_id):
             return s,{"next_action":"CANCELLED"}
         result=registration.submit(s["preparation"]["confirmation_id"],requester,conversation_id,True)
         s["registration"]=result
-        if result.get("request_id"):
-            s["stage"]="submitted"
+        # A failed submit() must not leave the conversation parked in
+        # awaiting_confirm: preparation.ready is still true, so a repeated
+        # "네, 등록해주세요" would replay the same confirmation_id and hit the
+        # exact same failure (e.g. PENDING_REQUEST_ALREADY_EXISTS) forever.
+        s["stage"]="submitted" if result.get("request_id") else "registration_failed"
         return s,{"next_action":"SHOW_REGISTRATION_RESULT"}
     return s,{"error":"UNEXPECTED_INTENT"}
 

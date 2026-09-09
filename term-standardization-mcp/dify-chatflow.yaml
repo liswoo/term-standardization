@@ -162,7 +162,7 @@ workflow:
         version: '1'
         model:
           provider: langgenius/openai/openai
-          name: gpt-4o-mini
+          name: gpt-5.6
           mode: chat
           completion_params:
             temperature: 0.1
@@ -248,8 +248,8 @@ workflow:
             Never confirm registration in another stage. A general initial ''등록해줘''
             is NOT final consent.
 
-            At submitted/existing_term_found/definition_blocked/cancelled, a new name
-            -> propose_term.
+            At submitted/registration_failed/existing_term_found/definition_blocked/cancelled,
+            a new name -> propose_term.
 
             Edit definition/domain intents only change stage; ask for the replacement
             on the next turn.
@@ -414,7 +414,7 @@ workflow:
         version: '1'
         model:
           provider: langgenius/openai/openai
-          name: gpt-4o-mini
+          name: gpt-5.6
           mode: chat
           completion_params:
             temperature: 0.1
@@ -459,6 +459,11 @@ workflow:
 
             submitted: request_id/용어명/정의/도메인/PENDING_REVIEW를 보여주고 담당자 승인 전 정식 표준이
             아님을 명시.
+
+            registration_failed: registration.code를 근거로 등록이 완료되지 않은 이유를 안내하세요. PENDING_REQUEST_ALREADY_EXISTS면
+            이 용어는 이미 검토 대기 중인 다른 요청이 있어 중복 제출할 수 없다고 설명하고, 그 외 코드는 처음부터 다시 시도해야 함을
+            안내하세요. 등록이 완료됐다고 말하지 말고, 같은 확인 질문을 반복하지 마세요 — 대신 다른 용어를 입력하거나 취소할 수 있다고
+            안내하세요.
 
             cancelled/restart: 처리 결과 안내. help/show_candidates에서는 현재 상태를 유지하고 요청 정보만
             설명.
