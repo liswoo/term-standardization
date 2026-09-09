@@ -7,13 +7,13 @@
 // 자신의 localhost를 가리키게 되어 무조건 실패합니다 — 상대 경로는 로컬이든
 // 터널을 통한 외부 접속이든 항상 "지금 이 페이지를 서빙 중인 오리진"으로 풀립니다.
 const DIFY_CHAT_API = "/v1/chat-messages";
-const DIFY_CHAT_KEY = "app-7MbTrZRjWuMz1uVc7y62E9kd";
+const DIFY_CHAT_KEY = "app-JUceqVgCALSVx5OzVBO1GFRX";
 const CHAT_USER = "meta-system-ui";
 
 // 읽기 전용 목록조회 워크플로우(용어표준화-목록조회). 대화 상태가 필요 없는 단순 조회라
 // LLM 분류 파이프라인을 타는 Chatflow 대신 1회성 /v1/workflows/run으로 분리했습니다.
 const LIST_TERMS_API = "/v1/workflows/run";
-const LIST_TERMS_KEY = "app-U0pwaq4eXx9buXrPLtrqoEF0";
+const LIST_TERMS_KEY = "app-ZHcGkYX57YUmrOsxcNB2GJUp";
 const STATUS_LABELS = { APPROVED: "승인", PENDING_REVIEW: "검토중", REJECTED: "반려" };
 
 // 워크플로우 그래프의 실제 노드 순서(빌드 스크립트 build_chatflow.py 기준).
@@ -25,15 +25,6 @@ const NODE_STEPS = [
   { id: "rag", label: "관련 자료 검색" },
   { id: "reply", label: "답변 작성" },
 ];
-
-// standard_terms.domain에는 "수N7" 같은 데이터 도메인 코드만 들어있어 사람이 읽기 어렵습니다.
-// 실제 카탈로그(data/scenario_catalog.json)의 4개 시나리오 도메인 설명을 화면 표시용으로 미러링합니다.
-const DOMAIN_DESCRIPTIONS = {
-  "수N7": "숫자 도메인 · 정수 7자리",
-  "명V100": "명칭 도메인 · 문자열 최대 100자",
-  "율N5,2": "비율 도메인 · 전체 5자리, 소수 2자리",
-  "코드C2": "분류 코드 도메인 · 문자 2자리",
-};
 
 let chatConversationId = null;
 
@@ -49,7 +40,7 @@ const state = {
 const VIEW_META = {
   dashboard: { title: "대시보드", subtitle: "용어 표준화 현황을 한눈에 확인하세요" },
   terms: { title: "용어 사전", subtitle: "등록된 표준 용어를 검색하고 관리합니다" },
-  domains: { title: "도메인 관리", subtitle: "업무 도메인별 용어 분류 체계를 관리합니다" },
+  domains: { title: "도메인 관리", subtitle: "표준 용어에 적용되는 데이터 도메인(형식·길이) 체계를 관리합니다" },
   history: { title: "표준화 이력", subtitle: "AI 파이프라인 실행 기록을 확인합니다" },
   settings: { title: "설정", subtitle: "백엔드 연동 정보를 확인합니다" },
 };
@@ -70,8 +61,25 @@ document.querySelectorAll(".nav-item").forEach((btn) => {
 });
 
 // ── 렌더링 ──────────────────────────────────────────────────────
+// "도메인"은 백엔드(standard_terms.domain, domains 테이블)에 실제로 존재하는
+// 단 하나의 개념 - 수N7/명V100/율N5,2/코드C2 같은 데이터 형식 도메인뿐입니다.
+// 보건복지/행정/교육 같은 주제 분류는 백엔드 어디에도 없는 별개의 개념이라
+// "도메인"이라는 이름으로 섞어 쓰면 안 됩니다. 여기서는 그 개념을 따로 만들지
+// 않고, 지금 state.terms에 실제로 들어있는 도메인 값을 그대로 집계합니다.
+const DOMAIN_PALETTE = ["#2563eb", "#7c3aed", "#059669", "#d97706", "#db2777", "#64748b"];
+
+function computeDomainDistribution() {
+  const counts = new Map();
+  for (const t of state.terms) {
+    counts.set(t.domain, (counts.get(t.domain) || 0) + 1);
+  }
+  return [...counts.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .map(([domain, count], i) => ({ domain, count, color: DOMAIN_PALETTE[i % DOMAIN_PALETTE.length] }));
+}
+
 function domainColor(domainName) {
-  const d = MOCK_DOMAINS.find((x) => x.name === domainName);
+  const d = state.domainDistribution.find((x) => x.domain === domainName);
   return d ? d.color : "#64748b";
 }
 
@@ -97,34 +105,38 @@ function renderTermsTable() {
 
 function renderDomainGrid() {
   const grid = document.getElementById("domain-grid");
-  grid.innerHTML = MOCK_DOMAINS.map(
-    (d) => `
+  grid.innerHTML = state.domainDistribution
+    .map(
+      (d) => `
     <div class="domain-card">
       <div class="domain-card-top">
         <span class="domain-dot" style="background:${d.color}"></span>
-        <h3>${d.name}</h3>
+        <h3>${d.domain}</h3>
       </div>
-      <p>${d.desc}</p>
       <div class="domain-card-footer">
         <strong>${d.count}</strong>
         <span>등록된 용어</span>
       </div>
     </div>`
-  ).join("");
+    )
+    .join("");
 }
 
 function renderDomainBars() {
-  const total = MOCK_DOMAINS.reduce((sum, d) => sum + d.count, 0);
+  const distribution = state.domainDistribution;
+  const total = distribution.reduce((sum, d) => sum + d.count, 0) || 1;
   const wrap = document.getElementById("domain-bars");
-  wrap.innerHTML = MOCK_DOMAINS.map((d) => {
-    const pct = Math.round((d.count / total) * 100);
-    return `
+  wrap.innerHTML = distribution
+    .map((d) => {
+      const pct = Math.round((d.count / total) * 100);
+      return `
       <div class="bar-row">
-        <span class="bar-label">${d.name}</span>
+        <span class="bar-label">${d.domain}</span>
         <div class="bar-track"><div class="bar-fill" style="width:${pct}%;background:${d.color}"></div></div>
         <span class="bar-value">${d.count}</span>
       </div>`;
-  }).join("");
+    })
+    .join("");
 }
 
 function renderActivity() {
@@ -136,7 +148,7 @@ function renderActivity() {
       <div class="activity-dot"></div>
       <div>
         <p>${a.text}</p>
-        <span class="muted">${a.who} · ${a.time}</span>
+        <span class="muted">${[a.who, a.time].filter(Boolean).join(" · ")}</span>
       </div>
     </li>`
     )
@@ -166,11 +178,19 @@ function renderHistory() {
 }
 
 function renderAll() {
+  // "관리 도메인"/"검토 대기"는 지금 실제로 조회된 state.terms에서 곧바로 센
+  // 값입니다 - 카탈로그에 등록됐지만 용어가 하나도 없는 도메인은 여기 안
+  // 잡힙니다(그런 도메인 목록은 프론트엔드가 조회할 방법이 아직 없음).
+  state.domainDistribution = computeDomainDistribution();
   renderTermsTable();
   renderDomainGrid();
   renderDomainBars();
   renderActivity();
   renderHistory();
+  const domainCountEl = document.getElementById("stat-domain-count");
+  if (domainCountEl) domainCountEl.textContent = state.domainDistribution.length;
+  const pendingEl = document.getElementById("stat-pending-review");
+  if (pendingEl) pendingEl.textContent = state.terms.filter((t) => t.status === "검토중").length;
 }
 renderAll();
 
@@ -183,12 +203,48 @@ function backendTermToRow(t) {
     name: t.term_name,
     enAbbr: "",
     def: t.definition,
-    domain: t.domain_description ? `${t.domain} (${t.domain_description})` : t.domain,
+    domain: t.domain,
     synonyms: t.synonyms || [],
     status: STATUS_LABELS[t.status] || t.status,
+    statusCode: t.status,
     date: (t.created_at || "").slice(0, 10),
+    createdAt: t.created_at || "",
     isNew: false,
   };
+}
+
+// ── 최근 등록 활동(대시보드) ────────────────────────────────────
+// 가짜 이름을 지어내는 대신, 실제 조회된 용어 목록의 created_at/status를
+// 그대로 최신순으로 보여줍니다. 이 시스템엔 로그인/담당자 식별이 없어서
+// "누가"는 알 수 없으니, 대신 실제 값인 도메인을 부제로 보여줍니다.
+const ACTIVITY_VERBS = {
+  APPROVED: "표준 용어로 등록됨",
+  PENDING_REVIEW: "신규 등록 요청 (검토 대기)",
+  REJECTED: "등록 반려됨",
+};
+
+function relativeTime(isoString) {
+  const then = isoString ? new Date(isoString).getTime() : NaN;
+  if (Number.isNaN(then)) return "";
+  const diffMin = Math.floor(Math.max(0, Date.now() - then) / 60000);
+  if (diffMin < 1) return "방금 전";
+  if (diffMin < 60) return `${diffMin}분 전`;
+  const diffHour = Math.floor(diffMin / 60);
+  if (diffHour < 24) return `${diffHour}시간 전`;
+  const diffDay = Math.floor(diffHour / 24);
+  return `${diffDay}일 전`;
+}
+
+function activityFromTerms(terms, limit = 6) {
+  return [...terms]
+    .filter((t) => t.createdAt)
+    .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
+    .slice(0, limit)
+    .map((t) => ({
+      text: `'${t.name}' ${ACTIVITY_VERBS[t.statusCode] || "등록"}`,
+      who: t.domain,
+      time: relativeTime(t.createdAt),
+    }));
 }
 
 async function fetchTermsFromBackend() {
@@ -203,6 +259,7 @@ async function fetchTermsFromBackend() {
     const terms = payload.data?.outputs?.terms?.[0]?.terms;
     if (!Array.isArray(terms)) throw new Error("예상치 못한 응답 형식");
     state.terms = terms.map(backendTermToRow);
+    state.activity = activityFromTerms(state.terms);
     renderAll();
   } catch (err) {
     console.warn("실제 백엔드에서 용어 목록을 불러오지 못해 데모 데이터를 유지합니다:", err);
@@ -423,20 +480,19 @@ function handleRegistrationSubmitted(mcpState) {
   const reg = mcpState.registration;
   if (!reg || !reg.request_id) return;
 
-  const domainCode = mcpState.domain || "";
-  const domainLabel = DOMAIN_DESCRIPTIONS[domainCode]
-    ? `${domainCode} (${DOMAIN_DESCRIPTIONS[domainCode]})`
-    : domainCode || "미지정";
+  const domainCode = mcpState.domain || "미지정";
+  const createdAt = reg.created_at || new Date().toISOString();
 
   state.terms.unshift({
     id: `chat-${reg.request_id}`,
     name: reg.term_name || mcpState.term_name,
     enAbbr: "",
     def: reg.definition || mcpState.definition,
-    domain: domainLabel,
+    domain: domainCode,
     synonyms: [],
     status: "검토중",
-    date: (reg.created_at || new Date().toISOString()).slice(0, 10),
+    date: createdAt.slice(0, 10),
+    createdAt,
     isNew: true,
   });
   state.activity.unshift({

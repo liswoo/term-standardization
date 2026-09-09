@@ -5,6 +5,7 @@ from typing import Literal
 from pydantic import Field
 from psycopg.types.json import Jsonb
 from . import db, registration
+from .naming import strip_trailing_particle
 from .schemas import Schema, RegistrationInput
 from .search import validate_name, search, domain_usage
 
@@ -37,8 +38,14 @@ def transition(state, action, requester, conversation_id):
     if a.intent in {"propose_term","edit_term"}:
         if not a.value.strip() or len(a.value)>200:
             return s,{"error":"TERM_REQUIRED"}
+        # A trailing case particle (e.g. "값을") is part of the request sentence, never
+        # the term itself; drop it here so the user isn't asked to confirm-then-correct
+        # something they never actually proposed.
+        term_name=strip_trailing_particle(a.value.strip())
+        if not term_name:
+            return s,{"error":"TERM_REQUIRED"}
         registration.cancel(requester,conversation_id)
-        return {"stage":"awaiting_term_confirm","term_name":a.value.strip()},{"next_action":"CONFIRM_EXTRACTED_TERM"}
+        return {"stage":"awaiting_term_confirm","term_name":term_name},{"next_action":"CONFIRM_EXTRACTED_TERM"}
     if a.intent=="confirm_term":
         if stage!="awaiting_term_confirm":
             return s,{"error":"UNEXPECTED_INTENT"}

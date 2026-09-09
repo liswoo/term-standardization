@@ -1,4 +1,4 @@
-param([switch]$Public)
+﻿param([switch]$Public)
 # Windows equivalent of poc-start.sh
 # Layout expected: this repo and Dify's own repo are sibling folders, e.g.
 #   projects\term-standardization\   <- this repo (ROOT)
@@ -12,8 +12,12 @@ New-Item -ItemType Directory -Force -Path $RUNTIME | Out-Null
 function Start-QuickTunnel {
     param([string]$Label,[string]$Target,[string]$LogFile,[string]$PidFile)
     Remove-Item -Force -ErrorAction SilentlyContinue $LogFile
+    # cloudflared writes its tunnel URL to stderr, not stdout. Windows PowerShell 5.1's
+    # Start-Process refuses to redirect both streams to the same file ("RedirectStandardOutput
+    # and RedirectStandardError are same"), so only stderr - the stream that actually
+    # matters here - is redirected.
     $process=Start-Process -FilePath 'cloudflared' -ArgumentList @('tunnel','--url',$Target) `
-        -WindowStyle Hidden -RedirectStandardOutput $LogFile -RedirectStandardError $LogFile -PassThru
+        -WindowStyle Hidden -RedirectStandardError $LogFile -PassThru
     $process.Id | Set-Content -LiteralPath $PidFile
     for ($i=0; $i -lt 30; $i++) {
         Start-Sleep -Seconds 1

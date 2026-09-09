@@ -175,30 +175,40 @@ workflow:
             type: string
             children: null
         code: "STAGE_RULES={'awaiting_term_direct': 'At awaiting_term_direct, extract\
-          \ just the term from a natural language registration request -> propose_term.',\
-          \ 'awaiting_term_confirm': 'At awaiting_term_confirm, explicit yes -> confirm_term\
-          \ confirmed=true; no -> confirm_term false;\\ndifferent term text -> propose_term.\
-          \ Preserve a confirmation step even for confident extraction.', 'awaiting_guideline_choice':\
-          \ 'At awaiting_guideline_choice, a selected correction or new name -> propose_term.',\
-          \ 'awaiting_domain_choice': 'At awaiting_domain_choice, set_domain value\
-          \ must be an actual domain code from domain_options/recommended_domain in\
-          \ the stored state (e.g. \"수N7\"), never the user\\'s raw wording.\\nA request\
-          \ to see, repeat, or explain the domain options (e.g. \\'제공해줘\\', \\'알려줘\\\
-          ', \\'뭐가 있어\\', \\'추천해줘\\', \\'보여줘\\') is NOT a selection -> show_candidates.\\\
-          nExample: \\'제공해줘\\' -> show_candidates, NOT set_domain.\\nOnly classify\
-          \ set_domain when the user names/picks an actual domain (by its code or\
-          \ its description) or explicitly repeats a code you already showed them.',\
-          \ 'awaiting_definition': 'At awaiting_definition, a description of what\
-          \ the term means -> set_definition.\\nAccept short noun phrases, informal\
-          \ Korean, and missing spaces/punctuation. Do not require a complete sentence\
-          \ or the word 정의.\\nPreserve the entire user definition verbatim in value.\
-          \ Do not judge its quality or similarity; the comparison tool handles that\
-          \ next.\\nExamples at awaiting_definition:\\n성인기준 하루에 권장하는 칼로리의 양 -> set_definition,\
-          \ value exactly that text.\\n하루 권장 에너지량 -> set_definition.\\n담당자가 검토한 이유\
-          \ -> set_definition.\\n정의는 어떻게 쓰면 돼? -> help.\\n기존 용어 정의 다시 보여줘 -> show_candidates.\\\
-          n취소할게 -> cancel.\\n도메인을 바꾸고 싶어 -> edit_domain.\\nOnly actual questions about\
-          \ the process or requests for assistance -> help. Never classify a descriptive\
-          \ phrase as help just because it is short.', 'awaiting_confirm': \"At awaiting_confirm,\
+          \ just the term from a natural language registration request -> propose_term.\\\
+          nKeep a trailing case/topic particle if it is attached (e.g. \"값을\") - a\
+          \ separate deterministic step strips it, so do not worry about that yourself.\\\
+          nNever return an empty value just because the noun looks short, generic,\
+          \ or overly common - a plain word like \"값\" or \"수\" is still a valid candidate\
+          \ term. If the message names ANY candidate noun as the thing to register,\
+          \ extract it; do not second-guess whether it is \"meaningful enough\".\\\
+          nOnly use unknown when the message truly names no candidate noun at all\
+          \ (small talk, unrelated topic, a pure question).\\nExamples: \"값을 신규 용어로\
+          \ 등록해줘\" -> propose_term value=\"값을\". \"BMI 등록하고 싶어\" -> propose_term value=\"\
+          BMI\". \"오늘 날씨 어때?\" -> unknown.', 'awaiting_term_confirm': 'At awaiting_term_confirm,\
+          \ explicit yes -> confirm_term confirmed=true; no -> confirm_term false;\\\
+          ndifferent term text -> propose_term. Preserve a confirmation step even\
+          \ for confident extraction.', 'awaiting_guideline_choice': 'At awaiting_guideline_choice,\
+          \ a selected correction or new name -> propose_term.', 'awaiting_domain_choice':\
+          \ 'At awaiting_domain_choice, set_domain value must be an actual domain\
+          \ code from domain_options/recommended_domain in the stored state (e.g.\
+          \ \"수N7\"), never the user\\'s raw wording.\\nA request to see, repeat,\
+          \ or explain the domain options (e.g. \\'제공해줘\\', \\'알려줘\\', \\'뭐가 있어\\\
+          ', \\'추천해줘\\', \\'보여줘\\') is NOT a selection -> show_candidates.\\nExample:\
+          \ \\'제공해줘\\' -> show_candidates, NOT set_domain.\\nOnly classify set_domain\
+          \ when the user names/picks an actual domain (by its code or its description)\
+          \ or explicitly repeats a code you already showed them.', 'awaiting_definition':\
+          \ 'At awaiting_definition, a description of what the term means -> set_definition.\\\
+          nAccept short noun phrases, informal Korean, and missing spaces/punctuation.\
+          \ Do not require a complete sentence or the word 정의.\\nPreserve the entire\
+          \ user definition verbatim in value. Do not judge its quality or similarity;\
+          \ the comparison tool handles that next.\\nExamples at awaiting_definition:\\\
+          n성인기준 하루에 권장하는 칼로리의 양 -> set_definition, value exactly that text.\\n하루 권장\
+          \ 에너지량 -> set_definition.\\n담당자가 검토한 이유 -> set_definition.\\n정의는 어떻게 쓰면\
+          \ 돼? -> help.\\n기존 용어 정의 다시 보여줘 -> show_candidates.\\n취소할게 -> cancel.\\\
+          n도메인을 바꾸고 싶어 -> edit_domain.\\nOnly actual questions about the process or\
+          \ requests for assistance -> help. Never classify a descriptive phrase as\
+          \ help just because it is short.', 'awaiting_confirm': \"At awaiting_confirm,\
           \ explicit yes/등록해줘 -> confirm_registration true; no/cancel -> cancel.\\\
           nNever confirm registration in another stage. A general initial '등록해줘' is\
           \ NOT final consent.\"}\nTERMINAL_RULE='At submitted/registration_failed/existing_term_found/definition_blocked/cancelled,\
@@ -327,7 +337,7 @@ workflow:
         desc: ''
         version: '1'
         dataset_ids:
-        - de079e5b-219f-4a61-8da2-fd282fd785ea
+        - dd91f97b-950a-48f4-b464-40023b5b02d2
         query_variable_selector:
         - sys
         - query
@@ -398,9 +408,25 @@ workflow:
           :\n        options=[{\"label\":s,\"value\":s} for s in state.get(\"validation\"\
           ,{}).get(\"suggestions\",[])]\n    elif stage==\"awaiting_confirm\":\n \
           \       options=[{\"label\":\"네, 등록해주세요\",\"value\":\"네, 등록해주세요\"},{\"label\"\
-          :\"아니요, 취소할게요\",\"value\":\"아니요, 취소할게요\"}]\n    return {\"context\":json.dumps({\"\
-          business_result\":result,\"supplemental_knowledge\":reference,\"domain_summary\"\
-          :domain_summary,\"options\":options},ensure_ascii=False)}\n"
+          :\"아니요, 취소할게요\",\"value\":\"아니요, 취소할게요\"}]\n    # Same reliability problem\
+          \ as domain_summary above: comparisons[] only carries\n    # an opaque existing_term_id,\
+          \ and the matched term's own name/definition/domain\n    # lives in a separate\
+          \ search.candidates list - pre-join them here instead of\n    # expecting\
+          \ the reply LLM to correlate two arrays by id inside a large JSON blob.\n\
+          \    prep=state.get(\"preparation\",{})\n    assessment=prep.get(\"assessment\"\
+          ) or prep\n    comparisons=assessment.get(\"comparisons\") or []\n    comparison_lines=[]\n\
+          \    if comparisons:\n        candidates_by_id={c[\"term_id\"]:c for c in\
+          \ assessment.get(\"search\",{}).get(\"candidates\",[])}\n        for comp\
+          \ in comparisons:\n            if comp.get(\"relation\")==\"DISTINCT\":\n\
+          \                continue\n            cand=candidates_by_id.get(comp.get(\"\
+          existing_term_id\"))\n            if not cand:\n                continue\n\
+          \            pct=round((comp.get(\"confidence\") or 0)*100)\n          \
+          \  comparison_lines.append(f\"- 기존 표준 용어 '{cand['name']}' (도메인 {cand['domain']}):\
+          \ '{cand['definition']}' -> 판정: {comp['relation']} (신뢰도 {pct}%). 사유: {comp['reason']}\"\
+          )\n    comparison_summary=\"\\n\".join(comparison_lines)\n    return {\"\
+          context\":json.dumps({\"business_result\":result,\"supplemental_knowledge\"\
+          :reference,\"domain_summary\":domain_summary,\"comparison_summary\":comparison_summary,\"\
+          options\":options},ensure_ascii=False)}\n"
       position:
         x: 2380
         y: 150
@@ -451,12 +477,14 @@ workflow:
             awaiting_definition: 선택 도메인을 확인하고 사용자가 등록하려는 새 용어 자체의 정의를 직접 작성하도록 요청하세요.
             기존 후보의 정의를 선택하라고 질문하지 마세요. 조회/도움말 요청은 응답하되 정의로 저장하지 말 것.
 
-            awaiting_confirm: 정의 비교 relation/reason/differences를 설명. UNCERTAIN은 의미가
-            다르다고 단정하지 말고 담당자 판단 필요 안내.
+            awaiting_confirm: comparison_summary가 비어있지 않으면 그 줄들(비교 대상 기존 표준 용어명·도메인·정의·판정·사유)을
+            절대 생략·요약하지 말고 목록 그대로 사용자에게 보여주세요. "유사성이 있다"처럼 뭉뚱그리지 말고 구체적으로 어떤 기존 용어와
+            왜 그런 판정인지 밝히세요. UNCERTAIN은 의미가 다르다고 단정하지 말고 담당자 판단 필요 안내.
 
-            용어명/정의/도메인/검토 사유를 보여주고 등록 요청 진행 여부를 물을 것.
+            등록하려는 새 용어명/정의/선택 도메인과 위 비교 결과를 함께 보여주고 등록 요청 진행 여부를 물을 것.
 
-            existing_term_found 또는 SAME_MEANING 차단: 신규 등록이 차단되었음을 알리고 기존 용어 사용을 권장하세요.
+            existing_term_found 또는 SAME_MEANING 차단: comparison_summary에 어떤 기존 용어와
+            왜 같은 의미로 판정됐는지 정리되어 있으니 그 내용을 그대로 인용해 신규 등록이 차단되었음을 알리고 기존 용어 사용을 권장하세요.
             이 상태에서는 등록 여부나 네/아니오 확인 질문을 절대로 만들지 마세요. 다른 용어를 검토하려면 새 이름을 입력할 수 있다고만
             안내하세요.
 
@@ -471,6 +499,13 @@ workflow:
             cancelled/restart: 처리 결과 안내. help/show_candidates에서는 현재 상태를 유지하고 요청 정보만
             설명.
 
+            next_action이 unknown이면 요청을 이해하지 못했다고 짧게 안내하고 business_result.state.stage에
+            맞는 입력만 다시 요청하세요 (예: awaiting_term_direct→등록할 용어명, awaiting_domain_choice→도메인
+            선택, awaiting_definition→정의 작성, awaiting_confirm→등록 여부). 다른 단계에서나 나올 법한
+            질문(예: 정의 작성 요청)을 지어내지 마세요.
+
+            error가 TERM_REQUIRED이면 등록하려는 용어명을 한 문장으로 다시 말해달라고 요청하세요.
+
             MCP 결과에 error가 있거나 applied=false면 해당 오류만 안내하고 검색 결과로 업무 판단을 대체하지 마세요.
             오류 발생시 성공했다고 말하지 말 것. 한 번의 답변에서 다음 단계 질문은 하나만.
 
@@ -484,7 +519,9 @@ workflow:
             반드시 business_result.state.stage의 단계만 설명하세요. 과거 단계나 검색 문서로 다음 단계를 추측하지
             마세요.
 
-            domain_summary가 비어있지 않으면 그 목록 전체를 답변에 반드시 포함하세요.'
+            domain_summary가 비어있지 않으면 그 목록 전체를 답변에 반드시 포함하세요.
+
+            comparison_summary가 비어있지 않으면 그 내용 전체를 답변에 반드시 포함하세요.'
         context:
           enabled: false
           variable_selector: []

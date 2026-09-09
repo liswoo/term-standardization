@@ -2,7 +2,7 @@ import os
 from concurrent.futures import ThreadPoolExecutor
 import pytest
 from term_service import db, registration, conversation
-from term_service.naming import validate, morphology
+from term_service.naming import validate, morphology, strip_trailing_particle
 from term_service.search import search, domain_usage, validate_name
 from term_service.schemas import RegistrationInput
 from term_service.comparison import compare
@@ -17,6 +17,28 @@ def test_invalid_names(name):
 
 def test_real_morphology():
     assert len(morphology("일일권장칼로리")["morphemes"])>=3
+
+@pytest.mark.parametrize("raw,expected",[
+    ("식사만족도점수를","식사만족도점수"),
+    ("값을","값"),
+    ("용어는","용어"),
+    ("일일권장칼로리","일일권장칼로리"),  # no trailing particle: unchanged
+    ("BMI","BMI"),
+])
+def test_strip_trailing_particle(raw,expected):
+    assert strip_trailing_particle(raw)==expected
+
+def test_propose_term_stores_particle_free_name():
+    # Regression for the bug where CLASSIFY's extracted value kept a trailing
+    # particle (e.g. "식사만족도점수를"), forcing the user to confirm a name they
+    # never actually proposed before validate_name() caught it downstream.
+    def apply(revision,intent,value="",confirmed=False):
+        return conversation.apply("particle-conv","user",revision,{"intent":intent,"value":value,"confirmed":confirmed})
+    result=apply(0,"propose_term","값을")
+    assert result["state"]["term_name"]=="값"
+    assert result["state"]["stage"]=="awaiting_term_confirm"
+    result=apply(1,"edit_term","식사만족도점수를")
+    assert result["state"]["term_name"]=="식사만족도점수"
 
 def test_search_empty_is_not_new():
     result=search("일일권장칼로리")
@@ -95,6 +117,19 @@ def test_catalog_change_invalidates_confirmation():
 
 def test_exact_registration_blocked(catalog):
     assert registration.prepare(payload("일일섭취칼로리"))["code"]=="EXACT_MATCH"
+
+def test_same_meaning_blocked_carries_matched_term(catalog):
+    # Regression: SAME_MEANING used to omit `search`, so the matched existing
+    # term's own name/definition/domain never reached rendering - only an opaque
+    # existing_term_id in `comparisons`, unlike the EXACT_MATCH branch above.
+    duplicate=RegistrationInput(term_name="섭취열량",definition="한 사람이 하루 동안 음식으로 실제 섭취한 에너지의 총량",
+        domain="수N7",requester="test-user",conversation_id="test-conversation")
+    prepared=registration.prepare(duplicate)
+    assert prepared["code"]=="SAME_MEANING"
+    assert any(c["relation"]=="SAME_MEANING" for c in prepared["comparisons"])
+    matched_id=next(c["existing_term_id"] for c in prepared["comparisons"] if c["relation"]=="SAME_MEANING")
+    candidate_ids={c["term_id"] for c in prepared["search"]["candidates"]}
+    assert matched_id in candidate_ids
 
 def test_multiturn_help_does_not_become_definition():
     with db.connect() as conn:

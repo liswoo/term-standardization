@@ -28,7 +28,11 @@ def prepare(payload: RegistrationInput):
         return {"ready":False,"code":"SYNONYM_CONFLICT","candidates":alias_conflicts}
     comparisons=[compare(payload.term_name,payload.definition,c.term_id).model_dump() for c in result.candidates]
     if any(c["relation"]=="SAME_MEANING" for c in comparisons):
-        return {"ready":False,"code":"SAME_MEANING","recommended_action":"USE_EXISTING","comparisons":comparisons}
+        # Unlike EXACT_MATCH above, this block used to omit `search`, so the matched
+        # existing term's name/definition/domain never reached rendering - only an
+        # opaque existing_term_id in `comparisons`.
+        return {"ready":False,"code":"SAME_MEANING","recommended_action":"USE_EXISTING",
+            "comparisons":comparisons,"search":result.model_dump()}
     warnings=list(result.warnings)
     if not known_domain:
         warnings.append("UNREGISTERED_DOMAIN_REQUIRES_REVIEW")

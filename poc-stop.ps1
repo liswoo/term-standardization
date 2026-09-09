@@ -1,4 +1,4 @@
-# Windows equivalent of poc-stop.sh
+﻿# Windows equivalent of poc-stop.sh
 $ErrorActionPreference='Continue'
 $ROOT=$PSScriptRoot
 $RUNTIME=Join-Path $ROOT '.runtime'

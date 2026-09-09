@@ -61,7 +61,11 @@ Example: '잠깐, 기존 용어 정의 다시 보여줘' -> show_candidates, NOT
 # instead of every stage's rules at once.
 STAGE_RULES={
 "awaiting_term_direct":
-"""At awaiting_term_direct, extract just the term from a natural language registration request -> propose_term.""",
+"""At awaiting_term_direct, extract just the term from a natural language registration request -> propose_term.
+Keep a trailing case/topic particle if it is attached (e.g. "값을") - a separate deterministic step strips it, so do not worry about that yourself.
+Never return an empty value just because the noun looks short, generic, or overly common - a plain word like "값" or "수" is still a valid candidate term. If the message names ANY candidate noun as the thing to register, extract it; do not second-guess whether it is "meaningful enough".
+Only use unknown when the message truly names no candidate noun at all (small talk, unrelated topic, a pure question).
+Examples: "값을 신규 용어로 등록해줘" -> propose_term value="값을". "BMI 등록하고 싶어" -> propose_term value="BMI". "오늘 날씨 어때?" -> unknown.""",
 "awaiting_term_confirm":
 """At awaiting_term_confirm, explicit yes -> confirm_term confirmed=true; no -> confirm_term false;
 different term text -> propose_term. Preserve a confirmation step even for confident extraction.""",
@@ -107,12 +111,14 @@ awaiting_domain_choice 또는 error가 UNRECOGNIZED_DOMAIN: domain_summary에 �
 UNRECOGNIZED_DOMAIN이면 방금 입력하신 내용은 실제 등록 가능한 도메인이 아니라고 먼저 안내한 뒤 domain_summary 목록에서 하나를 선택하거나 정확한 도메인명을 다시 말해달라고 요청하세요.
 SYNONYM_MATCH이면 기존 표준용어 사용을 먼저 권장하되 별도 정의가 있으면 비교 가능함을 설명.
 awaiting_definition: 선택 도메인을 확인하고 사용자가 등록하려는 새 용어 자체의 정의를 직접 작성하도록 요청하세요. 기존 후보의 정의를 선택하라고 질문하지 마세요. 조회/도움말 요청은 응답하되 정의로 저장하지 말 것.
-awaiting_confirm: 정의 비교 relation/reason/differences를 설명. UNCERTAIN은 의미가 다르다고 단정하지 말고 담당자 판단 필요 안내.
-용어명/정의/도메인/검토 사유를 보여주고 등록 요청 진행 여부를 물을 것.
-existing_term_found 또는 SAME_MEANING 차단: 신규 등록이 차단되었음을 알리고 기존 용어 사용을 권장하세요. 이 상태에서는 등록 여부나 네/아니오 확인 질문을 절대로 만들지 마세요. 다른 용어를 검토하려면 새 이름을 입력할 수 있다고만 안내하세요.
+awaiting_confirm: comparison_summary가 비어있지 않으면 그 줄들(비교 대상 기존 표준 용어명·도메인·정의·판정·사유)을 절대 생략·요약하지 말고 목록 그대로 사용자에게 보여주세요. "유사성이 있다"처럼 뭉뚱그리지 말고 구체적으로 어떤 기존 용어와 왜 그런 판정인지 밝히세요. UNCERTAIN은 의미가 다르다고 단정하지 말고 담당자 판단 필요 안내.
+등록하려는 새 용어명/정의/선택 도메인과 위 비교 결과를 함께 보여주고 등록 요청 진행 여부를 물을 것.
+existing_term_found 또는 SAME_MEANING 차단: comparison_summary에 어떤 기존 용어와 왜 같은 의미로 판정됐는지 정리되어 있으니 그 내용을 그대로 인용해 신규 등록이 차단되었음을 알리고 기존 용어 사용을 권장하세요. 이 상태에서는 등록 여부나 네/아니오 확인 질문을 절대로 만들지 마세요. 다른 용어를 검토하려면 새 이름을 입력할 수 있다고만 안내하세요.
 submitted: request_id/용어명/정의/도메인/PENDING_REVIEW를 보여주고 담당자 승인 전 정식 표준이 아님을 명시.
 registration_failed: registration.code를 근거로 등록이 완료되지 않은 이유를 안내하세요. PENDING_REQUEST_ALREADY_EXISTS면 이 용어는 이미 검토 대기 중인 다른 요청이 있어 중복 제출할 수 없다고 설명하고, 그 외 코드는 처음부터 다시 시도해야 함을 안내하세요. 등록이 완료됐다고 말하지 말고, 같은 확인 질문을 반복하지 마세요 — 대신 다른 용어를 입력하거나 취소할 수 있다고 안내하세요.
 cancelled/restart: 처리 결과 안내. help/show_candidates에서는 현재 상태를 유지하고 요청 정보만 설명.
+next_action이 unknown이면 요청을 이해하지 못했다고 짧게 안내하고 business_result.state.stage에 맞는 입력만 다시 요청하세요 (예: awaiting_term_direct→등록할 용어명, awaiting_domain_choice→도메인 선택, awaiting_definition→정의 작성, awaiting_confirm→등록 여부). 다른 단계에서나 나올 법한 질문(예: 정의 작성 요청)을 지어내지 마세요.
+error가 TERM_REQUIRED이면 등록하려는 용어명을 한 문장으로 다시 말해달라고 요청하세요.
 MCP 결과에 error가 있거나 applied=false면 해당 오류만 안내하고 검색 결과로 업무 판단을 대체하지 마세요. 오류 발생시 성공했다고 말하지 말 것. 한 번의 답변에서 다음 단계 질문은 하나만.
 기존 검색 결과나 정의를 지어내지 말고 부족한 정보는 사용자에게 질문하세요."""
 
@@ -204,9 +210,28 @@ def main(action: list, rag: list) -> dict:
         options=[{"label":s,"value":s} for s in state.get("validation",{}).get("suggestions",[])]
     elif stage=="awaiting_confirm":
         options=[{"label":"네, 등록해주세요","value":"네, 등록해주세요"},{"label":"아니요, 취소할게요","value":"아니요, 취소할게요"}]
-    return {"context":json.dumps({"business_result":result,"supplemental_knowledge":reference,"domain_summary":domain_summary,"options":options},ensure_ascii=False)}
+    # Same reliability problem as domain_summary above: comparisons[] only carries
+    # an opaque existing_term_id, and the matched term's own name/definition/domain
+    # lives in a separate search.candidates list - pre-join them here instead of
+    # expecting the reply LLM to correlate two arrays by id inside a large JSON blob.
+    prep=state.get("preparation",{})
+    assessment=prep.get("assessment") or prep
+    comparisons=assessment.get("comparisons") or []
+    comparison_lines=[]
+    if comparisons:
+        candidates_by_id={c["term_id"]:c for c in assessment.get("search",{}).get("candidates",[])}
+        for comp in comparisons:
+            if comp.get("relation")=="DISTINCT":
+                continue
+            cand=candidates_by_id.get(comp.get("existing_term_id"))
+            if not cand:
+                continue
+            pct=round((comp.get("confidence") or 0)*100)
+            comparison_lines.append(f"- 기존 표준 용어 '{cand['name']}' (도메인 {cand['domain']}): '{cand['definition']}' -> 판정: {comp['relation']} (신뢰도 {pct}%). 사유: {comp['reason']}")
+    comparison_summary="\\n".join(comparison_lines)
+    return {"context":json.dumps({"business_result":result,"supplemental_knowledge":reference,"domain_summary":domain_summary,"comparison_summary":comparison_summary,"options":options},ensure_ascii=False)}
 """})
-llm("reply","업무 결과 설명",CLASSIFY_MODEL,RENDER,"사용자 메시지: {{#sys.query#}}\n단계별 실행 결과: {{#render_context.context#}}\n반드시 business_result.state.stage의 단계만 설명하세요. 과거 단계나 검색 문서로 다음 단계를 추측하지 마세요.\ndomain_summary가 비어있지 않으면 그 목록 전체를 답변에 반드시 포함하세요.")
+llm("reply","업무 결과 설명",CLASSIFY_MODEL,RENDER,"사용자 메시지: {{#sys.query#}}\n단계별 실행 결과: {{#render_context.context#}}\n반드시 business_result.state.stage의 단계만 설명하세요. 과거 단계나 검색 문서로 다음 단계를 추측하지 마세요.\ndomain_summary가 비어있지 않으면 그 목록 전체를 답변에 반드시 포함하세요.\ncomparison_summary가 비어있지 않으면 그 내용 전체를 답변에 반드시 포함하세요.")
 node("answer","답변","answer",{"answer":"{{#reply.text#}}"})
 edges=[]
 for left,right in zip(nodes,nodes[1:]):
