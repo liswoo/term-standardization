@@ -52,9 +52,12 @@ Studio 조작 없이, 해당 `build_*.py`에 `tool("새_노드_id", "mcp_도구_
 
 ## Dify 버전이 바뀌면 (중요)
 
-이 자동화는 Dify의 **내부 서비스 API**(`services.app_dsl_service.AppDslService`, `services.tools.mcp_tools_manage_service.MCPToolManageService`, `services.model_provider_service.ModelProviderService`, `models.account.TenantAccountJoin` 등)를 직접 import해서 씁니다. 이건 Dify가 공개적으로 안정성을 보장하는 REST API가 아니라 **내부 구현**이라, `dify` 서브모듈을 업그레이드하면 함수 시그니처나 클래스 위치가 바뀌어 조용히 깨질 수 있습니다.
+이 자동화는 Dify의 **내부 서비스 API**(`services.app_dsl_service.AppDslService`, `services.tools.mcp_tools_manage_service.MCPToolManageService`, `services.model_provider_service.ModelProviderService`, `models.account.TenantAccountJoin` 등)를 직접 import해서 씁니다. 이건 Dify가 공개적으로 안정성을 보장하는 REST API가 아니라 **내부 구현**이라, Dify 버전을 올리면 함수 시그니처나 클래스 위치가 바뀌어 조용히 깨질 수 있습니다.
+
+이 문서를 쓸 당시 기준은 Dify `1.17.0`(커밋 `0df092d3c7`)이고, [SETUP.md](../SETUP.md)가 클론하는 `liswoo/dify` 포크가 정확히 이 커밋에 고정되어 있습니다. **업그레이드는 항상 의도적으로**, 포크에서 `git fetch upstream && git merge upstream/main`으로 진행하고, 아래 확인을 거친 뒤에만 포크의 `main`에 반영하세요 (그래야 다른 사람이 그사이 `git clone`해도 검증 안 된 버전을 받는 일이 없습니다).
 
 Dify를 업그레이드했다면:
 1. `.venv/bin/python setup_dify.py`를 한 번 돌려서 각 단계가 에러 없이 끝나는지 확인합니다. `dify_admin.py`의 `execute()`가 예외를 그대로 올려주므로 어느 서비스 호출이 깨졌는지 스택트레이스로 바로 보입니다.
-2. 특히 `PRELUDE`의 `TenantAccountJoin`/`TenantAccountRole` 조회, `mcp-register`의 `MCPToolManageService.create_provider`/`reconnect_with_url` 시그니처, `openai-credential`의 `ModelProviderService.get_provider_credential`/`create_provider_credential` 시그니처를 Dify 소스(`../dify/api/`)에서 다시 확인하세요. 이 문서를 쓸 당시 기준은 Dify `1.17.0`입니다.
+2. 특히 `PRELUDE`의 `TenantAccountJoin`/`TenantAccountRole` 조회, `mcp-register`의 `MCPToolManageService.create_provider`/`reconnect_with_url` 시그니처, `openai-credential`의 `ModelProviderService.get_provider_credential`/`create_provider_credential` 시그니처를 Dify 소스(`../dify/api/`)에서 다시 확인하세요.
+3. 문제없이 통과하면 `git push origin main`으로 포크에 반영하고, 이 문서의 버전/커밋 표기와 `SETUP.md`도 같이 갱신하세요.
 3. 고칠 때는 REST 콘솔 API 컨트롤러(`controllers/console/...`)가 같은 서비스를 어떻게 호출하는지 참고하는 게 가장 빠릅니다 — 우리가 흉내내야 할 "정답 동작"이 바로 그 코드입니다.

@@ -14,7 +14,7 @@
 
 ## 0. 폴더 구조 (공통)
 
-이 저장소와 Dify 공식 저장소를 **형제 폴더**로 둡니다. `poc-start.*`/`start.*` 스크립트들이 상대 경로(`../dify/docker`)로 Dify를 찾기 때문에 이 구조가 강제됩니다.
+이 저장소와 Dify를 **형제 폴더**로 둡니다. `poc-start.*`/`start.*` 스크립트들이 상대 경로(`../dify/docker`)로 Dify를 찾기 때문에 이 구조가 강제됩니다.
 
 ```
 projects/
@@ -24,11 +24,23 @@ projects/
 
 ## 1. Dify 새로 설치
 
-**공통**
+**공통 — 공식 저장소가 아니라 우리 포크(`liswoo/dify`)를 클론합니다**
 
 ```bash
 cd projects
-git clone https://github.com/langgenius/dify.git
+git clone https://github.com/liswoo/dify.git
+```
+
+공식 `langgenius/dify` 대신 이 포크를 쓰는 이유 두 가지:
+
+1. **버전 고정.** 공식 저장소를 그냥 `git clone`하면 그 시점의 최신 `main`이 딸려오는데, `setup_dify.py`/`dify_admin.py`는 Dify의 *내부* 서비스 API를 직접 호출하기 때문에([term-standardization-mcp/AUTOMATION.md](term-standardization-mcp/AUTOMATION.md) 참고) Dify 버전이 달라지면 조용히 깨질 수 있습니다. 포크는 만든 시점 스냅샷이라 우리가 실제로 검증한 커밋(`0df092d3c7`, 이미지 태그 `1.17.0`)에 고정되어 있고, 우리가 직접 "Sync fork"를 누르지 않는 한 계속 그 상태로 남습니다.
+2. **커스텀 여지.** Dify 자체를 나중에 패치해야 할 일이 생기면 이 포크에 커밋하면 됩니다.
+
+로컬 클론에는 원본 저장소도 `upstream`이라는 이름으로 같이 등록해두면, 나중에 의도적으로 업그레이드하고 싶을 때 편합니다 (기본 동작에는 필요 없음):
+
+```bash
+cd dify
+git remote add upstream https://github.com/langgenius/dify.git
 ```
 
 `dify/docker/.env.example`을 복사해 `.env`를 만들고, 아래 두 값을 설정합니다 (키 이름은 그대로, `.env` 파일 안에서 텍스트 편집기로 고치면 됩니다).
