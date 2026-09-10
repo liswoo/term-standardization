@@ -223,9 +223,14 @@
           <span id="chat-status">● 대기 중</span>
         </div>
       </div>
-      <button class="chat-close" id="chat-close" aria-label="닫기">
-        <svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg>
-      </button>
+      <div class="chat-header-actions">
+        <button class="chat-icon-btn" id="chat-reset" aria-label="새 대화 시작" title="새 대화 시작 (이전 상태 초기화)">
+          <svg viewBox="0 0 24 24"><path d="M20 11A8 8 0 1 0 18.6 15.5M20 5v6h-6"/></svg>
+        </button>
+        <button class="chat-close" id="chat-close" aria-label="닫기">
+          <svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg>
+        </button>
+      </div>
     </header>
 
     <div class="chat-body" id="chat-body">

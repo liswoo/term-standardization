@@ -342,6 +342,17 @@ document.getElementById("open-dify-studio-btn").addEventListener("click", openDi
 
 // ── 채팅 UI 헬퍼 ────────────────────────────────────────────────
 const chatBody = document.getElementById("chat-body");
+const CHAT_INITIAL_HTML = chatBody.innerHTML;
+
+// 여러 용어를 연달아 등록하다 보면 이전 대화의 상태(선택한 도메인, 추천받은
+// 정의/약어 등)가 새 요청과 뒤섞여 엉뚱한 답변으로 이어질 수 있습니다 - 새
+// Dify conversation_id로 완전히 새로 시작해서 그 가능성을 원천 차단합니다.
+document.getElementById("chat-reset").addEventListener("click", () => {
+  chatConversationId = null;
+  chatBody.innerHTML = CHAT_INITIAL_HTML;
+  setChatStatus("대기 중", undefined);
+  chatInput.focus();
+});
 
 function escapeHtml(str) {
   const div = document.createElement("div");
