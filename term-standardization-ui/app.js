@@ -508,6 +508,18 @@ function summaryCard(rows, extraClass = "") {
     .join("")}</div>`;
 }
 
+function renderExistingTermCard(mcpState) {
+  const match = (mcpState.search || {}).exact_matches?.[0];
+  if (!match) return "";
+  return summaryCard([
+    ["용어명", match.name],
+    ["정의", match.definition],
+    ["도메인", match.domain, true],
+    ["영문 약어", match.english_abbr, true],
+    ["동의어", (match.synonyms || []).join(", ")],
+  ]);
+}
+
 function renderConfirmSummary(mcpState) {
   return summaryCard([
     ["용어명", mcpState.term_name],
@@ -588,6 +600,7 @@ function renderStructuredBlock(mcpState) {
     case "awaiting_confirm":
       return renderComparisonTable(mcpState) + renderConfirmSummary(mcpState);
     case "existing_term_found":
+      return renderExistingTermCard(mcpState);
     case "definition_blocked":
       return renderComparisonTable(mcpState);
     case "awaiting_guideline_choice":

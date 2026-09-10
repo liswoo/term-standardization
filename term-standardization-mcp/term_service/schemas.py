@@ -32,6 +32,7 @@ class Candidate(Schema):
     synonyms: list[str] = Field(default_factory=list)
     similarity: float | None = None
     evidence_type: str = ""
+    english_abbr: str | None = None
 
 class SearchResult(Schema):
     match_type: Literal["EXACT_MATCH", "SYNONYM_MATCH", "SEMANTIC_SIMILAR", "NEW_TERM", "UNDETERMINED"]

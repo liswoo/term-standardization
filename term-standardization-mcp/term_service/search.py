@@ -6,7 +6,7 @@ from .embeddings import embed
 from .naming import key, morphology, validate
 from .schemas import Candidate, SearchInput, SearchResult
 
-FIELDS = "id::text AS term_id,name,definition,domain,synonyms,source"
+FIELDS = "id::text AS term_id,name,definition,domain,synonyms,source,english_abbr"
 
 def validate_name(term):
     with db.connect() as conn:

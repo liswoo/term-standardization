@@ -130,7 +130,8 @@ UNRECOGNIZED_DOMAIN이면 방금 입력하신 내용은 실제 등록 가능한 
 SYNONYM_MATCH이면 기존 표준용어 사용을 먼저 권장하되 별도 정의가 있으면 비교 가능함을 설명.
 awaiting_definition: definition_hint에 이번 턴에 사용자에게 안내할 문장이 이미 정해져 있습니다 - 그 문장을 자연스럽게 다듬어 답변에 포함하세요(의미를 바꾸거나 다른 안내로 대체하지 마세요, has_definition_suggestion 값으로 직접 판단하지 마세요). 정의/질문/후보의 구체적 내용은 화면에 별도로 표시되니 문장에서 반복하지 마세요. 기존 후보의 정의를 선택하라고 질문하지 마세요. 조회/도움말 요청은 응답하되 정의로 저장하지 말 것.
 awaiting_confirm: 비교 가능한 기존 용어가 있었는지 여부만 한 문장으로 언급하고("유사한 기존 용어가 있어 아래에 비교 결과를 정리했습니다" 등), 개별 용어명·판정·사유는 나열하지 마세요. UNCERTAIN이 있었다면 의미가 다르다고 단정하지 말고 담당자 판단이 필요하다고만 짧게 덧붙이세요. 등록하려는 용어명/정의/도메인/영문약어는 아래 요약에 이미 나오므로 문장에서 반복하지 말고, 등록 요청을 진행할지만 물으세요.
-existing_term_found 또는 SAME_MEANING 차단: 의미가 같은 기존 표준용어가 있어 신규 등록이 차단되었다는 사실만 한 문장으로 안내하고(어떤 용어인지는 아래 비교 결과 참고하라고만 언급), 기존 용어 사용을 권장하세요. 이 상태에서는 등록 여부나 네/아니오 확인 질문을 절대로 만들지 마세요. 다른 용어를 검토하려면 새 이름을 입력할 수 있다고만 안내하세요.
+existing_term_found: 이미 존재하는 표준용어와 완전히 동일한 이름이라 신규 등록이 차단되었다는 사실만 한 문장으로 안내하고(용어명·정의·도메인·영문약어는 아래 카드에 나오므로 반복하지 마세요), 기존 용어 사용을 권장하세요. 등록 여부나 네/아니오 확인 질문을 절대로 만들지 마세요. 다른 용어를 검토하려면 새 이름을 입력할 수 있다고만 안내하세요.
+SAME_MEANING 차단(definition_blocked): 의미가 같은 기존 표준용어가 있어 신규 등록이 차단되었다는 사실만 한 문장으로 안내하고(어떤 용어인지는 아래 비교 결과 참고하라고만 언급), 기존 용어 사용을 권장하세요. 등록 여부나 네/아니오 확인 질문을 절대로 만들지 마세요. 다른 용어를 검토하려면 새 이름을 입력할 수 있다고만 안내하세요.
 pending_request_found: 이미 검토 대기 중인 신청 건이 있어(상세는 아래 참고) 같은 이름으로 새로 등록할 수 없다고 한 문장으로 설명하세요. 도메인/정의/약어를 다시 입력하라고 요청하지 마세요. 다른 용어를 등록하려면 새 이름을 말해달라고만 안내하세요.
 submitted: 접수가 완료되었다는 사실과(상세는 아래 참고) 담당자 승인 전 정식 표준이 아님을 한 문장으로 안내하세요. request_id/용어명/정의/도메인을 문장에서 반복하지 마세요.
 registration_failed: registration.code를 근거로 등록이 완료되지 않은 이유를 안내하세요. PENDING_REQUEST_ALREADY_EXISTS면 이 용어는 이미 검토 대기 중인 다른 요청이 있어 중복 제출할 수 없다고 설명하고, 그 외 코드는 처음부터 다시 시도해야 함을 안내하세요. 등록이 완료됐다고 말하지 말고, 같은 확인 질문을 반복하지 마세요 — 대신 다른 용어를 입력하거나 취소할 수 있다고 안내하세요.
@@ -254,13 +255,15 @@ def main(action: list, rag: list) -> dict:
     prep=state.get("preparation",{})
     assessment=prep.get("assessment") or prep
     # comparison_summary is only ever meant to explain awaiting_confirm's final
-    # review or a SAME_MEANING/existing_term_found block (see RENDER's own stage
-    # instructions below) - state.preparation isn't cleared on later stages
-    # (e.g. awaiting_abbreviation, its errors), so without this gate a stale
-    # comparison from the definition step kept bleeding into unrelated replies
-    # like an abbreviation-collision error, misattributing the actual cause.
+    # review or a SAME_MEANING block (see RENDER's own stage instructions below)
+    # - state.preparation isn't cleared on later stages (e.g. awaiting_abbreviation,
+    # its errors), so without this gate a stale comparison from the definition
+    # step kept bleeding into unrelated replies like an abbreviation-collision
+    # error, misattributing the actual cause. existing_term_found (a plain
+    # EXACT_MATCH via confirm_term/search()) never populates this at all - it
+    # has its own separate exact_matches card below.
     comparisons=(assessment.get("comparisons") or []) if stage in (
-        "awaiting_confirm","existing_term_found","definition_blocked") else []
+        "awaiting_confirm","definition_blocked") else []
     comparison_lines=[]
     if comparisons:
         candidates_by_id={c["term_id"]:c for c in assessment.get("search",{}).get("candidates",[])}
@@ -281,6 +284,7 @@ def main(action: list, rag: list) -> dict:
     # it stays computed here for that, just excluded from what the model sees.
     has_domain_options=needs_domain_summary and bool(options)
     has_comparisons=bool(comparison_lines)
+    has_existing_match=stage=="existing_term_found" and bool(state.get("search",{}).get("exact_matches"))
     definition_suggestion=state.get("definition_suggestion") or {}
     has_definition_suggestion=stage=="awaiting_definition" and bool(
         definition_suggestion.get("ambiguous") and definition_suggestion.get("options")
@@ -313,6 +317,8 @@ def main(action: list, rag: list) -> dict:
     if has_comparisons:
         assessment["comparisons"]=[{"note":"비교 결과는 화면 표에 표시됨"}]
         assessment["search"]={"note":"비교 결과는 화면 표에 표시됨"}
+    if has_existing_match:
+        state["search"]={"note":"기존 용어 정보는 화면 카드에 표시됨"}
     if has_definition_suggestion:
         state["definition_suggestion"]={"note":"정의 제안/질문은 화면 카드에 표시됨"}
     if stage=="awaiting_abbreviation" and state.get("abbreviation_suggestion"):
@@ -329,11 +335,11 @@ def main(action: list, rag: list) -> dict:
     # the same reason business_result.state's domains/comparisons are redacted
     # above. Keeping options out of {{#render_context.context#}} closes that gap.
     return {"context":json.dumps({"business_result":result,"supplemental_knowledge":reference,
-        "has_domain_options":has_domain_options,"has_comparisons":has_comparisons,
+        "has_domain_options":has_domain_options,"has_comparisons":has_comparisons,"has_existing_match":has_existing_match,
         "has_definition_suggestion":has_definition_suggestion,"definition_hint":definition_hint},ensure_ascii=False),
         "options":json.dumps(options,ensure_ascii=False)}
 """})
-llm("reply","업무 결과 설명",CLASSIFY_MODEL,RENDER,"사용자 메시지: {{#sys.query#}}\n단계별 실행 결과: {{#render_context.context#}}\n반드시 business_result.state.stage의 단계만 설명하세요. 과거 단계나 검색 문서로 다음 단계를 추측하지 마세요.\nhas_domain_options/has_comparisons/has_definition_suggestion은 화면에 표/카드가 별도로 표시된다는 뜻일 뿐, 그 안의 목록·사유·정의·질문 내용은 여기 없습니다 - 지어내서 나열하지 말고 RENDER 지침의 각 stage별 한 문장 안내만 작성하세요.")
+llm("reply","업무 결과 설명",CLASSIFY_MODEL,RENDER,"사용자 메시지: {{#sys.query#}}\n단계별 실행 결과: {{#render_context.context#}}\n반드시 business_result.state.stage의 단계만 설명하세요. 과거 단계나 검색 문서로 다음 단계를 추측하지 마세요.\nhas_domain_options/has_comparisons/has_existing_match/has_definition_suggestion은 화면에 표/카드가 별도로 표시된다는 뜻일 뿐, 그 안의 목록·사유·정의·질문·기존 용어 정보는 여기 없습니다 - 지어내서 나열하지 말고 RENDER 지침의 각 stage별 한 문장 안내만 작성하세요.")
 node("answer","답변","answer",{"answer":"{{#reply.text#}}"})
 edges=[]
 for left,right in zip(nodes,nodes[1:]):
