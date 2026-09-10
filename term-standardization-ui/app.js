@@ -7,13 +7,13 @@
 // 자신의 localhost를 가리키게 되어 무조건 실패합니다 — 상대 경로는 로컬이든
 // 터널을 통한 외부 접속이든 항상 "지금 이 페이지를 서빙 중인 오리진"으로 풀립니다.
 const DIFY_CHAT_API = "/v1/chat-messages";
-const DIFY_CHAT_KEY = "app-JUceqVgCALSVx5OzVBO1GFRX";
+const DIFY_CHAT_KEY = "app-7MbTrZRjWuMz1uVc7y62E9kd";
 const CHAT_USER = "meta-system-ui";
 
 // 읽기 전용 목록조회 워크플로우(용어표준화-목록조회). 대화 상태가 필요 없는 단순 조회라
 // LLM 분류 파이프라인을 타는 Chatflow 대신 1회성 /v1/workflows/run으로 분리했습니다.
 const LIST_TERMS_API = "/v1/workflows/run";
-const LIST_TERMS_KEY = "app-ZHcGkYX57YUmrOsxcNB2GJUp";
+const LIST_TERMS_KEY = "app-U0pwaq4eXx9buXrPLtrqoEF0";
 const STATUS_LABELS = { APPROVED: "승인", PENDING_REVIEW: "검토중", REJECTED: "반려" };
 
 // 워크플로우 그래프의 실제 노드 순서(빌드 스크립트 build_chatflow.py 기준).
@@ -201,7 +201,7 @@ function backendTermToRow(t) {
   return {
     id: `backend-${t.id}`,
     name: t.term_name,
-    enAbbr: "",
+    enAbbr: t.english_abbr || "",
     def: t.definition,
     domain: t.domain,
     synonyms: t.synonyms || [],
@@ -486,7 +486,7 @@ function handleRegistrationSubmitted(mcpState) {
   state.terms.unshift({
     id: `chat-${reg.request_id}`,
     name: reg.term_name || mcpState.term_name,
-    enAbbr: "",
+    enAbbr: reg.english_abbr || mcpState.english_abbr || "",
     def: reg.definition || mcpState.definition,
     domain: domainCode,
     synonyms: [],

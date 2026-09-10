@@ -1,11 +1,21 @@
 import os
+import uuid
 from concurrent.futures import ThreadPoolExecutor
 import pytest
 from term_service import db, registration, conversation
 from term_service.naming import validate, morphology, strip_trailing_particle
 from term_service.search import search, domain_usage, validate_name
-from term_service.schemas import RegistrationInput
+from term_service.schemas import AbbreviationResult, RegistrationInput
 from term_service.comparison import compare
+
+def insert_guideline_chunk(section,content):
+    from term_service.config import EMBEDDING_MODEL
+    from term_service.embeddings import embed
+    vector=embed(section+" : "+content)
+    with db.connect() as conn:
+        conn.execute("""INSERT INTO guideline_chunks(id,section,content,embedding,embedding_model,source)
+            VALUES(%s,%s,%s,%s,%s,%s) ON CONFLICT(section) DO UPDATE SET content=excluded.content""",
+            (str(uuid.uuid4()),section,content,vector,EMBEDDING_MODEL,"TEST_FIXTURE_NOT_PRODUCTION"))
 
 @pytest.mark.parametrize("name",["일일권장칼로리","체질량지수(BMI)","나이","국가"])
 def test_valid_names(name):
@@ -131,7 +141,12 @@ def test_same_meaning_blocked_carries_matched_term(catalog):
     candidate_ids={c["term_id"] for c in prepared["search"]["candidates"]}
     assert matched_id in candidate_ids
 
-def test_multiturn_help_does_not_become_definition():
+def test_multiturn_help_does_not_become_definition(monkeypatch):
+    # Abbreviation suggestion calls the real LLM; stub it so this stays a free,
+    # deterministic test like the rest of the suite (see suggest_abbreviation's
+    # own unavailable-path test below for the paid-call boundary).
+    monkeypatch.setattr(conversation,"suggest_abbreviation",
+        lambda term_name: AbbreviationResult(abbreviation="TEST_ABBR",rationale="테스트 고정값",method="test_stub"))
     with db.connect() as conn:
         conn.execute("INSERT INTO domains(code,description,source) VALUES('수N7','테스트 숫자 도메인','TEST')")
     def apply(revision,intent,value="",confirmed=False):
@@ -141,10 +156,86 @@ def test_multiturn_help_does_not_become_definition():
     assert apply(2,"set_domain","수N7")["state"]["stage"]=="awaiting_definition"
     result=apply(3,"show_candidates","잠깐, 기존 용어 정의 다시 보여줘")
     assert "definition" not in result["state"]
-    assert apply(4,"set_definition","하루에 섭취하도록 권장하는 에너지 기준량")["state"]["stage"]=="awaiting_confirm"
-    assert apply(5,"help")["state"]["stage"]=="awaiting_confirm"
-    assert apply(6,"confirm_registration",confirmed=True)["state"]["stage"]=="submitted"
-    assert not apply(6,"confirm_registration",confirmed=True)["applied"]
+    result=apply(4,"set_definition","하루에 섭취하도록 권장하는 에너지 기준량")
+    assert result["state"]["stage"]=="awaiting_abbreviation"
+    assert result["state"]["abbreviation_suggestion"]["abbreviation"]=="TEST_ABBR"
+    assert apply(5,"help")["state"]["stage"]=="awaiting_abbreviation"
+    result=apply(6,"set_abbreviation","test_abbr")
+    assert result["state"]["stage"]=="awaiting_confirm"
+    assert result["state"]["english_abbr"]=="TEST_ABBR"
+    assert apply(7,"help")["state"]["stage"]=="awaiting_confirm"
+    assert apply(8,"confirm_registration",confirmed=True)["state"]["stage"]=="submitted"
+    assert not apply(8,"confirm_registration",confirmed=True)["applied"]
+
+def test_check_guideline_no_index_is_compliant():
+    from term_service.guideline import check_guideline
+    result=check_guideline("정보")
+    assert result.compliant
+    assert result.method=="no_guideline_indexed"
+
+def test_check_guideline_unavailable_when_no_api_key(monkeypatch):
+    import term_service.guideline as module
+    insert_guideline_chunk("2-1. 용어 전체 길이 기준","최소 길이는 공백 제외 2자 이상이어야 한다.")
+    monkeypatch.setattr(module,"api_key",lambda:None)
+    result=module.check_guideline("정보")
+    assert result.compliant  # fails open, matching compare()'s UNCERTAIN-not-blocking philosophy
+    assert result.method=="unavailable"
+    assert result.error_code=="LLM_NOT_CONFIGURED"
+    assert result.evidence  # retrieval itself is local (fastembed) and still ran
+
+def test_validate_abbreviation_format():
+    from term_service.abbreviation import validate_abbreviation
+    value,error=validate_abbreviation("daily_rec_cal")
+    assert value=="DAILY_REC_CAL" and error is None
+    value,error=validate_abbreviation("가나다")
+    assert value is None and error=="INVALID_ABBREVIATION_FORMAT"
+    value,error=validate_abbreviation("D")
+    assert value is None and error=="INVALID_ABBREVIATION_FORMAT"
+
+def test_validate_abbreviation_uniqueness(catalog):
+    from term_service.abbreviation import validate_abbreviation
+    with db.connect() as conn:
+        conn.execute("UPDATE standard_terms SET english_abbr='BMI' WHERE name='체질량지수'")
+    value,error=validate_abbreviation("bmi")
+    assert value is None and error=="ABBREVIATION_ALREADY_USED"
+
+def test_suggest_abbreviation_unavailable_when_no_api_key(monkeypatch):
+    import term_service.abbreviation as module
+    monkeypatch.setattr(module,"api_key",lambda:None)
+    result=module.suggest_abbreviation("일일권장열량")
+    assert result.abbreviation==""
+    assert result.method=="unavailable"
+    assert result.error_code=="LLM_NOT_CONFIGURED"
+
+@pytest.mark.skipif(os.getenv("RUN_LLM_TESTS")!="1",reason="Explicit low-volume paid API smoke test")
+def test_real_guideline_blocks_generic_word():
+    insert_guideline_chunk("2. 표준용어 작성 규칙",
+        "지나치게 포괄적이거나 그 자체로 의미가 성립하지 않는 단어는 단독으로 표준용어가 될 수 없다. "
+        "예: 값, 정보, 데이터, 항목, 구분, 내용, 사항 - 이런 단어는 반드시 앞에 대상을 특정하는 표준단어가 붙어야 한다.")
+    with db.connect() as conn:
+        conn.execute("INSERT INTO domains(code,description,source) VALUES('수N7','테스트 숫자 도메인','TEST')")
+    def apply(revision,intent,value="",confirmed=False):
+        return conversation.apply("guideline-conv","user",revision,{"intent":intent,"value":value,"confirmed":confirmed})
+    apply(0,"propose_term","정보")
+    result=apply(1,"confirm_term",confirmed=True)
+    assert result["state"]["stage"]=="awaiting_guideline_choice"
+    assert result["state"]["guideline_check"]["compliant"] is False
+
+@pytest.mark.skipif(os.getenv("RUN_LLM_TESTS")!="1",reason="Explicit low-volume paid API smoke test")
+def test_real_abbreviation_suggestion_reaches_confirm(catalog):
+    with db.connect() as conn:
+        conn.execute("INSERT INTO domains(code,description,source) VALUES('수N7','테스트 숫자 도메인','TEST') ON CONFLICT DO NOTHING")
+    def apply(revision,intent,value="",confirmed=False):
+        return conversation.apply("abbr-conv","user",revision,{"intent":intent,"value":value,"confirmed":confirmed})
+    apply(0,"propose_term","일일평균걸음수")
+    apply(1,"confirm_term",confirmed=True)
+    apply(2,"set_domain","수N7")
+    result=apply(3,"set_definition","하루 동안 걸은 평균 걸음 수")
+    assert result["state"]["stage"]=="awaiting_abbreviation"
+    assert result["state"]["abbreviation_suggestion"]["abbreviation"]
+    result=apply(4,"set_abbreviation","DAILY_AVG_STEP")
+    assert result["state"]["stage"]=="awaiting_confirm"
+    assert result["state"]["english_abbr"]=="DAILY_AVG_STEP"
 
 @pytest.mark.skipif(os.getenv("RUN_LLM_TESTS")!="1",reason="Explicit low-volume paid API smoke test")
 def test_real_llm_definition_comparison(catalog):

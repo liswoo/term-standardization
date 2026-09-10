@@ -5,12 +5,14 @@ from typing import Literal
 from pydantic import Field
 from psycopg.types.json import Jsonb
 from . import db, registration
+from .abbreviation import suggest_abbreviation, validate_abbreviation
+from .guideline import check_guideline
 from .naming import strip_trailing_particle
 from .schemas import Schema, RegistrationInput
 from .search import validate_name, search, domain_usage
 
 class ConversationAction(Schema):
-    intent: Literal["propose_term","confirm_term","set_domain","set_definition","confirm_registration",
+    intent: Literal["propose_term","confirm_term","set_domain","set_definition","set_abbreviation","confirm_registration",
                     "show_candidates","edit_term","edit_domain","edit_definition","cancel","restart","help","unknown"]
     value: str = Field(default="",max_length=4000)
     confirmed: bool = False
@@ -54,6 +56,18 @@ def transition(state, action, requester, conversation_id):
         valid=validate_name(s["term_name"])
         s["validation"]=valid.model_dump()
         if not valid.valid:
+            # Stale from a previous, different candidate term this turn is replacing;
+            # leaving it would let render show an old guideline reason for a mechanical
+            # violation on a brand new term.
+            s.pop("guideline_check",None)
+            s["stage"]="awaiting_guideline_choice"
+            return s,{"next_action":"CHOOSE_CORRECTION"}
+        # Mechanical validate() only checks syntax (length/character-set/noun-ending);
+        # it cannot express a word-choice rule like "no standalone generic nouns" from
+        # standard_guide.md section 2-1. This RAG check catches exactly that gap.
+        guideline=check_guideline(s["term_name"])
+        s["guideline_check"]=guideline.model_dump()
+        if not guideline.compliant:
             s["stage"]="awaiting_guideline_choice"
             return s,{"next_action":"CHOOSE_CORRECTION"}
         result=search(s["term_name"])
@@ -68,7 +82,7 @@ def transition(state, action, requester, conversation_id):
         if "term_name" not in s or "search" not in s:
             return s,{"error":"CONFIRM_TERM_FIRST"}
         registration.cancel(requester,conversation_id)
-        for name in ["domain","definition","preparation"]:
+        for name in ["domain","definition","preparation","abbreviation_suggestion","english_abbr"]:
             s.pop(name,None)
         s["stage"]="awaiting_domain_choice"
         return s,{"next_action":"CHOOSE_DOMAIN"}
@@ -88,8 +102,8 @@ def transition(state, action, requester, conversation_id):
         if not s.get("domain"):
             return s,{"error":"CHOOSE_DOMAIN_FIRST"}
         registration.cancel(requester,conversation_id)
-        s.pop("preparation",None)
-        s.pop("definition",None)
+        for name in ["preparation","definition","abbreviation_suggestion","english_abbr"]:
+            s.pop(name,None)
         s["stage"]="awaiting_definition"
         return s,{"next_action":"INPUT_DEFINITION"}
     if a.intent=="set_definition":
@@ -100,16 +114,33 @@ def transition(state, action, requester, conversation_id):
         prepared=registration.prepare(p)
         s["definition"]=p.definition
         s["preparation"]=prepared
-        s["stage"]="awaiting_confirm" if prepared.get("ready") else "definition_blocked"
-        return s,{"next_action":"FINAL_CONFIRMATION" if prepared.get("ready") else "EXPLAIN_BLOCK"}
+        if not prepared.get("ready"):
+            s["stage"]="definition_blocked"
+            return s,{"next_action":"EXPLAIN_BLOCK"}
+        # A Korean term and its English abbreviation are registered as one set; recommend
+        # one now so the user isn't left to invent a compliant abbreviation unaided.
+        s["abbreviation_suggestion"]=suggest_abbreviation(s["term_name"]).model_dump()
+        s.pop("english_abbr",None)
+        s["stage"]="awaiting_abbreviation"
+        return s,{"next_action":"CONFIRM_ABBREVIATION"}
+    if a.intent=="set_abbreviation":
+        if stage!="awaiting_abbreviation":
+            return s,{"error":"UNEXPECTED_INTENT"}
+        value,error=validate_abbreviation(a.value)
+        if error:
+            return s,{"error":error}
+        s["english_abbr"]=value
+        s["stage"]="awaiting_confirm"
+        return s,{"next_action":"FINAL_CONFIRMATION"}
     if a.intent=="confirm_registration":
-        if stage!="awaiting_confirm" or not s.get("preparation",{}).get("ready"):
+        if stage!="awaiting_confirm" or not s.get("preparation",{}).get("ready") or not s.get("english_abbr"):
             return s,{"error":"FINAL_CONFIRMATION_NOT_READY"}
         if not a.confirmed:
             registration.cancel(requester,conversation_id)
             s["stage"]="cancelled"
             return s,{"next_action":"CANCELLED"}
-        result=registration.submit(s["preparation"]["confirmation_id"],requester,conversation_id,True)
+        result=registration.submit(s["preparation"]["confirmation_id"],requester,conversation_id,True,
+            english_abbr=s["english_abbr"])
         s["registration"]=result
         # A failed submit() must not leave the conversation parked in
         # awaiting_confirm: preparation.ready is still true, so a repeated

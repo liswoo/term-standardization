@@ -21,7 +21,7 @@ def test_database():
 def clean_test_database(test_database):
     assert db.DATABASE_URL.endswith("/terms_test")
     with db.connect() as conn:
-        conn.execute("TRUNCATE registration_requests,registration_preparations,comparison_cache,conversation_state,standard_terms,domains,abbreviation_aliases CASCADE")
+        conn.execute("TRUNCATE registration_requests,registration_preparations,comparison_cache,conversation_state,standard_terms,domains,abbreviation_aliases,guideline_chunks CASCADE")
 
 @pytest.fixture
 def catalog(tmp_path):

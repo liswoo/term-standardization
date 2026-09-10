@@ -59,7 +59,7 @@ def prepare(payload: RegistrationInput):
     return {"ready":True,"confirmation_id":prep_id,"expires_at":expires.isoformat(),"payload":payload.model_dump(),
         "assessment":assessment,"requires_final_confirmation":True,"resulting_status":"PENDING_REVIEW"}
 
-def submit(confirmation_id, requester, conversation_id, confirmed):
+def submit(confirmation_id, requester, conversation_id, confirmed, english_abbr=""):
     uuid.UUID(confirmation_id)
     if confirmed is not True:
         return {"created":False,"code":"EXPLICIT_CONFIRMATION_REQUIRED"}
@@ -67,7 +67,7 @@ def submit(confirmation_id, requester, conversation_id, confirmed):
         prep=conn.execute("SELECT * FROM registration_preparations WHERE id=%s FOR UPDATE",(confirmation_id,)).fetchone()
         if not prep or prep["requester"]!=requester or prep["conversation_id"]!=conversation_id:
             return {"created":False,"code":"CONFIRMATION_NOT_FOUND"}
-        previous=conn.execute("SELECT id::text AS request_id,status,created_at FROM registration_requests WHERE preparation_id=%s",(confirmation_id,)).fetchone()
+        previous=conn.execute("SELECT id::text AS request_id,status,created_at,english_abbr FROM registration_requests WHERE preparation_id=%s",(confirmation_id,)).fetchone()
         if previous:
             previous["created_at"]=previous["created_at"].isoformat()
             return {"created":False,"idempotent_replay":True,**previous}
@@ -84,11 +84,11 @@ def submit(confirmation_id, requester, conversation_id, confirmed):
         if pending:
             return {"created":False,"code":"PENDING_REQUEST_ALREADY_EXISTS"}
         row=conn.execute("""INSERT INTO registration_requests
-            (id,preparation_id,term_name,normalized_name,definition,domain,synonyms,requester,conversation_id,assessment)
-            VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
-            RETURNING id::text AS request_id,status,created_at""",
+            (id,preparation_id,term_name,normalized_name,definition,domain,synonyms,english_abbr,requester,conversation_id,assessment)
+            VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+            RETURNING id::text AS request_id,status,created_at,english_abbr""",
             (str(uuid.uuid4()),confirmation_id,p["term_name"],key(p["term_name"]),p["definition"],p["domain"],
-             p["synonyms"],requester,conversation_id,Jsonb(prep["assessment"]))).fetchone()
+             p["synonyms"],english_abbr or None,requester,conversation_id,Jsonb(prep["assessment"]))).fetchone()
         conn.execute("UPDATE registration_preparations SET status='SUBMITTED' WHERE id=%s",(confirmation_id,))
     row["created_at"]=row["created_at"].isoformat()
     return {"created":True,"is_official_standard":False,**row,"term_name":p["term_name"],"definition":p["definition"],"domain":p["domain"]}

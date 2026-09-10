@@ -6,19 +6,19 @@
     {"code":"명V100","description":"시나리오용 명칭 도메인: 문자열 최대 100자"},
     {"code":"코드C2","description":"시나리오용 분류 코드: 문자 2자리"}
   ],
-  "abbreviations": [{"abbreviation":"BMI","names":["체질량지수"]}],
+  "abbreviations": [{"abbreviation":"BMI","names":["체질량지수"]},{"abbreviation":"BMR","names":["기초대사열량"]}],
   "terms": [
-    {"name":"일일권장열량","definition":"건강 유지를 위해 개인이 하루에 섭취하도록 권장되는 에너지 기준량. 실제 섭취한 양과 구별한다.","domain":"수N7","synonyms":["하루권장열량","일일권장에너지"]},
-    {"name":"일일섭취칼로리","definition":"개인이 하루 동안 음식과 음료를 통해 실제로 섭취한 에너지의 총량.","domain":"수N7","synonyms":["하루섭취열량","일일섭취열량"]},
-    {"name":"일일소모열량","definition":"개인이 하루 동안 기초대사와 신체 활동으로 실제 소모한 에너지의 총량.","domain":"수N7","synonyms":["하루소모칼로리"]},
-    {"name":"기초대사열량","definition":"안정 상태에서 생명 유지에 필요한 기본 신체 기능이 하루 동안 소비하는 에너지량.","domain":"수N7","synonyms":["기초대사량"]},
-    {"name":"운동소모열량","definition":"일상적인 기초대사와 구분하여 특정 운동 활동으로 추가 소비한 에너지량.","domain":"수N7","synonyms":["운동칼로리"]},
-    {"name":"열량분류코드","definition":"열량 구간에 따라 음식의 에너지 수준을 분류하는 두 자리 코드.","domain":"코드C2","synonyms":[]},
-    {"name":"체질량지수","definition":"체중을 미터 단위 키의 제곱으로 나누어 산출하는 체격 평가 지표.","domain":"율N5,2","synonyms":["BMI"]},
-    {"name":"음식명","definition":"섭취한 음식의 종류를 식별하는 명칭.","domain":"명V100","synonyms":["식품명"]},
-    {"name":"영양소명","definition":"식품에 포함된 영양 성분의 종류를 식별하는 명칭.","domain":"명V100","synonyms":["영양성분명"]},
-    {"name":"식단명","definition":"여러 음식으로 구성된 식사 계획을 식별하는 명칭.","domain":"명V100","synonyms":["식사계획명"]},
-    {"name":"식단분류코드","definition":"식단을 구성 목적에 따라 구분하는 두 자리 분류 코드.","domain":"코드C2","synonyms":[]},
-    {"name":"나이","definition":"기준일 현재 개인이 출생 후 경과한 만 연수.","domain":"수N7","synonyms":["만나이"]}
+    {"name":"일일권장열량","definition":"건강 유지를 위해 개인이 하루에 섭취하도록 권장되는 에너지 기준량. 실제 섭취한 양과 구별한다.","domain":"수N7","synonyms":["하루권장열량","일일권장에너지"],"english_abbr":"DAILY_REC_CAL"},
+    {"name":"일일섭취칼로리","definition":"개인이 하루 동안 음식과 음료를 통해 실제로 섭취한 에너지의 총량.","domain":"수N7","synonyms":["하루섭취열량","일일섭취열량"],"english_abbr":"DAILY_INTK_CAL"},
+    {"name":"일일소모열량","definition":"개인이 하루 동안 기초대사와 신체 활동으로 실제 소모한 에너지의 총량.","domain":"수N7","synonyms":["하루소모칼로리"],"english_abbr":"DAILY_CONS_CAL"},
+    {"name":"기초대사열량","definition":"안정 상태에서 생명 유지에 필요한 기본 신체 기능이 하루 동안 소비하는 에너지량.","domain":"수N7","synonyms":["기초대사량"],"english_abbr":"BMR"},
+    {"name":"운동소모열량","definition":"일상적인 기초대사와 구분하여 특정 운동 활동으로 추가 소비한 에너지량.","domain":"수N7","synonyms":["운동칼로리"],"english_abbr":"EXER_CONS_CAL"},
+    {"name":"열량분류코드","definition":"열량 구간에 따라 음식의 에너지 수준을 분류하는 두 자리 코드.","domain":"코드C2","synonyms":[],"english_abbr":"CAL_CLS_CD"},
+    {"name":"체질량지수","definition":"체중을 미터 단위 키의 제곱으로 나누어 산출하는 체격 평가 지표.","domain":"율N5,2","synonyms":["BMI"],"english_abbr":"BMI"},
+    {"name":"음식명","definition":"섭취한 음식의 종류를 식별하는 명칭.","domain":"명V100","synonyms":["식품명"],"english_abbr":"FOOD_NM"},
+    {"name":"영양소명","definition":"식품에 포함된 영양 성분의 종류를 식별하는 명칭.","domain":"명V100","synonyms":["영양성분명"],"english_abbr":"NUTR_NM"},
+    {"name":"식단명","definition":"여러 음식으로 구성된 식사 계획을 식별하는 명칭.","domain":"명V100","synonyms":["식사계획명"],"english_abbr":"MEAL_NM"},
+    {"name":"식단분류코드","definition":"식단을 구성 목적에 따라 구분하는 두 자리 분류 코드.","domain":"코드C2","synonyms":[],"english_abbr":"MEAL_CLS_CD"},
+    {"name":"나이","definition":"기준일 현재 개인이 출생 후 경과한 만 연수.","domain":"수N7","synonyms":["만나이"],"english_abbr":"AGE"}
   ]
 }

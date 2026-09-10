@@ -5,6 +5,8 @@ import logging
 import uuid
 from mcp.server.mcpserver import MCPServer
 from . import db, registration
+from .abbreviation import suggest_abbreviation, validate_abbreviation
+from .guideline import check_guideline
 from .naming import morphology
 from .schemas import RegistrationInput
 from .search import search, relational, vector_search, validate_name, get_term, domain_usage
@@ -75,10 +77,10 @@ def list_terms(limit: int = 100) -> dict:
     limit=min(max(limit,1),200)
     with db.connect() as conn:
         approved=conn.execute(
-            "SELECT id::text AS id, name AS term_name, definition, domain, synonyms, 'APPROVED' AS status, created_at "
+            "SELECT id::text AS id, name AS term_name, definition, domain, synonyms, english_abbr, 'APPROVED' AS status, created_at "
             "FROM standard_terms ORDER BY created_at DESC LIMIT %s",(limit,)).fetchall()
         pending=conn.execute(
-            "SELECT id::text AS id, term_name, definition, domain, synonyms, status, created_at "
+            "SELECT id::text AS id, term_name, definition, domain, synonyms, english_abbr, status, created_at "
             "FROM registration_requests WHERE status!='REJECTED' ORDER BY created_at DESC LIMIT %s",(limit,)).fetchall()
         descriptions={r["code"]:r["description"] for r in conn.execute("SELECT code,description FROM domains").fetchall()}
     combined=approved+pending
@@ -103,11 +105,34 @@ def prepare_term_registration(term_name: str, definition: str, domain: str, requ
         requester=requester,conversation_id=conversation_id,synonyms=synonyms or []))
 
 @tool
-def create_term_registration_request(confirmation_id: str, requester: str, conversation_id: str, confirmed: bool = False) -> dict:
+def create_term_registration_request(confirmation_id: str, requester: str, conversation_id: str,
+                                     confirmed: bool = False, english_abbr: str = "") -> dict:
     """Submit the displayed payload only after explicit user confirmation on a subsequent turn.
     Produces PENDING_REVIEW, never an official standard. Repeated confirmation is idempotent.
     """
-    return registration.submit(confirmation_id,requester,conversation_id,confirmed)
+    return registration.submit(confirmation_id,requester,conversation_id,confirmed,english_abbr)
+
+@tool
+def check_term_guideline(term_name: str) -> dict:
+    """RAG check of a candidate term name against the vectorized standard_guide.md.
+    Catches word-choice rules (e.g. no standalone generic nouns) that validate_term_name
+    cannot express. Returns the retrieved guideline excerpts as evidence alongside the verdict.
+    """
+    return check_guideline(term_name)
+
+@tool
+def suggest_english_abbreviation(term_name: str) -> dict:
+    """Recommend an English abbreviation for a Korean standard term, grounded in
+    standard_guide.md's abbreviation rules (RAG) plus every abbreviation already
+    assigned in the catalog, for consistency. The user confirms or overrides it."""
+    return suggest_abbreviation(term_name)
+
+@tool
+def validate_english_abbreviation(abbreviation: str) -> dict:
+    """Check format (uppercase/digits/underscore, <=20 chars) and catalog-wide uniqueness
+    of a user-provided English abbreviation."""
+    value,error=validate_abbreviation(abbreviation)
+    return {"valid":error is None,"normalized":value,"error_code":error}
 
 @tool
 def cancel_term_registration(requester: str, conversation_id: str) -> dict:
@@ -151,8 +176,8 @@ def apply_conversation_action(conversation_id: str, requester: str, expected_rev
                               intent: str, value: str = "", confirmed: bool = False) -> dict:
     """Execute one Dify-interpreted action. Never classify a help/query/edit as set_definition.
     One action per user turn. Final confirmation must be a later turn than preparation.
-    Allowed intents: propose_term,confirm_term,set_domain,set_definition,confirm_registration,
-    show_candidates,edit_term,edit_domain,edit_definition,cancel,restart,help,unknown.
+    Allowed intents: propose_term,confirm_term,set_domain,set_definition,set_abbreviation,
+    confirm_registration,show_candidates,edit_term,edit_domain,edit_definition,cancel,restart,help,unknown.
     """
     from .conversation import apply
     return apply(conversation_id,requester,expected_revision,{"intent":intent,"value":value,"confirmed":confirmed})

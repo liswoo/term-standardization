@@ -59,6 +59,34 @@ class ComparisonResult(DefinitionJudgment):
     definition_similarity: float | None = None
     error_code: str | None = None
 
+class GuidelineChunk(Schema):
+    section: str
+    content: str
+    similarity: float
+
+class GuidelineJudgment(Schema):
+    compliant: bool
+    violated_section: str = ""
+    reason: str
+    suggested_term: str = ""
+
+class GuidelineCheckResult(GuidelineJudgment):
+    method: str
+    model: str | None = None
+    evidence: list[GuidelineChunk] = Field(default_factory=list)
+    error_code: str | None = None
+
+class AbbreviationSuggestion(Schema):
+    abbreviation: str
+    rationale: str
+
+class AbbreviationResult(Schema):
+    abbreviation: str
+    rationale: str
+    method: str
+    model: str | None = None
+    error_code: str | None = None
+
 class RegistrationInput(Schema):
     term_name: str = Field(min_length=2, max_length=20)
     definition: str = Field(min_length=5, max_length=4000)
