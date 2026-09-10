@@ -58,21 +58,26 @@ def validate(term: str, aliases: dict[str, list[str]] | None = None) -> Validati
     tokens = morphology(core)["morphemes"] if core else []
     violations = []
     suggestions = []
+    # Reasons are written in Korean (not just the code) so the reply-rendering LLM
+    # can quote them verbatim instead of translating/paraphrasing an English string
+    # on the fly - a small model asked to improvise that translation was prone to
+    # substituting a plausible-sounding but wrong rule (e.g. explaining a length
+    # violation as if it were the noun-ending rule instead).
     if len(re.sub(r"\s+", "", name)) < 2 or len(name) > 20:
-        violations.append(Violation(code="NAME_LENGTH", reason="Non-space length must be >=2; total length must be <=20."))
+        violations.append(Violation(code="NAME_LENGTH", reason="공백을 제외한 글자 수는 2자 이상, 전체 글자 수는 20자 이하여야 합니다."))
     if not re.search(r"[가-힣]", core):
-        violations.append(Violation(code="KOREAN_NOUN_REQUIRED", reason="A Korean noun name is required."))
+        violations.append(Violation(code="KOREAN_NOUN_REQUIRED", reason="한글 명사로 작성해야 합니다."))
     if not re.fullmatch(r"[가-힣\s]+", core) or core != name and not re.fullmatch(r"[가-힣\s]+\([A-Za-z][A-Za-z0-9 .-]*\)", name):
-        violations.append(Violation(code="INVALID_CHARACTERS", reason="Only Korean nouns, spaces and a trailing parenthesized abbreviation are allowed."))
+        violations.append(Violation(code="INVALID_CHARACTERS", reason="한글 명사, 공백, 그리고 뒤에 붙는 영문 약어 괄호 표기 외에는 사용할 수 없습니다."))
     if not re.search(r"[가-힣A-Za-z]", name):
-        violations.append(Violation(code="NO_MEANINGFUL_NAME", reason="A name cannot consist solely of numbers or symbols."))
+        violations.append(Violation(code="NO_MEANINGFUL_NAME", reason="숫자나 기호만으로는 용어명을 구성할 수 없습니다."))
     if tokens:
         last = tokens[-1]
         if last["tag"].startswith("J") and last["form"] in TRAILING_PARTICLES:
-            violations.append(Violation(code="TRAILING_PARTICLE", reason="A grammatical case/topic particle cannot terminate a term."))
+            violations.append(Violation(code="TRAILING_PARTICLE", reason="조사(을/를/이/가/은/는)로 끝날 수 없습니다."))
             suggestions.append(core[:last["start"]].strip())
         elif last["tag"] not in {"NNG", "NNP", "NNB", "NP", "XSN"}:
-            violations.append(Violation(code="NOUN_ENDING_REQUIRED", reason="The final morpheme must be nominal."))
+            violations.append(Violation(code="NOUN_ENDING_REQUIRED", reason="마지막 형태소가 명사형이어야 합니다."))
     for candidate in (aliases or {}).get(key(name), []):
         suggestions.extend([candidate, f"{candidate}({name})"] if re.fullmatch("[A-Za-z]+", name) else [candidate])
     return ValidationResult(valid=not violations, normalized_term=name, violations=violations,

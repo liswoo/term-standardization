@@ -83,7 +83,13 @@ def check_guideline(term_name: str) -> GuidelineCheckResult:
         # "feels generic"/"ends similarly" instinct from overriding the rule.
         judgment_data = judgment.model_dump()
         if judgment_data["matched_forbidden_word"] != term_name:
-            judgment_data["compliant"] = True
+            # Clear the narrative fields along with the verdict: leaving reason/
+            # violated_section/suggested_term describing a rejection next to
+            # compliant=True produced a self-contradictory object that the reply
+            # LLM (which sees the raw state, not just the boolean) faithfully
+            # quoted anyway - reporting a violation ("체온측정값" -> suggested
+            # "체온측정치") for a term this guardrail had just cleared.
+            judgment_data.update(compliant=True, violated_section="", reason="", suggested_term="")
         return GuidelineCheckResult(**base, **judgment_data, method="structured_llm_rag", model=LLM_MODEL)
     except Exception as error:
         # Fail open, matching compare()'s UNCERTAIN-not-blocking philosophy: a checker

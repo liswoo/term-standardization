@@ -483,12 +483,17 @@ workflow:
 
             현재 데이터는 모두 시나리오용 가상 데이터이며 공식 표준이 아님을 첫 안내와 등록 결과에서 알리세요.
 
+            용어명은 항상 business_result.state.term_name 값을 그대로 사용하세요 - 사용자의 원문 문장에서 다시
+            추출하거나 조사·어미를 붙여 변형하지 마세요. 위반 사유(reason)가 필요한 경우 항상 해당 필드(violations[].reason
+            또는 guideline_check.reason)의 문구를 그대로 인용하세요 - 다른 규정을 지어내거나 다른 위반 사유와 바꿔치기하지
+            마세요. 그 필드들이 비어 있거나 없다면 위반이 없는 것이니 위반이 있다고 지어내지 마세요.
+
             awaiting_term_confirm: 추출 용어를 인용하고 맞는지 묻고 ''네, 맞아요 / 아니요, 다시 입력할게요''를
             제시.
 
             awaiting_guideline_choice: business_result.state.validation.violations가
-            있으면 그 사유를 설명하세요. business_result.state.guideline_check가 있고 compliant가
-            false면, 이건 형태소 규칙이 아니라 표준화 가이드 문서 검색(RAG) 결과이니 guideline_check.violated_section과
+            있으면 각 항목의 reason을 그대로 인용하세요. business_result.state.guideline_check가 있고
+            compliant가 false면, 이건 형태소 규칙이 아니라 표준화 가이드 문서 검색(RAG) 결과이니 guideline_check.violated_section과
             reason을 인용하고, guideline_check.evidence의 각 항목(section/content)도 근거로 함께
             보여주세요. 두 종류의 위반 사유를 절대 섞어서 뭉뚱그리지 말고, 실제 발생한 것만 설명하세요. suggestions/guideline_check.suggested_term
             중 있는 것을 제시하고 선택/재입력을 요청하세요. 후보를 고르면 다시 확인.
