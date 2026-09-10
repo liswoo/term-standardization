@@ -220,12 +220,12 @@ workflow:
           \ -> help.\", 'awaiting_confirm': \"At awaiting_confirm, explicit yes/등록해줘\
           \ -> confirm_registration true; no/cancel -> cancel.\\nNever confirm registration\
           \ in another stage. A general initial '등록해줘' is NOT final consent.\"}\n\
-          TERMINAL_RULE='At submitted/registration_failed/existing_term_found/definition_blocked/cancelled,\
+          TERMINAL_RULE='At submitted/registration_failed/existing_term_found/pending_request_found/definition_blocked/cancelled,\
           \ a new name -> propose_term.'\nTERMINAL_STAGES=['submitted', 'registration_failed',\
-          \ 'existing_term_found', 'definition_blocked', 'cancelled']\n\ndef main(stage:\
-          \ str) -> dict:\n    if stage in STAGE_RULES:\n        return {\"rules\"\
-          :STAGE_RULES[stage]}\n    if stage in TERMINAL_STAGES:\n        return {\"\
-          rules\":TERMINAL_RULE}\n    return {\"rules\":\"\"}\n"
+          \ 'existing_term_found', 'pending_request_found', 'definition_blocked',\
+          \ 'cancelled']\n\ndef main(stage: str) -> dict:\n    if stage in STAGE_RULES:\n\
+          \        return {\"rules\":STAGE_RULES[stage]}\n    if stage in TERMINAL_STAGES:\n\
+          \        return {\"rules\":TERMINAL_RULE}\n    return {\"rules\":\"\"}\n"
       position:
         x: 1020
         y: 150
@@ -431,19 +431,26 @@ workflow:
           \    # lives in a separate search.candidates list - pre-join them here instead\
           \ of\n    # expecting the reply LLM to correlate two arrays by id inside\
           \ a large JSON blob.\n    prep=state.get(\"preparation\",{})\n    assessment=prep.get(\"\
-          assessment\") or prep\n    comparisons=assessment.get(\"comparisons\") or\
-          \ []\n    comparison_lines=[]\n    if comparisons:\n        candidates_by_id={c[\"\
-          term_id\"]:c for c in assessment.get(\"search\",{}).get(\"candidates\",[])}\n\
-          \        for comp in comparisons:\n            if comp.get(\"relation\"\
-          )==\"DISTINCT\":\n                continue\n            cand=candidates_by_id.get(comp.get(\"\
-          existing_term_id\"))\n            if not cand:\n                continue\n\
-          \            pct=round((comp.get(\"confidence\") or 0)*100)\n          \
-          \  comparison_lines.append(f\"- 기존 표준 용어 '{cand['name']}' (도메인 {cand['domain']}):\
-          \ '{cand['definition']}' -> 판정: {comp['relation']} (신뢰도 {pct}%). 사유: {comp['reason']}\"\
-          )\n    comparison_summary=\"\\n\".join(comparison_lines)\n    return {\"\
-          context\":json.dumps({\"business_result\":result,\"supplemental_knowledge\"\
-          :reference,\"domain_summary\":domain_summary,\"comparison_summary\":comparison_summary,\"\
-          options\":options},ensure_ascii=False)}\n"
+          assessment\") or prep\n    # comparison_summary is only ever meant to explain\
+          \ awaiting_confirm's final\n    # review or a SAME_MEANING/existing_term_found\
+          \ block (see RENDER's own stage\n    # instructions below) - state.preparation\
+          \ isn't cleared on later stages\n    # (e.g. awaiting_abbreviation, its\
+          \ errors), so without this gate a stale\n    # comparison from the definition\
+          \ step kept bleeding into unrelated replies\n    # like an abbreviation-collision\
+          \ error, misattributing the actual cause.\n    comparisons=(assessment.get(\"\
+          comparisons\") or []) if stage in (\n        \"awaiting_confirm\",\"existing_term_found\"\
+          ,\"definition_blocked\") else []\n    comparison_lines=[]\n    if comparisons:\n\
+          \        candidates_by_id={c[\"term_id\"]:c for c in assessment.get(\"search\"\
+          ,{}).get(\"candidates\",[])}\n        for comp in comparisons:\n       \
+          \     if comp.get(\"relation\")==\"DISTINCT\":\n                continue\n\
+          \            cand=candidates_by_id.get(comp.get(\"existing_term_id\"))\n\
+          \            if not cand:\n                continue\n            pct=round((comp.get(\"\
+          confidence\") or 0)*100)\n            comparison_lines.append(f\"- 기존 표준\
+          \ 용어 '{cand['name']}' (도메인 {cand['domain']}): '{cand['definition']}' ->\
+          \ 판정: {comp['relation']} (신뢰도 {pct}%). 사유: {comp['reason']}\")\n    comparison_summary=\"\
+          \\n\".join(comparison_lines)\n    return {\"context\":json.dumps({\"business_result\"\
+          :result,\"supplemental_knowledge\":reference,\"domain_summary\":domain_summary,\"\
+          comparison_summary\":comparison_summary,\"options\":options},ensure_ascii=False)}\n"
       position:
         x: 2380
         y: 150
@@ -513,6 +520,11 @@ workflow:
             왜 같은 의미로 판정됐는지 정리되어 있으니 그 내용을 그대로 인용해 신규 등록이 차단되었음을 알리고 기존 용어 사용을 권장하세요.
             이 상태에서는 등록 여부나 네/아니오 확인 질문을 절대로 만들지 마세요. 다른 용어를 검토하려면 새 이름을 입력할 수 있다고만
             안내하세요.
+
+            pending_request_found: business_result.state.pending_request에 이미 검토 대기
+            중인 신청 정보(용어명/정의/도메인/영문약어/제출일)가 있습니다. 그 내용을 그대로 안내하고 이미 접수되어 검토 중이므로 같은
+            이름으로 새로 등록할 수 없다고 설명하세요. 도메인/정의/약어를 다시 입력하라고 요청하지 마세요. 다른 용어를 등록하려면 새
+            이름을 말해달라고만 안내하세요.
 
             submitted: request_id/용어명/정의/도메인/PENDING_REVIEW를 보여주고 담당자 승인 전 정식 표준이
             아님을 명시.

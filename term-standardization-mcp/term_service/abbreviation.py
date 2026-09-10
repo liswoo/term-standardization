@@ -40,7 +40,12 @@ def suggest_abbreviation(term_name: str) -> AbbreviationResult:
         existing = conn.execute(
             "SELECT name,english_abbr FROM standard_terms WHERE english_abbr IS NOT NULL ORDER BY name").fetchall()
         aliases = conn.execute("SELECT abbreviation,names FROM abbreviation_aliases").fetchall()
-        reserved = {r["english_abbr"] for r in existing}
+        # A still-pending request already claims its abbreviation too (validate_abbreviation
+        # enforces this at confirmation time) - reserve it here as well so the suggestion
+        # itself avoids the collision instead of the user only discovering it later.
+        pending = conn.execute(
+            "SELECT english_abbr FROM registration_requests WHERE english_abbr IS NOT NULL AND status<>'REJECTED'").fetchall()
+        reserved = {r["english_abbr"] for r in existing} | {r["english_abbr"] for r in pending}
     if not api_key():
         return AbbreviationResult(abbreviation="", rationale="추천 모델이 설정되지 않음",
             method="unavailable", error_code="LLM_NOT_CONFIGURED")

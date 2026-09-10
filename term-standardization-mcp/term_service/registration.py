@@ -93,6 +93,21 @@ def submit(confirmation_id, requester, conversation_id, confirmed, english_abbr=
     row["created_at"]=row["created_at"].isoformat()
     return {"created":True,"is_official_standard":False,**row,"term_name":p["term_name"],"definition":p["definition"],"domain":p["domain"]}
 
+def find_pending(term_name):
+    """The most recent still-pending request for this exact normalized name, if any.
+
+    confirm_term uses this to short-circuit a re-registration of a term that is
+    already awaiting review, before the user re-walks the whole domain/definition/
+    abbreviation flow only to hit PENDING_REQUEST_ALREADY_EXISTS at the very end.
+    """
+    with db.connect() as conn:
+        row=conn.execute("""SELECT id::text AS request_id,term_name,definition,domain,english_abbr,created_at
+            FROM registration_requests WHERE normalized_name=%s AND status='PENDING_REVIEW'
+            ORDER BY created_at DESC LIMIT 1""",(key(term_name),)).fetchone()
+    if row:
+        row["created_at"]=row["created_at"].isoformat()
+    return row
+
 def cancel(requester,conversation_id):
     with db.connect() as conn:
         rows=conn.execute("UPDATE registration_preparations SET status='CANCELLED' WHERE requester=%s AND conversation_id=%s AND status='AWAITING_CONFIRMATION' RETURNING id",

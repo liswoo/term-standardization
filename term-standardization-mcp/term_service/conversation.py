@@ -75,6 +75,15 @@ def transition(state, action, requester, conversation_id):
         if result.match_type=="EXACT_MATCH":
             s["stage"]="existing_term_found"
             return s,{"next_action":"USE_EXISTING"}
+        # A term already awaiting review must not be silently re-collected through
+        # domain/definition/abbreviation only to fail at the final submit() step
+        # (PENDING_REQUEST_ALREADY_EXISTS) - catch it here, right after confirming
+        # the name, same as EXACT_MATCH does for already-approved terms.
+        pending=registration.find_pending(s["term_name"])
+        if pending:
+            s["pending_request"]=pending
+            s["stage"]="pending_request_found"
+            return s,{"next_action":"PENDING_REQUEST_FOUND"}
         s["domains"]=domain_usage(s["term_name"],[c.term_id for c in result.candidates])
         s["stage"]="awaiting_domain_choice"
         return s,{"next_action":"CHOOSE_DOMAIN","prefer_existing":result.match_type=="SYNONYM_MATCH"}

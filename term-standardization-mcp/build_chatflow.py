@@ -98,8 +98,8 @@ Only an actual question about the abbreviation or its rules -> help.""",
 """At awaiting_confirm, explicit yes/등록해줘 -> confirm_registration true; no/cancel -> cancel.
 Never confirm registration in another stage. A general initial '등록해줘' is NOT final consent.""",
 }
-CLASSIFY_TERMINAL_RULE="At submitted/registration_failed/existing_term_found/definition_blocked/cancelled, a new name -> propose_term."
-CLASSIFY_TERMINAL_STAGES=["submitted","registration_failed","existing_term_found","definition_blocked","cancelled"]
+CLASSIFY_TERMINAL_RULE="At submitted/registration_failed/existing_term_found/pending_request_found/definition_blocked/cancelled, a new name -> propose_term."
+CLASSIFY_TERMINAL_STAGES=["submitted","registration_failed","existing_term_found","pending_request_found","definition_blocked","cancelled"]
 CLASSIFY_TAIL="""Edit definition/domain intents only change stage; ask for the replacement on the next turn.
 No invented term/domain/definition. If unsure use unknown. value is empty when not applicable.
 confirmed is a JSON boolean and defaults false."""
@@ -120,6 +120,7 @@ awaiting_definition: 선택 도메인을 확인하고 사용자가 등록하려�
 awaiting_confirm: comparison_summary가 비어있지 않으면 그 줄들(비교 대상 기존 표준 용어명·도메인·정의·판정·사유)을 절대 생략·요약하지 말고 목록 그대로 사용자에게 보여주세요. "유사성이 있다"처럼 뭉뚱그리지 말고 구체적으로 어떤 기존 용어와 왜 그런 판정인지 밝히세요. UNCERTAIN은 의미가 다르다고 단정하지 말고 담당자 판단 필요 안내.
 등록하려는 새 용어명/정의/선택 도메인/business_result.state.english_abbr(영문 약어)와 위 비교 결과를 함께 보여주고 등록 요청 진행 여부를 물을 것.
 existing_term_found 또는 SAME_MEANING 차단: comparison_summary에 어떤 기존 용어와 왜 같은 의미로 판정됐는지 정리되어 있으니 그 내용을 그대로 인용해 신규 등록이 차단되었음을 알리고 기존 용어 사용을 권장하세요. 이 상태에서는 등록 여부나 네/아니오 확인 질문을 절대로 만들지 마세요. 다른 용어를 검토하려면 새 이름을 입력할 수 있다고만 안내하세요.
+pending_request_found: business_result.state.pending_request에 이미 검토 대기 중인 신청 정보(용어명/정의/도메인/영문약어/제출일)가 있습니다. 그 내용을 그대로 안내하고 이미 접수되어 검토 중이므로 같은 이름으로 새로 등록할 수 없다고 설명하세요. 도메인/정의/약어를 다시 입력하라고 요청하지 마세요. 다른 용어를 등록하려면 새 이름을 말해달라고만 안내하세요.
 submitted: request_id/용어명/정의/도메인/PENDING_REVIEW를 보여주고 담당자 승인 전 정식 표준이 아님을 명시.
 registration_failed: registration.code를 근거로 등록이 완료되지 않은 이유를 안내하세요. PENDING_REQUEST_ALREADY_EXISTS면 이 용어는 이미 검토 대기 중인 다른 요청이 있어 중복 제출할 수 없다고 설명하고, 그 외 코드는 처음부터 다시 시도해야 함을 안내하세요. 등록이 완료됐다고 말하지 말고, 같은 확인 질문을 반복하지 마세요 — 대신 다른 용어를 입력하거나 취소할 수 있다고 안내하세요.
 cancelled/restart: 처리 결과 안내. help/show_candidates에서는 현재 상태를 유지하고 요청 정보만 설명.
@@ -234,7 +235,14 @@ def main(action: list, rag: list) -> dict:
     # expecting the reply LLM to correlate two arrays by id inside a large JSON blob.
     prep=state.get("preparation",{})
     assessment=prep.get("assessment") or prep
-    comparisons=assessment.get("comparisons") or []
+    # comparison_summary is only ever meant to explain awaiting_confirm's final
+    # review or a SAME_MEANING/existing_term_found block (see RENDER's own stage
+    # instructions below) - state.preparation isn't cleared on later stages
+    # (e.g. awaiting_abbreviation, its errors), so without this gate a stale
+    # comparison from the definition step kept bleeding into unrelated replies
+    # like an abbreviation-collision error, misattributing the actual cause.
+    comparisons=(assessment.get("comparisons") or []) if stage in (
+        "awaiting_confirm","existing_term_found","definition_blocked") else []
     comparison_lines=[]
     if comparisons:
         candidates_by_id={c["term_id"]:c for c in assessment.get("search",{}).get("candidates",[])}

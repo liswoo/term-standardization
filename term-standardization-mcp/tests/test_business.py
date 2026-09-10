@@ -169,6 +169,35 @@ def test_multiturn_help_does_not_become_definition(monkeypatch):
     assert apply(8,"confirm_registration",confirmed=True)["state"]["stage"]=="submitted"
     assert not apply(8,"confirm_registration",confirmed=True)["applied"]
 
+def test_confirm_term_detects_already_pending_request(monkeypatch):
+    # Regression: re-registering a term that is already PENDING_REVIEW used to
+    # sail straight through confirm_term into a brand-new domain/definition/
+    # abbreviation flow, only failing at the very last step (submit()'s
+    # PENDING_REQUEST_ALREADY_EXISTS) - after the user redid the whole
+    # conversation. confirm_term must catch this immediately, like EXACT_MATCH.
+    monkeypatch.setattr(conversation,"suggest_abbreviation",
+        lambda term_name: AbbreviationResult(abbreviation="TEST_ABBR",rationale="테스트 고정값",method="test_stub"))
+    with db.connect() as conn:
+        conn.execute("INSERT INTO domains(code,description,source) VALUES('수N7','테스트 숫자 도메인','TEST')")
+    def apply(conv,revision,intent,value="",confirmed=False):
+        return conversation.apply(conv,"user",revision,{"intent":intent,"value":value,"confirmed":confirmed})
+    apply("first",0,"propose_term","일일운동시간")
+    apply("first",1,"confirm_term",confirmed=True)
+    apply("first",2,"set_domain","수N7")
+    apply("first",3,"set_definition","하루 동안 실시한 신체 활동의 누적 시간")
+    apply("first",4,"set_abbreviation","TEST_ABBR")
+    result=apply("first",5,"confirm_registration",confirmed=True)
+    assert result["state"]["stage"]=="submitted"
+
+    apply("second",0,"propose_term","일일운동시간")
+    result=apply("second",1,"confirm_term",confirmed=True)
+    assert result["state"]["stage"]=="pending_request_found"
+    assert result["state"]["pending_request"]["term_name"]=="일일운동시간"
+    assert result["state"]["pending_request"]["english_abbr"]=="TEST_ABBR"
+    # A different, brand new term must still register normally afterwards.
+    result=apply("second",2,"propose_term","일일계단오름횟수")
+    assert result["state"]["stage"]=="awaiting_term_confirm"
+
 def test_check_guideline_no_index_is_compliant():
     from term_service.guideline import check_guideline
     result=check_guideline("정보")
