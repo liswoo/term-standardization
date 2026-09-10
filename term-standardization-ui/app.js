@@ -530,6 +530,18 @@ function renderGuidelineCard(mcpState) {
   </div>`;
 }
 
+function renderDefinitionSuggestionCard(mcpState) {
+  const sug = mcpState.definition_suggestion;
+  if (!sug) return "";
+  if (sug.ambiguous && (sug.options || []).length) {
+    return `<div class="question-card"><strong>확인이 필요합니다</strong>${escapeHtml(sug.question || "")}</div>`;
+  }
+  if (sug.definition) {
+    return `<div class="definition-card"><p>${escapeHtml(sug.definition)}</p>${sug.rationale ? `<div class="cell-note">${escapeHtml(sug.rationale)}</div>` : ""}</div>`;
+  }
+  return "";
+}
+
 function renderAbbreviationCard(mcpState) {
   const sug = mcpState.abbreviation_suggestion;
   if (!sug || !sug.abbreviation) return "";
@@ -571,6 +583,8 @@ function renderStructuredBlock(mcpState) {
   switch (mcpState.stage) {
     case "awaiting_domain_choice":
       return renderDomainTable(mcpState.domains);
+    case "awaiting_definition":
+      return renderDefinitionSuggestionCard(mcpState);
     case "awaiting_confirm":
       return renderComparisonTable(mcpState) + renderConfirmSummary(mcpState);
     case "existing_term_found":

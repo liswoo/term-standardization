@@ -95,6 +95,28 @@ class AbbreviationResult(Schema):
     model: str | None = None
     error_code: str | None = None
 
+class DefinitionSuggestion(Schema):
+    # ambiguous declared first so the model must commit to that judgment before
+    # it can write either a confident definition or a clarifying question -
+    # the same forced-intermediate-field trick used for GuidelineJudgment,
+    # since asking a small model to "only ask a question when genuinely
+    # ambiguous, otherwise write a confident definition" in prose alone is
+    # exactly the kind of instruction it tends to blur together.
+    ambiguous: bool = Field(description=
+        "true only if term_name has two or more genuinely distinct plausible "
+        "real-world meanings that would need different definitions - not merely "
+        "because a fully specific definition requires domain knowledge.")
+    question: str = Field(default="", description="Only set when ambiguous=true: a short Korean question naming the fork.")
+    options: list[str] = Field(default_factory=list, max_length=4,
+        description="Only set when ambiguous=true: 2-4 short Korean labels, each a candidate meaning.")
+    definition: str = Field(default="", description="Only set when ambiguous=false: a confident one-to-two sentence Korean definition.")
+    rationale: str = Field(default="", description="One short Korean sentence: why this definition or why this is ambiguous.")
+
+class DefinitionSuggestionResult(DefinitionSuggestion):
+    method: str
+    model: str | None = None
+    error_code: str | None = None
+
 class RegistrationInput(Schema):
     term_name: str = Field(min_length=2, max_length=20)
     definition: str = Field(min_length=5, max_length=4000)

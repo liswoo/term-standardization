@@ -6,6 +6,7 @@ from pydantic import Field
 from psycopg.types.json import Jsonb
 from . import db, registration
 from .abbreviation import suggest_abbreviation, validate_abbreviation
+from .definition_suggestion import suggest_definition
 from .guideline import check_guideline
 from .naming import strip_trailing_particle
 from .schemas import Schema, RegistrationInput
@@ -91,7 +92,7 @@ def transition(state, action, requester, conversation_id):
         if "term_name" not in s or "search" not in s:
             return s,{"error":"CONFIRM_TERM_FIRST"}
         registration.cancel(requester,conversation_id)
-        for name in ["domain","definition","preparation","abbreviation_suggestion","english_abbr"]:
+        for name in ["domain","definition","definition_suggestion","preparation","abbreviation_suggestion","english_abbr"]:
             s.pop(name,None)
         s["stage"]="awaiting_domain_choice"
         return s,{"next_action":"CHOOSE_DOMAIN"}
@@ -105,6 +106,10 @@ def transition(state, action, requester, conversation_id):
         if value not in known:
             return s,{"error":"UNRECOGNIZED_DOMAIN","known_domains":sorted(known)}
         s["domain"]=value
+        # Writing a definition from scratch is real friction; propose one (or ask
+        # a clarifying question first, if the name is genuinely ambiguous) so the
+        # user can accept/refine it instead of always starting from a blank page.
+        s["definition_suggestion"]=suggest_definition(s["term_name"],value).model_dump()
         s["stage"]="awaiting_definition"
         return s,{"next_action":"INPUT_DEFINITION"}
     if a.intent=="edit_definition":
@@ -113,11 +118,19 @@ def transition(state, action, requester, conversation_id):
         registration.cancel(requester,conversation_id)
         for name in ["preparation","definition","abbreviation_suggestion","english_abbr"]:
             s.pop(name,None)
+        s["definition_suggestion"]=suggest_definition(s["term_name"],s["domain"]).model_dump()
         s["stage"]="awaiting_definition"
         return s,{"next_action":"INPUT_DEFINITION"}
     if a.intent=="set_definition":
         if stage!="awaiting_definition":
             return s,{"error":"UNEXPECTED_INTENT"}
+        suggestion=s.get("definition_suggestion") or {}
+        if suggestion.get("ambiguous") and a.value in suggestion.get("options",[]):
+            # This is an answer to the clarifying question, not a final definition -
+            # re-propose with that hint instead of registering the option label
+            # itself as the term's definition.
+            s["definition_suggestion"]=suggest_definition(s["term_name"],s["domain"],clarification_hint=a.value).model_dump()
+            return s,{"next_action":"INPUT_DEFINITION"}
         p=RegistrationInput(term_name=s["term_name"],definition=a.value,domain=s["domain"],
             requester=requester,conversation_id=conversation_id)
         prepared=registration.prepare(p)
