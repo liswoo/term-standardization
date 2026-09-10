@@ -65,6 +65,14 @@ class GuidelineChunk(Schema):
     similarity: float
 
 class GuidelineJudgment(Schema):
+    # Forces the intermediate step into the output itself (structured-output fields
+    # are filled in declaration order) instead of letting the model jump straight to
+    # a vibes-based compliant verdict - a small model kept reasoning "the word feels
+    # broad" into a violation even when told in prose to check exact equality only.
+    matched_forbidden_word: str = Field(default="",
+        description="The single word from the excerpts' forbidden-word list that the "
+        "candidate term's ENTIRE string is character-for-character identical to, or "
+        "empty string if the candidate does not exactly equal any such word.")
     compliant: bool
     violated_section: str = ""
     reason: str

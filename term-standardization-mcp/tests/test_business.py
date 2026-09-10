@@ -3,10 +3,12 @@ import uuid
 from concurrent.futures import ThreadPoolExecutor
 import pytest
 from term_service import db, registration, conversation
+from term_service.config import ROOT
 from term_service.naming import validate, morphology, strip_trailing_particle
 from term_service.search import search, domain_usage, validate_name
 from term_service.schemas import AbbreviationResult, RegistrationInput
 from term_service.comparison import compare
+from manage import import_guideline
 
 def insert_guideline_chunk(section,content):
     from term_service.config import EMBEDDING_MODEL
@@ -220,6 +222,21 @@ def test_real_guideline_blocks_generic_word():
     result=apply(1,"confirm_term",confirmed=True)
     assert result["state"]["stage"]=="awaiting_guideline_choice"
     assert result["state"]["guideline_check"]["compliant"] is False
+
+@pytest.mark.skipif(os.getenv("RUN_LLM_TESTS")!="1",reason="Explicit low-volume paid API smoke test")
+def test_real_guideline_does_not_misjudge_noun_ending_as_particle():
+    # Regression: the guideline LLM twice misjudged a term ending in a plain
+    # noun ("일일운동시간", "수면만족도점수") as ending in a grammatical particle -
+    # a rule the excerpt states verbatim and mechanical validate_name() already
+    # enforces correctly - because the mechanical-rule text and the RAG-only
+    # word-choice rule used to live in the same retrieved chunk. Uses the real
+    # standard_guide.md (not a synthetic fixture chunk), since this specifically
+    # tests that document's section split plus the SYSTEM prompt guardrail.
+    from term_service.guideline import check_guideline
+    import_guideline(ROOT/"data/standard_guide.md")
+    for term in ["일일운동시간","수면만족도점수","체질량지수"]:
+        result=check_guideline(term)
+        assert result.compliant, f"{term} wrongly blocked: {result.reason}"
 
 @pytest.mark.skipif(os.getenv("RUN_LLM_TESTS")!="1",reason="Explicit low-volume paid API smoke test")
 def test_real_abbreviation_suggestion_reaches_confirm(catalog):

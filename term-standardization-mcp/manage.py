@@ -45,10 +45,11 @@ def import_catalog(path):
 
 def import_guideline(path):
     """Split standard_guide.md into per-section chunks and embed each one.
-    Re-running re-embeds everything and upserts by section title, so editing
-    the guide and re-running always leaves guideline_chunks matching the file
-    on disk (stale sections from a since-renamed heading are left behind;
-    this is a demo import, not a two-way sync).
+    Re-running re-embeds everything and upserts by section title, then deletes
+    any stored section whose title is no longer present in the file - a full
+    sync, not an accumulate-only import, so a renamed/removed heading (like
+    "2. ..." becoming "2. ... (자동 검증 항목)") never leaves a stale duplicate
+    chunk that a RAG lookup could still retrieve and judge against.
     """
     path=Path(path)
     text=path.read_text(encoding="utf-8-sig")
@@ -73,7 +74,11 @@ def import_guideline(path):
                 ON CONFLICT(section) DO UPDATE SET content=excluded.content,embedding=excluded.embedding,
                 embedding_model=excluded.embedding_model,source=excluded.source,updated_at=now()""",
                 (str(uuid.uuid5(uuid.NAMESPACE_URL,source+"/guideline/"+section)),section,content,vector,EMBEDDING_MODEL,source))
-    print(json.dumps({"imported_sections":len(chunks),"sections":[c[0] for c in chunks]},ensure_ascii=False))
+        current_sections=[c[0] for c in chunks]
+        removed=conn.execute("DELETE FROM guideline_chunks WHERE NOT (section=ANY(%s)) RETURNING section",
+            (current_sections,)).fetchall()
+    print(json.dumps({"imported_sections":len(chunks),"sections":current_sections,
+        "removed_stale_sections":[r["section"] for r in removed]},ensure_ascii=False))
 
 if __name__=="__main__":
     parser=argparse.ArgumentParser()
