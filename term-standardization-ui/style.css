@@ -17,6 +17,7 @@
   --radius-md: 12px;
   --radius-sm: 8px;
   --shadow: 0 1px 2px rgba(16, 24, 40, 0.04), 0 4px 16px rgba(16, 24, 40, 0.06);
+  --chat-width: 520px; /* 30% wider than the original 400px; user-resizable, see #chat-resize-handle */
 }
 
 * { box-sizing: border-box; }
@@ -224,13 +225,26 @@ svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width:
 
 /* ── 챗봇 패널 ── */
 .chat-panel {
-  position: fixed; top: 0; right: -420px; bottom: 0; width: 400px; z-index: 50;
+  position: fixed; top: 0; right: calc(-1 * var(--chat-width) - 20px); bottom: 0;
+  width: var(--chat-width); min-width: 360px; max-width: min(900px, 92vw); z-index: 50;
   background: var(--panel); border-left: 1px solid var(--border);
   box-shadow: -8px 0 32px rgba(16,24,40,.12);
   display: flex; flex-direction: column;
   transition: right .25s ease;
 }
 .chat-panel.is-open { right: 0; }
+.chat-panel.is-resizing { transition: none; }
+
+.chat-resize-handle {
+  position: absolute; top: 0; bottom: 0; left: -4px; width: 8px; z-index: 1;
+  cursor: ew-resize; touch-action: none;
+}
+.chat-resize-handle::after {
+  content: ""; position: absolute; top: 0; bottom: 0; left: 3px; width: 2px;
+  background: transparent; transition: background .12s;
+}
+.chat-resize-handle:hover::after,
+.chat-panel.is-resizing .chat-resize-handle::after { background: var(--primary); }
 
 .chat-header {
   display: flex; align-items: center; justify-content: space-between;
@@ -288,6 +302,56 @@ svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width:
 .step-tracker li.is-done .step-icon { color: var(--ok); }
 
 .result-card { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; margin-top: 4px; }
+
+/* ── 챗봇 구조화 데이터 (도메인 추천/유사 용어 비교/최종 확인 등) ──
+   같은 형식으로 반복되는 응답은 LLM 문장 대신 실제 MCP 상태값으로 직접
+   그려서 매번 정확히 같은 모양을 유지합니다. .bubble.has-data는 표가
+   88% 말풍선 폭에 눌리지 않도록 폭 제한을 완전히 풉니다. */
+.bubble.has-data { max-width: 100%; }
+.bubble .table-wrap { margin-top: 8px; border: 1px solid var(--border); border-radius: var(--radius-sm); overflow: hidden; overflow-x: auto; }
+.bubble .data-table { font-size: 12.3px; }
+.bubble .data-table th { padding: 8px 10px; background: var(--bg); font-size: 10.5px; }
+.bubble .data-table td { padding: 8px 10px; }
+.bubble .data-table tr:last-child td { border-bottom: none; }
+.cell-def { color: var(--text-muted); }
+.cell-note { font-size: 11px; color: var(--text-muted); margin-top: 3px; }
+.tag-recommend {
+  font-size: 10px; font-weight: 700; color: var(--primary); background: var(--primary-soft);
+  padding: 1px 7px; border-radius: 999px; margin-left: 4px; vertical-align: middle;
+}
+
+.relation-badge { font-size: 11px; font-weight: 700; padding: 3px 9px; border-radius: 999px; white-space: nowrap; }
+.relation-badge.relation-same_meaning { background: var(--danger-soft); color: var(--danger); }
+.relation-badge.relation-related_but_distinct { background: var(--warn-soft); color: var(--warn); }
+.relation-badge.relation-uncertain { background: var(--bg); color: var(--text-muted); }
+
+.summary-card {
+  margin-top: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius-sm);
+  padding: 4px 12px;
+}
+.summary-card-ok { background: var(--ok-soft); border-color: color-mix(in srgb, var(--ok) 35%, var(--border)); }
+.summary-card-fail { background: var(--danger-soft); border-color: color-mix(in srgb, var(--danger) 35%, var(--border)); }
+.summary-row { display: flex; gap: 10px; padding: 7px 0; font-size: 12.5px; border-bottom: 1px solid rgba(16,24,40,.06); }
+.summary-row:last-child { border-bottom: none; }
+.summary-key { flex: 0 0 84px; color: var(--text-muted); font-weight: 600; }
+.summary-val { flex: 1; word-break: break-word; }
+.summary-val.mono { font-family: "JetBrains Mono", monospace; }
+
+.violation-card { margin-top: 8px; background: var(--danger-soft); border: 1px solid #fecaca; border-radius: var(--radius-sm); padding: 10px 12px; }
+.violation-row { display: flex; gap: 8px; font-size: 12.5px; padding: 3px 0; align-items: baseline; }
+.violation-row + .violation-row { margin-top: 2px; }
+.violation-tag {
+  flex: none; font-size: 10.5px; font-weight: 700; color: var(--danger); background: #fff;
+  border: 1px solid #fecaca; padding: 1px 8px; border-radius: 999px;
+}
+.violation-suggestion { margin-top: 8px; padding-top: 8px; border-top: 1px dashed #fecaca; font-size: 12.5px; }
+
+.abbr-card {
+  margin-top: 8px; display: flex; align-items: center; gap: 12px;
+  background: var(--primary-soft); border: 1px solid #c7d9fc; border-radius: var(--radius-sm); padding: 10px 14px;
+}
+.abbr-code { font-family: "JetBrains Mono", monospace; font-size: 16px; font-weight: 800; color: var(--primary-dark); letter-spacing: .01em; }
+.abbr-rationale { font-size: 12px; color: var(--text-muted); flex: 1; }
 .result-card-error { background: var(--danger-soft); border-color: #fecaca; color: var(--danger); font-family: "JetBrains Mono", monospace; font-size: 11.5px; }
 .result-kv { display: flex; gap: 6px; font-size: 12.5px; padding: 3px 0; }
 .result-kv span { color: var(--text-muted); flex-shrink: 0; width: 52px; }

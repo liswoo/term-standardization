@@ -112,17 +112,17 @@ RENDER="""당신은 공공기관 데이터 용어 표준화 도우미입니다. 
 현재 데이터는 모두 시나리오용 가상 데이터이며 공식 표준이 아님을 첫 안내와 등록 결과에서 알리세요.
 용어명은 항상 business_result.state.term_name 값을 그대로 사용하세요 - 사용자의 원문 문장에서 다시 추출하거나 조사·어미를 붙여 변형하지 마세요. 위반 사유(reason)가 필요한 경우 항상 해당 필드(violations[].reason 또는 guideline_check.reason)의 문구를 그대로 인용하세요 - 다른 규정을 지어내거나 다른 위반 사유와 바꿔치기하지 마세요. 그 필드들이 비어 있거나 없다면 위반이 없는 것이니 위반이 있다고 지어내지 마세요.
 awaiting_term_confirm: 추출 용어를 인용하고 맞는지 묻고 '네, 맞아요 / 아니요, 다시 입력할게요'를 제시.
-awaiting_guideline_choice: business_result.state.validation.violations가 있으면 각 항목의 reason을 그대로 인용하세요. business_result.state.guideline_check가 있고 compliant가 false면, 이건 형태소 규칙이 아니라 표준화 가이드 문서 검색(RAG) 결과이니 guideline_check.violated_section과 reason을 인용하고, guideline_check.evidence의 각 항목(section/content)도 근거로 함께 보여주세요. 두 종류의 위반 사유를 절대 섞어서 뭉뚱그리지 말고, 실제 발생한 것만 설명하세요. suggestions/guideline_check.suggested_term 중 있는 것을 제시하고 선택/재입력을 요청하세요. 후보를 고르면 다시 확인.
-awaiting_abbreviation: business_result.state.abbreviation_suggestion의 abbreviation과 rationale을 보여주고, 이 약어로 등록할지 다른 약어를 직접 입력할지 물으세요. 한글 용어와 영문 약어는 한 쌍으로 등록되며, 아직 최종 등록이 완료된 게 아님을 명시.
-awaiting_domain_choice 또는 error가 UNRECOGNIZED_DOMAIN: domain_summary에 이미 도메인별 코드/설명/비율이 한 줄씩 정리되어 있습니다. domain_summary의 각 줄을 절대 생략·요약·재해석하지 말고 목록 형태로 그대로 사용자에게 보여주세요. 코드만 단독으로 말하지 말고 항상 설명과 함께 제시하세요.
-UNRECOGNIZED_DOMAIN이면 방금 입력하신 내용은 실제 등록 가능한 도메인이 아니라고 먼저 안내한 뒤 domain_summary 목록에서 하나를 선택하거나 정확한 도메인명을 다시 말해달라고 요청하세요.
+화면 하단에는 별도의 표/카드 UI가 상세 데이터(도메인 목록, 유사 용어 비교, 위반 사유, 추천 약어, 검토 대기 정보, 등록 결과 등)를 항상 정확하게 그려서 보여줍니다. 아래 각 stage에서 그 상세 데이터를 답변 문장 안에서 다시 나열·인용하지 마세요 - 짧은 안내 문장 하나와 다음 행동 질문이면 충분하고, 나머지는 화면에 이미 보이는 표/카드를 가리키면 됩니다 (예: "아래 목록에서 선택해주세요", "아래 비교 결과를 참고해주세요").
+awaiting_guideline_choice: 위반이 있었다는 사실과 어떤 종류인지(형태소 규칙 또는 표준가이드 규칙)만 한 문장으로 언급하고, 구체적 사유·근거·후보는 반복하지 말고 아래에서 확인 후 선택하거나 새 이름을 입력해달라고만 요청하세요.
+awaiting_abbreviation: 영문 약어 후보가 아래에 제시되었다고만 안내하고, 그 약어로 등록할지 다른 약어를 직접 입력할지 물으세요. abbreviation/rationale 값 자체를 문장에서 다시 쓰지 마세요. 한글 용어와 영문 약어는 한 쌍으로 등록되며, 아직 최종 등록이 완료된 게 아님을 명시.
+awaiting_domain_choice 또는 error가 UNRECOGNIZED_DOMAIN: 도메인 선택지가 아래 표에 정리되어 있다고만 안내하고 그중 하나를 선택해달라고 요청하세요. 코드/설명/비율을 문장으로 다시 나열하지 마세요.
+UNRECOGNIZED_DOMAIN이면 방금 입력하신 내용은 실제 등록 가능한 도메인이 아니라고 먼저 안내한 뒤 아래 표에서 하나를 선택하거나 정확한 도메인명을 다시 말해달라고 요청하세요.
 SYNONYM_MATCH이면 기존 표준용어 사용을 먼저 권장하되 별도 정의가 있으면 비교 가능함을 설명.
 awaiting_definition: 선택 도메인을 확인하고 사용자가 등록하려는 새 용어 자체의 정의를 직접 작성하도록 요청하세요. 기존 후보의 정의를 선택하라고 질문하지 마세요. 조회/도움말 요청은 응답하되 정의로 저장하지 말 것.
-awaiting_confirm: comparison_summary가 비어있지 않으면 그 줄들(비교 대상 기존 표준 용어명·도메인·정의·판정·사유)을 절대 생략·요약하지 말고 목록 그대로 사용자에게 보여주세요. "유사성이 있다"처럼 뭉뚱그리지 말고 구체적으로 어떤 기존 용어와 왜 그런 판정인지 밝히세요. UNCERTAIN은 의미가 다르다고 단정하지 말고 담당자 판단 필요 안내.
-등록하려는 새 용어명/정의/선택 도메인/business_result.state.english_abbr(영문 약어)와 위 비교 결과를 함께 보여주고 등록 요청 진행 여부를 물을 것.
-existing_term_found 또는 SAME_MEANING 차단: comparison_summary에 어떤 기존 용어와 왜 같은 의미로 판정됐는지 정리되어 있으니 그 내용을 그대로 인용해 신규 등록이 차단되었음을 알리고 기존 용어 사용을 권장하세요. 이 상태에서는 등록 여부나 네/아니오 확인 질문을 절대로 만들지 마세요. 다른 용어를 검토하려면 새 이름을 입력할 수 있다고만 안내하세요.
-pending_request_found: business_result.state.pending_request에 이미 검토 대기 중인 신청 정보(용어명/정의/도메인/영문약어/제출일)가 있습니다. 그 내용을 그대로 안내하고 이미 접수되어 검토 중이므로 같은 이름으로 새로 등록할 수 없다고 설명하세요. 도메인/정의/약어를 다시 입력하라고 요청하지 마세요. 다른 용어를 등록하려면 새 이름을 말해달라고만 안내하세요.
-submitted: request_id/용어명/정의/도메인/PENDING_REVIEW를 보여주고 담당자 승인 전 정식 표준이 아님을 명시.
+awaiting_confirm: 비교 가능한 기존 용어가 있었는지 여부만 한 문장으로 언급하고("유사한 기존 용어가 있어 아래에 비교 결과를 정리했습니다" 등), 개별 용어명·판정·사유는 나열하지 마세요. UNCERTAIN이 있었다면 의미가 다르다고 단정하지 말고 담당자 판단이 필요하다고만 짧게 덧붙이세요. 등록하려는 용어명/정의/도메인/영문약어는 아래 요약에 이미 나오므로 문장에서 반복하지 말고, 등록 요청을 진행할지만 물으세요.
+existing_term_found 또는 SAME_MEANING 차단: 의미가 같은 기존 표준용어가 있어 신규 등록이 차단되었다는 사실만 한 문장으로 안내하고(어떤 용어인지는 아래 비교 결과 참고하라고만 언급), 기존 용어 사용을 권장하세요. 이 상태에서는 등록 여부나 네/아니오 확인 질문을 절대로 만들지 마세요. 다른 용어를 검토하려면 새 이름을 입력할 수 있다고만 안내하세요.
+pending_request_found: 이미 검토 대기 중인 신청 건이 있어(상세는 아래 참고) 같은 이름으로 새로 등록할 수 없다고 한 문장으로 설명하세요. 도메인/정의/약어를 다시 입력하라고 요청하지 마세요. 다른 용어를 등록하려면 새 이름을 말해달라고만 안내하세요.
+submitted: 접수가 완료되었다는 사실과(상세는 아래 참고) 담당자 승인 전 정식 표준이 아님을 한 문장으로 안내하세요. request_id/용어명/정의/도메인을 문장에서 반복하지 마세요.
 registration_failed: registration.code를 근거로 등록이 완료되지 않은 이유를 안내하세요. PENDING_REQUEST_ALREADY_EXISTS면 이 용어는 이미 검토 대기 중인 다른 요청이 있어 중복 제출할 수 없다고 설명하고, 그 외 코드는 처음부터 다시 시도해야 함을 안내하세요. 등록이 완료됐다고 말하지 말고, 같은 확인 질문을 반복하지 마세요 — 대신 다른 용어를 입력하거나 취소할 수 있다고 안내하세요.
 cancelled/restart: 처리 결과 안내. help/show_candidates에서는 현재 상태를 유지하고 요청 정보만 설명.
 next_action이 unknown이면 요청을 이해하지 못했다고 짧게 안내하고 business_result.state.stage에 맞는 입력만 다시 요청하세요 (예: awaiting_term_direct→등록할 용어명, awaiting_domain_choice→도메인 선택, awaiting_definition→정의 작성, awaiting_confirm→등록 여부). 다른 단계에서나 나올 법한 질문(예: 정의 작성 요청)을 지어내지 마세요.
@@ -182,7 +182,7 @@ node("rag","시나리오 지식 검색","knowledge-retrieval",{
 node("render_context","단계별 설명 자료","code",{
     "code_language":"python3",
     "variables":[{"variable":"action","value_selector":["action","json"]},{"variable":"rag","value_selector":["rag","result"]}],
-    "outputs":{"context":{"type":"string","children":None}},
+    "outputs":{"context":{"type":"string","children":None},"options":{"type":"string","children":None}},
     "code": """import json
 
 def main(action: list, rag: list) -> dict:
@@ -255,10 +255,45 @@ def main(action: list, rag: list) -> dict:
                 continue
             pct=round((comp.get("confidence") or 0)*100)
             comparison_lines.append(f"- 기존 표준 용어 '{cand['name']}' (도메인 {cand['domain']}): '{cand['definition']}' -> 판정: {comp['relation']} (신뢰도 {pct}%). 사유: {comp['reason']}")
-    comparison_summary="\\n".join(comparison_lines)
-    return {"context":json.dumps({"business_result":result,"supplemental_knowledge":reference,"domain_summary":domain_summary,"comparison_summary":comparison_summary,"options":options},ensure_ascii=False)}
+    # The formatted domain_summary/comparison_summary strings are NOT sent to the
+    # reply LLM (only a boolean flag is): a small model handed ready-made,
+    # nicely-formatted text tends to copy it into the answer regardless of prose
+    # instructions not to, duplicating what the frontend already renders as a
+    # real table from the same underlying state. Only a UI-side fallback (if a
+    # future stage has no dedicated table/card yet) would need the raw text, so
+    # it stays computed here for that, just excluded from what the model sees.
+    has_domain_options=needs_domain_summary and bool(options)
+    has_comparisons=bool(comparison_lines)
+    # Redact, don't just ask nicely: a boolean flag alone didn't stop the reply
+    # LLM from duplicating the domain/comparison lists in prose, because the raw
+    # lists were still sitting right there in business_result.state for it to
+    # read and narrate regardless of instructions not to - the same "prose
+    # alone is unreliable" lesson as the guideline-check fix. The UI already has
+    # this data straight from the action node's own stream event (independent of
+    # this node), so blanking it here only affects what the reply LLM sees.
+    if has_domain_options:
+        state["domains"]={"note":"선택지는 화면 표에 표시됨"}
+    if has_comparisons:
+        assessment["comparisons"]=[{"note":"비교 결과는 화면 표에 표시됨"}]
+        assessment["search"]={"note":"비교 결과는 화면 표에 표시됨"}
+    if stage=="awaiting_abbreviation" and state.get("abbreviation_suggestion"):
+        state["abbreviation_suggestion"]={"note":"추천 약어는 화면 카드에 표시됨"}
+    if stage=="pending_request_found" and state.get("pending_request"):
+        state["pending_request"]={"note":"기존 신청 정보는 화면 카드에 표시됨"}
+    if stage=="submitted" and state.get("registration"):
+        state["registration"]={"note":"등록 결과는 화면 카드에 표시됨"}
+    # options is returned as a SEPARATE output, not folded into "context": each
+    # option's label carries the full human-readable text (e.g. the domain's
+    # description) that the frontend's quick-reply buttons need verbatim, but
+    # handing that same text to the reply LLM inside its prompt let it copy the
+    # list into prose regardless of being told the data is "shown in a table" -
+    # the same reason business_result.state's domains/comparisons are redacted
+    # above. Keeping options out of {{#render_context.context#}} closes that gap.
+    return {"context":json.dumps({"business_result":result,"supplemental_knowledge":reference,
+        "has_domain_options":has_domain_options,"has_comparisons":has_comparisons},ensure_ascii=False),
+        "options":json.dumps(options,ensure_ascii=False)}
 """})
-llm("reply","업무 결과 설명",CLASSIFY_MODEL,RENDER,"사용자 메시지: {{#sys.query#}}\n단계별 실행 결과: {{#render_context.context#}}\n반드시 business_result.state.stage의 단계만 설명하세요. 과거 단계나 검색 문서로 다음 단계를 추측하지 마세요.\ndomain_summary가 비어있지 않으면 그 목록 전체를 답변에 반드시 포함하세요.\ncomparison_summary가 비어있지 않으면 그 내용 전체를 답변에 반드시 포함하세요.")
+llm("reply","업무 결과 설명",CLASSIFY_MODEL,RENDER,"사용자 메시지: {{#sys.query#}}\n단계별 실행 결과: {{#render_context.context#}}\n반드시 business_result.state.stage의 단계만 설명하세요. 과거 단계나 검색 문서로 다음 단계를 추측하지 마세요.\nhas_domain_options/has_comparisons는 화면에 표/카드가 별도로 표시된다는 뜻일 뿐, 그 안의 목록이나 사유 내용은 여기 없습니다 - 지어내서 나열하지 말고 RENDER 지침의 각 stage별 한 문장 안내만 작성하세요.")
 node("answer","답변","answer",{"answer":"{{#reply.text#}}"})
 edges=[]
 for left,right in zip(nodes,nodes[1:]):

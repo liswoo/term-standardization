@@ -281,6 +281,55 @@ document.getElementById("chat-close").addEventListener("click", () => {
   chatPanel.classList.remove("is-open");
 });
 
+// ── 챗봇 패널 폭 조절 (드래그 + 기억) ────────────────────────────
+const chatResizeHandle = document.getElementById("chat-resize-handle");
+const CHAT_WIDTH_STORAGE_KEY = "chatPanelWidth";
+const CHAT_MIN_WIDTH = 360;
+
+function chatMaxWidth() {
+  return Math.min(900, Math.round(window.innerWidth * 0.92));
+}
+
+function setChatWidth(px) {
+  const clamped = Math.min(chatMaxWidth(), Math.max(CHAT_MIN_WIDTH, Math.round(px)));
+  document.documentElement.style.setProperty("--chat-width", `${clamped}px`);
+  return clamped;
+}
+
+(function restoreChatWidth() {
+  try {
+    const saved = Number(localStorage.getItem(CHAT_WIDTH_STORAGE_KEY));
+    if (saved) setChatWidth(saved);
+  } catch {
+    /* localStorage unavailable (private mode etc.) - default width from CSS applies */
+  }
+})();
+
+chatResizeHandle.addEventListener("pointerdown", (e) => {
+  chatResizeHandle.setPointerCapture(e.pointerId);
+  chatPanel.classList.add("is-resizing");
+  e.preventDefault();
+});
+chatResizeHandle.addEventListener("pointermove", (e) => {
+  if (!chatResizeHandle.hasPointerCapture(e.pointerId)) return;
+  // Panel is anchored to the viewport's right edge, so its width is simply
+  // the distance from the cursor to that edge.
+  setChatWidth(window.innerWidth - e.clientX);
+});
+function finishChatResize(e) {
+  if (!chatResizeHandle.hasPointerCapture(e.pointerId)) return;
+  chatResizeHandle.releasePointerCapture(e.pointerId);
+  chatPanel.classList.remove("is-resizing");
+  try {
+    const current = parseInt(getComputedStyle(document.documentElement).getPropertyValue("--chat-width"), 10);
+    if (current) localStorage.setItem(CHAT_WIDTH_STORAGE_KEY, String(current));
+  } catch {
+    /* ignore persistence failure */
+  }
+}
+chatResizeHandle.addEventListener("pointerup", finishChatResize);
+chatResizeHandle.addEventListener("pointercancel", finishChatResize);
+
 // ── Dify 관리자 콘솔 바로가기 ────────────────────────────────────
 // runtime-config.js는 poc-start.ps1이 매번 새로 써주는 파일입니다. -Public으로
 // 실행하면 Dify 스튜디오용 임시 터널 주소가, 아니면 로컬 주소가 들어갑니다.
@@ -396,6 +445,151 @@ function addOptionButtons(bubbleWrap, options, onPick) {
   scrollChatToBottom();
 }
 
+// ── 구조화된 데이터 렌더링 ────────────────────────────────────
+// 도메인 추천, 유사 용어 비교, 최종 등록 요약처럼 매번 같은 형식으로
+// 반복되는 응답은 LLM 문장을 파싱하는 대신 action 노드가 돌려주는 실제
+// MCP state를 직접 표/카드로 그려서, 매번 정확히 같은 모양을 보장합니다.
+const RELATION_LABEL = { SAME_MEANING: "동일 의미", RELATED_BUT_DISTINCT: "관련 있으나 구분", UNCERTAIN: "판단 보류" };
+
+function renderDomainTable(domains) {
+  if (!domains) return "";
+  const rows = [];
+  const shown = new Set();
+  for (const d of domains.distribution || []) {
+    shown.add(d.domain);
+    rows.push({ code: d.domain, desc: d.domain_description, evidence: `${d.count}/${domains.sample_size}건`, ratio: d.ratio, recommended: d.domain === domains.recommended_domain });
+  }
+  for (const d of domains.known_domains || []) {
+    if (shown.has(d.code)) continue;
+    rows.push({ code: d.code, desc: d.description, evidence: "비교 근거 없음", ratio: null, recommended: false });
+  }
+  if (!rows.length) return "";
+  return `<div class="table-wrap"><table class="data-table">
+    <thead><tr><th>도메인</th><th>설명</th><th>비교군 사용</th><th>관측 비율</th></tr></thead>
+    <tbody>${rows.map((r) => `
+      <tr class="${r.recommended ? "row-new" : ""}">
+        <td><span class="mono">${escapeHtml(r.code)}</span>${r.recommended ? '<span class="tag-recommend">추천</span>' : ""}</td>
+        <td class="cell-def">${escapeHtml(r.desc || "설명 없음")}</td>
+        <td>${escapeHtml(r.evidence)}</td>
+        <td>${r.ratio == null ? "-" : Math.round(r.ratio * 100) + "%"}</td>
+      </tr>`).join("")}</tbody>
+  </table></div>`;
+}
+
+function renderComparisonTable(mcpState) {
+  const prep = mcpState.preparation || {};
+  const assessment = prep.assessment || prep;
+  const comparisons = assessment.comparisons || [];
+  const candidatesById = {};
+  for (const c of (assessment.search || {}).candidates || []) candidatesById[c.term_id] = c;
+  const rows = comparisons
+    .filter((c) => c.relation !== "DISTINCT")
+    .map((c) => ({ ...c, cand: candidatesById[c.existing_term_id] }))
+    .filter((r) => r.cand);
+  if (!rows.length) return "";
+  return `<div class="table-wrap"><table class="data-table">
+    <thead><tr><th>기존 용어</th><th>도메인</th><th>정의</th><th>판정</th><th>신뢰도</th></tr></thead>
+    <tbody>${rows.map((r) => `
+      <tr>
+        <td><strong>${escapeHtml(r.cand.name)}</strong></td>
+        <td><span class="mono">${escapeHtml(r.cand.domain)}</span></td>
+        <td class="cell-def">${escapeHtml(r.cand.definition)}<div class="cell-note">사유: ${escapeHtml(r.reason || "-")}</div></td>
+        <td><span class="relation-badge relation-${r.relation.toLowerCase()}">${RELATION_LABEL[r.relation] || r.relation}</span></td>
+        <td>${Math.round((r.confidence || 0) * 100)}%</td>
+      </tr>`).join("")}</tbody>
+  </table></div>`;
+}
+
+function summaryCard(rows, extraClass = "") {
+  const filtered = rows.filter(([, v]) => v !== undefined && v !== null && v !== "");
+  if (!filtered.length) return "";
+  return `<div class="summary-card ${extraClass}">${filtered
+    .map(([k, v, mono]) => `<div class="summary-row"><span class="summary-key">${escapeHtml(k)}</span><span class="summary-val${mono ? " mono" : ""}">${escapeHtml(String(v))}</span></div>`)
+    .join("")}</div>`;
+}
+
+function renderConfirmSummary(mcpState) {
+  return summaryCard([
+    ["용어명", mcpState.term_name],
+    ["정의", mcpState.definition],
+    ["도메인", mcpState.domain, true],
+    ["영문 약어", mcpState.english_abbr, true],
+  ]);
+}
+
+function renderGuidelineCard(mcpState) {
+  const rows = [];
+  for (const v of (mcpState.validation || {}).violations || []) rows.push({ tag: "표기 규칙", reason: v.reason });
+  const gc = mcpState.guideline_check;
+  if (gc && gc.compliant === false) rows.push({ tag: gc.violated_section || "표준가이드", reason: gc.reason });
+  if (!rows.length) return "";
+  const suggestion = (mcpState.validation || {}).suggestions?.[0] || gc?.suggested_term || "";
+  return `<div class="violation-card">
+    ${rows.map((r) => `<div class="violation-row"><span class="violation-tag">${escapeHtml(r.tag)}</span><span>${escapeHtml(r.reason)}</span></div>`).join("")}
+    ${suggestion ? `<div class="violation-suggestion">제안 용어: <strong>${escapeHtml(suggestion)}</strong></div>` : ""}
+  </div>`;
+}
+
+function renderAbbreviationCard(mcpState) {
+  const sug = mcpState.abbreviation_suggestion;
+  if (!sug || !sug.abbreviation) return "";
+  return `<div class="abbr-card"><div class="abbr-code">${escapeHtml(sug.abbreviation)}</div><div class="abbr-rationale">${escapeHtml(sug.rationale || "")}</div></div>`;
+}
+
+function renderPendingCard(mcpState) {
+  const p = mcpState.pending_request;
+  if (!p) return "";
+  return summaryCard([
+    ["용어명", p.term_name],
+    ["정의", p.definition],
+    ["도메인", p.domain, true],
+    ["영문 약어", p.english_abbr, true],
+    ["제출일", (p.created_at || "").slice(0, 10)],
+  ]);
+}
+
+function renderRegistrationCard(mcpState) {
+  const reg = mcpState.registration;
+  if (!reg) return "";
+  if (reg.request_id) {
+    return summaryCard([
+      ["신청 ID", reg.request_id.slice(0, 8) + "…", true],
+      ["용어명", reg.term_name || mcpState.term_name],
+      ["도메인", reg.domain || mcpState.domain, true],
+      ["영문 약어", reg.english_abbr || mcpState.english_abbr, true],
+      ["상태", "검토 대기 (PENDING_REVIEW)"],
+    ], "summary-card-ok");
+  }
+  return summaryCard([["실패 사유 코드", reg.code, true]], "summary-card-fail");
+}
+
+// stage별로 어떤 구조화 블록을 붙일지 결정합니다. 서버(build_chatflow.py의
+// RENDER 프롬프트)는 이 stage들에서 같은 내용을 문장으로 다시 나열하지
+// 않도록 되어 있어, 프론트엔드 표/카드가 유일한 상세 정보 출처입니다.
+function renderStructuredBlock(mcpState) {
+  if (!mcpState) return "";
+  switch (mcpState.stage) {
+    case "awaiting_domain_choice":
+      return renderDomainTable(mcpState.domains);
+    case "awaiting_confirm":
+      return renderComparisonTable(mcpState) + renderConfirmSummary(mcpState);
+    case "existing_term_found":
+    case "definition_blocked":
+      return renderComparisonTable(mcpState);
+    case "awaiting_guideline_choice":
+      return renderGuidelineCard(mcpState);
+    case "awaiting_abbreviation":
+      return renderAbbreviationCard(mcpState);
+    case "pending_request_found":
+      return renderPendingCard(mcpState);
+    case "submitted":
+    case "registration_failed":
+      return renderRegistrationCard(mcpState);
+    default:
+      return "";
+  }
+}
+
 // ── Dify Chatflow 스트리밍 호출 ─────────────────────────────────
 // response_mode: "streaming"으로 호출하면 각 워크플로우 노드가 끝날 때마다
 // node_finished 이벤트가 오고, action(apply_dify_turn) 노드에는 실제 MCP
@@ -456,11 +650,14 @@ async function streamChatMessage(query, { onStep, onAnswerChunk } = {}) {
         if (payload.data?.node_id === "action" && payload.data?.outputs?.state) {
           mcpState = payload.data.outputs.state;
         }
-        if (payload.data?.node_id === "render_context" && payload.data?.outputs?.context) {
+        // options is its own node output (not nested in .context) so the reply-
+        // rendering LLM's prompt never sees the option labels' full descriptive
+        // text and can't copy it into prose - see render_context's own comment.
+        if (payload.data?.node_id === "render_context" && payload.data?.outputs?.options) {
           try {
-            options = JSON.parse(payload.data.outputs.context).options || [];
+            options = JSON.parse(payload.data.outputs.options) || [];
           } catch {
-            /* malformed context JSON: fall back to free-text input only */
+            /* malformed options JSON: fall back to free-text input only */
           }
         }
       } else if (payload.event === "message") {
@@ -533,6 +730,13 @@ async function submitChatMessage(raw) {
 
     setBubbleContent(bubble, formatAnswer(answer));
     tracker.remove();
+
+    const structuredHtml = renderStructuredBlock(mcpState);
+    if (structuredHtml) {
+      bubble.querySelector(".bubble").classList.add("has-data");
+      bubble.querySelector(".bubble").insertAdjacentHTML("beforeend", structuredHtml);
+      scrollChatToBottom();
+    }
 
     if (options && options.length) {
       addOptionButtons(bubble, options, (value) => submitChatMessage(value));

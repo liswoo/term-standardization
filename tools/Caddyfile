@@ -15,6 +15,11 @@
 	# doesn't hardcode an OS-specific absolute path.
 	handle {
 		root * {$UI_DIR}
+		# This is a local static frontend under active development, not a
+		# production CDN target - browsers heuristically cache files served
+		# without an explicit Cache-Control, which made edits to app.js/
+		# style.css/index.html appear not to take effect after a reload.
+		header Cache-Control "no-cache"
 		file_server
 	}
 }
