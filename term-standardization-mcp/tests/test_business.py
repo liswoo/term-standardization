@@ -163,21 +163,26 @@ def test_same_meaning_blocked_carries_matched_term(catalog):
     assert matched_id in candidate_ids
 
 def test_multiturn_help_does_not_become_definition(monkeypatch):
-    # Abbreviation suggestion calls the real LLM; stub it so this stays a free,
-    # deterministic test like the rest of the suite (see suggest_abbreviation's
-    # own unavailable-path test below for the paid-call boundary).
+    # Abbreviation/definition suggestions call the real LLM; stub them so this
+    # stays a free, deterministic test like the rest of the suite (see their
+    # own unavailable-path tests below for the paid-call boundary).
     monkeypatch.setattr(conversation,"suggest_abbreviation",
         lambda term_name: AbbreviationResult(abbreviation="TEST_ABBR",rationale="테스트 고정값",method="test_stub"))
+    monkeypatch.setattr(conversation,"suggest_definition",
+        lambda term_name,clarification_hint="": DefinitionSuggestionResult(ambiguous=False,definition="",rationale="",method="test_stub"))
     with db.connect() as conn:
         conn.execute("INSERT INTO domains(code,description,source) VALUES('수N7','테스트 숫자 도메인','TEST')")
     def apply(revision,intent,value="",confirmed=False):
         return conversation.apply("conversation","user",revision,{"intent":intent,"value":value,"confirmed":confirmed})
     assert apply(0,"propose_term","일일권장칼로리")["state"]["stage"]=="awaiting_term_confirm"
-    assert apply(1,"confirm_term",confirmed=True)["state"]["stage"]=="awaiting_domain_choice"
-    assert apply(2,"set_domain","수N7")["state"]["stage"]=="awaiting_definition"
-    result=apply(3,"show_candidates","잠깐, 기존 용어 정의 다시 보여줘")
+    # Definition now comes before domain: the domain step's own comparison-group
+    # evidence is much stronger once a definition exists to search with.
+    assert apply(1,"confirm_term",confirmed=True)["state"]["stage"]=="awaiting_definition"
+    result=apply(2,"show_candidates","잠깐, 기존 용어 정의 다시 보여줘")
     assert "definition" not in result["state"]
-    result=apply(4,"set_definition","하루에 섭취하도록 권장하는 에너지 기준량")
+    result=apply(3,"set_definition","하루에 섭취하도록 권장하는 에너지 기준량")
+    assert result["state"]["stage"]=="awaiting_domain_choice"
+    result=apply(4,"set_domain","수N7")
     assert result["state"]["stage"]=="awaiting_abbreviation"
     assert result["state"]["abbreviation_suggestion"]["abbreviation"]=="TEST_ABBR"
     assert apply(5,"help")["state"]["stage"]=="awaiting_abbreviation"
@@ -190,20 +195,22 @@ def test_multiturn_help_does_not_become_definition(monkeypatch):
 
 def test_confirm_term_detects_already_pending_request(monkeypatch):
     # Regression: re-registering a term that is already PENDING_REVIEW used to
-    # sail straight through confirm_term into a brand-new domain/definition/
+    # sail straight through confirm_term into a brand-new definition/domain/
     # abbreviation flow, only failing at the very last step (submit()'s
     # PENDING_REQUEST_ALREADY_EXISTS) - after the user redid the whole
     # conversation. confirm_term must catch this immediately, like EXACT_MATCH.
     monkeypatch.setattr(conversation,"suggest_abbreviation",
         lambda term_name: AbbreviationResult(abbreviation="TEST_ABBR",rationale="테스트 고정값",method="test_stub"))
+    monkeypatch.setattr(conversation,"suggest_definition",
+        lambda term_name,clarification_hint="": DefinitionSuggestionResult(ambiguous=False,definition="",rationale="",method="test_stub"))
     with db.connect() as conn:
         conn.execute("INSERT INTO domains(code,description,source) VALUES('수N7','테스트 숫자 도메인','TEST')")
     def apply(conv,revision,intent,value="",confirmed=False):
         return conversation.apply(conv,"user",revision,{"intent":intent,"value":value,"confirmed":confirmed})
     apply("first",0,"propose_term","일일운동시간")
     apply("first",1,"confirm_term",confirmed=True)
-    apply("first",2,"set_domain","수N7")
-    apply("first",3,"set_definition","하루 동안 실시한 신체 활동의 누적 시간")
+    apply("first",2,"set_definition","하루 동안 실시한 신체 활동의 누적 시간")
+    apply("first",3,"set_domain","수N7")
     apply("first",4,"set_abbreviation","TEST_ABBR")
     result=apply("first",5,"confirm_registration",confirmed=True)
     assert result["state"]["stage"]=="submitted"
@@ -260,21 +267,23 @@ def test_suggest_abbreviation_unavailable_when_no_api_key(monkeypatch):
 def test_suggest_definition_unavailable_when_no_api_key(monkeypatch):
     import term_service.definition_suggestion as module
     monkeypatch.setattr(module,"api_key",lambda:None)
-    result=module.suggest_definition("일일권장열량","수N7")
+    result=module.suggest_definition("일일권장열량")
     assert result.definition==""
     assert not result.ambiguous
     assert result.method=="unavailable"
     assert result.error_code=="LLM_NOT_CONFIGURED"
 
 def test_definition_clarification_round_trip(monkeypatch):
-    # set_domain triggers a first suggest_definition call; if it comes back
+    # confirm_term triggers a first suggest_definition call; if it comes back
     # ambiguous, picking one of its options must trigger a SECOND call (with
     # that pick as clarification_hint) rather than registering the short
-    # option label itself as the term's definition. A stub with a call
-    # counter stands in for the real (paid) LLM call, same pattern as
+    # option label itself as the term's definition. Once a confident definition
+    # is accepted, THAT (not the bare name) is what search()/domain_usage() use
+    # for domain-recommendation evidence. A stub with a call counter stands in
+    # for the real (paid) LLM call, same pattern as
     # test_multiturn_help_does_not_become_definition's abbreviation stub.
     calls=[]
-    def fake_suggest_definition(term_name,domain,clarification_hint=""):
+    def fake_suggest_definition(term_name,clarification_hint=""):
         calls.append(clarification_hint)
         if not clarification_hint:
             return DefinitionSuggestionResult(ambiguous=True,question="실제 소모량인가요, 목표량인가요?",
@@ -289,29 +298,30 @@ def test_definition_clarification_round_trip(monkeypatch):
     def apply(revision,intent,value="",confirmed=False):
         return conversation.apply("definition-conv","user",revision,{"intent":intent,"value":value,"confirmed":confirmed})
     apply(0,"propose_term","일일소모열량계산값")
-    apply(1,"confirm_term",confirmed=True)
-    result=apply(2,"set_domain","수N7")
+    result=apply(1,"confirm_term",confirmed=True)
     assert result["state"]["stage"]=="awaiting_definition"
     assert result["state"]["definition_suggestion"]["ambiguous"]
     assert len(calls)==1 and calls[0]==""
     # Picking one of the offered options must re-propose, not register the
     # option label as the definition.
-    result=apply(3,"set_definition","실제 소모량 기준")
+    result=apply(2,"set_definition","실제 소모량 기준")
     assert result["state"]["stage"]=="awaiting_definition"
     assert not result["state"]["definition_suggestion"]["ambiguous"]
     assert "definition" not in result["state"]
     assert len(calls)==2 and calls[1]=="실제 소모량 기준"
-    # Accepting the resulting confident suggestion (or typing anything else
-    # that isn't one of the prior options) must proceed to registration.
-    result=apply(4,"set_definition",result["state"]["definition_suggestion"]["definition"])
-    assert result["state"]["stage"]=="awaiting_abbreviation"
+    # Accepting the resulting confident suggestion moves on to domain choice,
+    # now backed by search(term_name, definition) evidence, not just the name.
+    result=apply(3,"set_definition",result["state"]["definition_suggestion"]["definition"])
+    assert result["state"]["stage"]=="awaiting_domain_choice"
     assert result["state"]["definition"]==calls[1]+"으로 계산한 하루 소모 에너지량"
+    result=apply(4,"set_domain","수N7")
+    assert result["state"]["stage"]=="awaiting_abbreviation"
 
 def test_definition_suggestion_own_text_bypasses_suggestion(monkeypatch):
     # The user must always be able to just type their own definition, whether
     # or not a suggestion/question was ever offered.
     monkeypatch.setattr(conversation,"suggest_definition",
-        lambda term_name,domain,clarification_hint="": DefinitionSuggestionResult(
+        lambda term_name,clarification_hint="": DefinitionSuggestionResult(
             ambiguous=True,question="q",options=["A","B"],method="test_stub"))
     monkeypatch.setattr(conversation,"suggest_abbreviation",
         lambda term_name: AbbreviationResult(abbreviation="TEST_ABBR2",rationale="",method="test_stub"))
@@ -321,10 +331,11 @@ def test_definition_suggestion_own_text_bypasses_suggestion(monkeypatch):
         return conversation.apply("definition-conv-2","user",revision,{"intent":intent,"value":value,"confirmed":confirmed})
     apply(0,"propose_term","야간간식섭취열량")
     apply(1,"confirm_term",confirmed=True)
-    apply(2,"set_domain","수N7")
-    result=apply(3,"set_definition","늦은 밤에 추가로 섭취한 간식의 열량 총합")
-    assert result["state"]["stage"]=="awaiting_abbreviation"
+    result=apply(2,"set_definition","늦은 밤에 추가로 섭취한 간식의 열량 총합")
+    assert result["state"]["stage"]=="awaiting_domain_choice"
     assert result["state"]["definition"]=="늦은 밤에 추가로 섭취한 간식의 열량 총합"
+    result=apply(3,"set_domain","수N7")
+    assert result["state"]["stage"]=="awaiting_abbreviation"
 
 @pytest.mark.skipif(os.getenv("RUN_LLM_TESTS")!="1",reason="Explicit low-volume paid API smoke test")
 def test_real_guideline_blocks_generic_word():
@@ -363,8 +374,9 @@ def test_real_abbreviation_suggestion_reaches_confirm(catalog):
         return conversation.apply("abbr-conv","user",revision,{"intent":intent,"value":value,"confirmed":confirmed})
     apply(0,"propose_term","일일평균걸음수")
     apply(1,"confirm_term",confirmed=True)
-    apply(2,"set_domain","수N7")
-    result=apply(3,"set_definition","하루 동안 걸은 평균 걸음 수")
+    result=apply(2,"set_definition","하루 동안 걸은 평균 걸음 수")
+    assert result["state"]["stage"]=="awaiting_domain_choice"
+    result=apply(3,"set_domain","수N7")
     assert result["state"]["stage"]=="awaiting_abbreviation"
     assert result["state"]["abbreviation_suggestion"]["abbreviation"]
     result=apply(4,"set_abbreviation","DAILY_AVG_STEP")

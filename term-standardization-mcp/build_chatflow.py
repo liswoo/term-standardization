@@ -76,7 +76,8 @@ different term text -> propose_term. Preserve a confirmation step even for confi
 """At awaiting_domain_choice, set_domain value must be an actual domain code from domain_options/recommended_domain in the stored state (e.g. "수N7"), never the user's raw wording.
 A request to see, repeat, or explain the domain options (e.g. '제공해줘', '알려줘', '뭐가 있어', '추천해줘', '보여줘') is NOT a selection -> show_candidates.
 Example: '제공해줘' -> show_candidates, NOT set_domain.
-Only classify set_domain when the user names/picks an actual domain (by its code or its description) or explicitly repeats a code you already showed them.""",
+Only classify set_domain when the user names/picks an actual domain (by its code or its description) or explicitly repeats a code you already showed them.
+A request to change the definition just given (e.g. '정의를 다시 쓸게', '정의를 바꾸고 싶어') -> edit_definition.""",
 "awaiting_definition":
 """At awaiting_definition, the stored state's definition_suggestion field may hold a proposed
 definition (definition_suggestion.definition) or, if the term name was ambiguous, a clarifying
@@ -97,7 +98,6 @@ Examples at awaiting_definition:
 정의는 어떻게 쓰면 돼? -> help.
 기존 용어 정의 다시 보여줘 -> show_candidates.
 취소할게 -> cancel.
-도메인을 바꾸고 싶어 -> edit_domain.
 Only actual questions about the process or requests for assistance -> help. Never classify a descriptive phrase as help just because it is short.""",
 "awaiting_abbreviation":
 """At awaiting_abbreviation, the stored state's abbreviation_suggestion field holds a recommended English abbreviation.

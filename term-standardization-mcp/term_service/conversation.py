@@ -83,7 +83,7 @@ def transition(state, action, requester, conversation_id):
             s["stage"]="existing_term_found"
             return s,{"next_action":"USE_EXISTING"}
         # A term already awaiting review must not be silently re-collected through
-        # domain/definition/abbreviation only to fail at the final submit() step
+        # definition/domain/abbreviation only to fail at the final submit() step
         # (PENDING_REQUEST_ALREADY_EXISTS) - catch it here, right after confirming
         # the name, same as EXACT_MATCH does for already-approved terms.
         pending=registration.find_pending(s["term_name"])
@@ -91,15 +91,55 @@ def transition(state, action, requester, conversation_id):
             s["pending_request"]=pending
             s["stage"]="pending_request_found"
             return s,{"next_action":"PENDING_REQUEST_FOUND"}
+        # Definition comes before domain (see set_definition below): the domain
+        # step's own comparison-group evidence is far stronger once a definition
+        # exists to search with, not just the bare name. Writing a definition
+        # from scratch is also real friction, so propose one (or ask a clarifying
+        # question first, if the name is genuinely ambiguous) here too.
+        s["definition_suggestion"]=suggest_definition(s["term_name"]).model_dump()
+        s["stage"]="awaiting_definition"
+        return s,{"next_action":"INPUT_DEFINITION"}
+    if a.intent=="edit_definition":
+        if "term_name" not in s:
+            return s,{"error":"CONFIRM_TERM_FIRST"}
+        registration.cancel(requester,conversation_id)
+        # Domain evidence was built from the OLD definition's search results, so
+        # editing the definition invalidates it too - back to square one on both.
+        for name in ["domain","domains","preparation","definition","abbreviation_suggestion","english_abbr"]:
+            s.pop(name,None)
+        s["definition_suggestion"]=suggest_definition(s["term_name"]).model_dump()
+        s["stage"]="awaiting_definition"
+        return s,{"next_action":"INPUT_DEFINITION"}
+    if a.intent=="set_definition":
+        if stage!="awaiting_definition":
+            return s,{"error":"UNEXPECTED_INTENT"}
+        suggestion=s.get("definition_suggestion") or {}
+        if suggestion.get("ambiguous") and a.value in suggestion.get("options",[]):
+            # This is an answer to the clarifying question, not a final definition -
+            # re-propose with that hint instead of registering the option label
+            # itself as the term's definition.
+            s["definition_suggestion"]=suggest_definition(s["term_name"],clarification_hint=a.value).model_dump()
+            return s,{"next_action":"INPUT_DEFINITION"}
+        # Full shape/length validation (RegistrationInput) happens once at
+        # set_domain below, where term_name/definition/domain are all finally
+        # known together - domain isn't chosen yet at this point.
+        s["definition"]=a.value
+        # Now that a definition exists, search with it (not just the bare name)
+        # for real domain-recommendation evidence - see the comment on confirm_term.
+        result=search(s["term_name"],a.value,limit=30)
+        s["search"]=result.model_dump()
         s["domains"]=domain_usage(s["term_name"],[c.term_id for c in result.candidates])
         s["stage"]="awaiting_domain_choice"
         return s,{"next_action":"CHOOSE_DOMAIN"}
     if a.intent=="edit_domain":
-        if "term_name" not in s or "search" not in s:
-            return s,{"error":"CONFIRM_TERM_FIRST"}
+        if "term_name" not in s or not s.get("definition"):
+            return s,{"error":"SET_DEFINITION_FIRST"}
         registration.cancel(requester,conversation_id)
-        for name in ["domain","definition","definition_suggestion","preparation","abbreviation_suggestion","english_abbr"]:
+        for name in ["domain","preparation","abbreviation_suggestion","english_abbr"]:
             s.pop(name,None)
+        result=search(s["term_name"],s["definition"],limit=30)
+        s["search"]=result.model_dump()
+        s["domains"]=domain_usage(s["term_name"],[c.term_id for c in result.candidates])
         s["stage"]="awaiting_domain_choice"
         return s,{"next_action":"CHOOSE_DOMAIN"}
     if a.intent=="set_domain":
@@ -112,35 +152,9 @@ def transition(state, action, requester, conversation_id):
         if value not in known:
             return s,{"error":"UNRECOGNIZED_DOMAIN","known_domains":sorted(known)}
         s["domain"]=value
-        # Writing a definition from scratch is real friction; propose one (or ask
-        # a clarifying question first, if the name is genuinely ambiguous) so the
-        # user can accept/refine it instead of always starting from a blank page.
-        s["definition_suggestion"]=suggest_definition(s["term_name"],value).model_dump()
-        s["stage"]="awaiting_definition"
-        return s,{"next_action":"INPUT_DEFINITION"}
-    if a.intent=="edit_definition":
-        if not s.get("domain"):
-            return s,{"error":"CHOOSE_DOMAIN_FIRST"}
-        registration.cancel(requester,conversation_id)
-        for name in ["preparation","definition","abbreviation_suggestion","english_abbr"]:
-            s.pop(name,None)
-        s["definition_suggestion"]=suggest_definition(s["term_name"],s["domain"]).model_dump()
-        s["stage"]="awaiting_definition"
-        return s,{"next_action":"INPUT_DEFINITION"}
-    if a.intent=="set_definition":
-        if stage!="awaiting_definition":
-            return s,{"error":"UNEXPECTED_INTENT"}
-        suggestion=s.get("definition_suggestion") or {}
-        if suggestion.get("ambiguous") and a.value in suggestion.get("options",[]):
-            # This is an answer to the clarifying question, not a final definition -
-            # re-propose with that hint instead of registering the option label
-            # itself as the term's definition.
-            s["definition_suggestion"]=suggest_definition(s["term_name"],s["domain"],clarification_hint=a.value).model_dump()
-            return s,{"next_action":"INPUT_DEFINITION"}
-        p=RegistrationInput(term_name=s["term_name"],definition=a.value,domain=s["domain"],
+        p=RegistrationInput(term_name=s["term_name"],definition=s["definition"],domain=value,
             requester=requester,conversation_id=conversation_id)
         prepared=registration.prepare(p)
-        s["definition"]=p.definition
         s["preparation"]=prepared
         if not prepared.get("ready"):
             s["stage"]="definition_blocked"

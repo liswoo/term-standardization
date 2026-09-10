@@ -204,40 +204,41 @@ workflow:
           ', \\'추천해줘\\', \\'보여줘\\') is NOT a selection -> show_candidates.\\nExample:\
           \ \\'제공해줘\\' -> show_candidates, NOT set_domain.\\nOnly classify set_domain\
           \ when the user names/picks an actual domain (by its code or its description)\
-          \ or explicitly repeats a code you already showed them.', 'awaiting_definition':\
-          \ \"At awaiting_definition, the stored state's definition_suggestion field\
-          \ may hold a proposed\\ndefinition (definition_suggestion.definition) or,\
-          \ if the term name was ambiguous, a clarifying\\nquestion with short candidate-meaning\
-          \ labels (definition_suggestion.options).\\nA description of what the term\
-          \ means, an acceptance of the suggested definition (e.g. '네', '좋아요',\\n'그걸로\
-          \ 할게요'), or a pick of one of the candidate-meaning labels -> set_definition\
-          \ in every case,\\nvalue = that exact text verbatim (the suggested definition\
-          \ string, the chosen option label string, or\\nthe user's own wording) -\
-          \ never invent, reformat, or expand it yourself; downstream logic tells\
-          \ the two\\ncases apart by matching value against the stored options.\\\
-          nAccept short noun phrases, informal Korean, and missing spaces/punctuation.\
-          \ Do not require a complete sentence or the word 정의.\\nDo not judge its\
-          \ quality or similarity; the comparison tool handles that next.\\nExamples\
-          \ at awaiting_definition:\\n성인기준 하루에 권장하는 칼로리의 양 -> set_definition, value\
-          \ exactly that text.\\n하루 권장 에너지량 -> set_definition.\\n네, 그걸로 할게요 (suggestion\
-          \ accepted) -> set_definition, value = definition_suggestion.definition\
+          \ or explicitly repeats a code you already showed them.\\nA request to change\
+          \ the definition just given (e.g. \\'정의를 다시 쓸게\\', \\'정의를 바꾸고 싶어\\') ->\
+          \ edit_definition.', 'awaiting_definition': \"At awaiting_definition, the\
+          \ stored state's definition_suggestion field may hold a proposed\\ndefinition\
+          \ (definition_suggestion.definition) or, if the term name was ambiguous,\
+          \ a clarifying\\nquestion with short candidate-meaning labels (definition_suggestion.options).\\\
+          nA description of what the term means, an acceptance of the suggested definition\
+          \ (e.g. '네', '좋아요',\\n'그걸로 할게요'), or a pick of one of the candidate-meaning\
+          \ labels -> set_definition in every case,\\nvalue = that exact text verbatim\
+          \ (the suggested definition string, the chosen option label string, or\\\
+          nthe user's own wording) - never invent, reformat, or expand it yourself;\
+          \ downstream logic tells the two\\ncases apart by matching value against\
+          \ the stored options.\\nAccept short noun phrases, informal Korean, and\
+          \ missing spaces/punctuation. Do not require a complete sentence or the\
+          \ word 정의.\\nDo not judge its quality or similarity; the comparison tool\
+          \ handles that next.\\nExamples at awaiting_definition:\\n성인기준 하루에 권장하는\
+          \ 칼로리의 양 -> set_definition, value exactly that text.\\n하루 권장 에너지량 -> set_definition.\\\
+          n네, 그걸로 할게요 (suggestion accepted) -> set_definition, value = definition_suggestion.definition\
           \ copied verbatim.\\n실제 소모한 칼로리 기준 (one of definition_suggestion.options,\
           \ clicked or typed exactly) -> set_definition, value = that exact option\
           \ text.\\n담당자가 검토한 이유 -> set_definition.\\n정의는 어떻게 쓰면 돼? -> help.\\n기존 용어\
-          \ 정의 다시 보여줘 -> show_candidates.\\n취소할게 -> cancel.\\n도메인을 바꾸고 싶어 -> edit_domain.\\\
-          nOnly actual questions about the process or requests for assistance -> help.\
-          \ Never classify a descriptive phrase as help just because it is short.\"\
-          , 'awaiting_abbreviation': \"At awaiting_abbreviation, the stored state's\
-          \ abbreviation_suggestion field holds a recommended English abbreviation.\\\
-          nIf the user accepts it (e.g. '네', '좋아요', '그걸로 할게요', '네 그걸로 해줘'), set_abbreviation\
-          \ with value = that exact suggested abbreviation string, copied verbatim\
-          \ from the stored state - never invent or reformat it yourself.\\nIf the\
-          \ user instead provides their own abbreviation text, set_abbreviation with\
-          \ that raw value; normalization/validation happens downstream.\\nOnly an\
-          \ actual question about the abbreviation or its rules -> help.\", 'awaiting_confirm':\
-          \ \"At awaiting_confirm, explicit yes/등록해줘 -> confirm_registration true;\
-          \ no/cancel -> cancel.\\nNever confirm registration in another stage. A\
-          \ general initial '등록해줘' is NOT final consent.\"}\nTERMINAL_RULE='At submitted/registration_failed/existing_term_found/pending_request_found/definition_blocked/cancelled,\
+          \ 정의 다시 보여줘 -> show_candidates.\\n취소할게 -> cancel.\\nOnly actual questions\
+          \ about the process or requests for assistance -> help. Never classify a\
+          \ descriptive phrase as help just because it is short.\", 'awaiting_abbreviation':\
+          \ \"At awaiting_abbreviation, the stored state's abbreviation_suggestion\
+          \ field holds a recommended English abbreviation.\\nIf the user accepts\
+          \ it (e.g. '네', '좋아요', '그걸로 할게요', '네 그걸로 해줘'), set_abbreviation with value\
+          \ = that exact suggested abbreviation string, copied verbatim from the stored\
+          \ state - never invent or reformat it yourself.\\nIf the user instead provides\
+          \ their own abbreviation text, set_abbreviation with that raw value; normalization/validation\
+          \ happens downstream.\\nOnly an actual question about the abbreviation or\
+          \ its rules -> help.\", 'awaiting_confirm': \"At awaiting_confirm, explicit\
+          \ yes/등록해줘 -> confirm_registration true; no/cancel -> cancel.\\nNever confirm\
+          \ registration in another stage. A general initial '등록해줘' is NOT final consent.\"\
+          }\nTERMINAL_RULE='At submitted/registration_failed/existing_term_found/pending_request_found/definition_blocked/cancelled,\
           \ a new name -> propose_term.'\nTERMINAL_STAGES=['submitted', 'registration_failed',\
           \ 'existing_term_found', 'pending_request_found', 'definition_blocked',\
           \ 'cancelled']\n\ndef main(stage: str) -> dict:\n    if stage in STAGE_RULES:\n\
