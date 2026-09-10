@@ -31,6 +31,9 @@ Docker Desktop이 실행되어 있어야 합니다. DB 볼륨은 유지됩니다
 .venv/Scripts/python manage.py init-db
 # 카탈로그 임포트 (동일 정규화 이름이면 갱신)
 .venv/Scripts/python manage.py import-catalog data/scenario_catalog.json
+# 표준가이드 RAG 청크 임포트 (섹션 제목 기준 갱신, 삭제된 섹션은 자동 정리)
+.venv/Scripts/python manage.py import-guideline data/standard_guide.md
+# 위 세 가지(init-db/import-catalog/import-guideline)는 start.ps1/start.sh가 실행할 때마다 자동으로도 수행합니다 - 아래는 그 외에 개별적으로 다시 돌리고 싶을 때의 명령입니다.
 # 새 MCP Tool 추가 후 Dify 공급자 도구 목록 갱신
 .venv/Scripts/python dify_admin.py refresh
 # Dify Chatflow 수정·반영 (저장된 앱 ID로 갱신)

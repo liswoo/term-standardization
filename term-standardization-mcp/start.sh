@@ -14,6 +14,11 @@ fi
 
 docker compose up -d --wait
 .venv/bin/python manage.py init-db
+# Idempotent reseed: the terms_data Docker volume is local to this machine and
+# never travels with git, so switching machines (or a fresh clone) starts with
+# an empty database unless this also reseeds it every time, not just once.
+.venv/bin/python manage.py import-catalog data/scenario_catalog.json
+.venv/bin/python manage.py import-guideline data/standard_guide.md
 
 if [[ -n "$EXISTING_PID" ]]; then
   kill "$EXISTING_PID" || true

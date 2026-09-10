@@ -165,10 +165,13 @@ cd term-standardization
 .\poc-stop.ps1             # 전체 종료 (데이터 보존)
 ```
 
-## 참고: DB 데이터는 새로 시작합니다
+## 참고: DB는 설치본마다 별도입니다
 
-실제로 등록된 용어 데이터는 설치본 간에 이전하지 않습니다. `start.sh`/`start.ps1`이 `manage.py init-db`로 스키마만 만들고, 도메인 코드(수N7 등)와 카탈로그는 비어 있는 상태로 시작합니다. 데모용 시나리오 데이터가 필요하면:
+DB는 `compose.yaml`의 `terms_data`라는 Docker 볼륨에 저장되며, 이 볼륨은 실행 중인 그 컴퓨터의 로컬 Docker Desktop 안에만 존재합니다 — git으로 옮겨지지 않으므로, Mac/Windows를 오가거나 새로 클론한 경우 매번 완전히 빈 상태로 시작합니다.
 
-```bash
-.venv/bin/python manage.py import-catalog data/scenario_catalog.json
-```
+`start.sh`/`start.ps1`은 매번 실행될 때마다 다음을 자동으로 처리합니다 (모두 반복 실행해도 안전한 idempotent 작업입니다):
+1. `manage.py init-db` — 테이블 스키마 생성
+2. `manage.py import-catalog data/scenario_catalog.json` — 시나리오 용어 12개, 도메인, 국제표준약어 채우기
+3. `manage.py import-guideline data/standard_guide.md` — 표준가이드 RAG 검사용 벡터 청크 채우기
+
+즉 새 컴퓨터에서 처음 `poc-start.sh`/`poc-start.ps1`을 실행해도 시나리오 데이터와 가이드라인 검사가 곧바로 동작합니다. 다만 실제로 접수된 등록 신청(`registration_requests`)이나 대화 상태(`conversation_state`)는 그 컴퓨터에서 생성된 것만 남아 있고 다른 설치본으로 옮겨지지 않습니다 — 데모/검증용으로는 문제 없지만, 실제 운영 환경이라면 별도의 DB 백업·복제 전략이 필요합니다.
