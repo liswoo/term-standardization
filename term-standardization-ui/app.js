@@ -509,7 +509,8 @@ function summaryCard(rows, extraClass = "") {
 }
 
 function renderExistingTermCard(mcpState) {
-  const match = (mcpState.search || {}).exact_matches?.[0];
+  const search = mcpState.search || {};
+  const match = search.exact_matches?.[0] || search.synonym_matches?.[0];
   if (!match) return "";
   return summaryCard([
     ["용어명", match.name],

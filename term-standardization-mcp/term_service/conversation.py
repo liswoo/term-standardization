@@ -73,7 +73,13 @@ def transition(state, action, requester, conversation_id):
             return s,{"next_action":"CHOOSE_CORRECTION"}
         result=search(s["term_name"])
         s["search"]=result.model_dump()
-        if result.match_type=="EXACT_MATCH":
+        # A registered synonym IS the same concept as its primary term by
+        # definition (same definition/domain, just an alternate label) - there
+        # is no such thing as a legitimately different "new" term sharing that
+        # exact name, so this blocks immediately just like EXACT_MATCH instead
+        # of sending the user through the whole domain/definition/abbreviation
+        # flow only to (hopefully) get caught later by compare().
+        if result.match_type in ("EXACT_MATCH","SYNONYM_MATCH"):
             s["stage"]="existing_term_found"
             return s,{"next_action":"USE_EXISTING"}
         # A term already awaiting review must not be silently re-collected through
@@ -87,7 +93,7 @@ def transition(state, action, requester, conversation_id):
             return s,{"next_action":"PENDING_REQUEST_FOUND"}
         s["domains"]=domain_usage(s["term_name"],[c.term_id for c in result.candidates])
         s["stage"]="awaiting_domain_choice"
-        return s,{"next_action":"CHOOSE_DOMAIN","prefer_existing":result.match_type=="SYNONYM_MATCH"}
+        return s,{"next_action":"CHOOSE_DOMAIN"}
     if a.intent=="edit_domain":
         if "term_name" not in s or "search" not in s:
             return s,{"error":"CONFIRM_TERM_FIRST"}

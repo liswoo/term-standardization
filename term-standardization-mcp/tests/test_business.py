@@ -130,6 +130,25 @@ def test_catalog_change_invalidates_confirmation():
 def test_exact_registration_blocked(catalog):
     assert registration.prepare(payload("일일섭취칼로리"))["code"]=="EXACT_MATCH"
 
+def test_confirm_term_blocks_exact_and_synonym_names(catalog):
+    # A registered synonym IS the same concept as its primary term (same
+    # definition/domain, just an alternate label) - confirm_term must block it
+    # immediately just like EXACT_MATCH, instead of sending the user through
+    # the whole domain/definition/abbreviation flow only to maybe get caught
+    # later by compare(). "하루섭취열량" is a synonym of "일일섭취칼로리" in
+    # the catalog fixture.
+    def apply(conv,revision,intent,value="",confirmed=False):
+        return conversation.apply(conv,"user",revision,{"intent":intent,"value":value,"confirmed":confirmed})
+    apply("exact-conv",0,"propose_term","일일섭취칼로리")
+    result=apply("exact-conv",1,"confirm_term",confirmed=True)
+    assert result["state"]["stage"]=="existing_term_found"
+    assert result["state"]["search"]["match_type"]=="EXACT_MATCH"
+
+    apply("syn-conv",0,"propose_term","하루섭취열량")
+    result=apply("syn-conv",1,"confirm_term",confirmed=True)
+    assert result["state"]["stage"]=="existing_term_found"
+    assert result["state"]["search"]["match_type"]=="SYNONYM_MATCH"
+
 def test_same_meaning_blocked_carries_matched_term(catalog):
     # Regression: SAME_MEANING used to omit `search`, so the matched existing
     # term's own name/definition/domain never reached rendering - only an opaque
