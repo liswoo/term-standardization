@@ -2,9 +2,11 @@
 
 공공기관 데이터 표준 용어 등록을 대화형으로 처리하는 POC. Dify + MCP 서버(PostgreSQL/pgvector) + 정적 프론트엔드로 구성됩니다.
 
+> **새 세션(에이전트/사람 모두)은 먼저 [CLAUDE.md](CLAUDE.md)를 읽으세요.** 현재 아키텍처, 반복 발견된 엔지니어링 패턴, 미해결 이슈/다음 작업 후보를 정리해둔 문서입니다. 이 README는 저장소 구조와 실행 명령만 다룹니다.
+
 ## 구조
 
-- `term-standardization-mcp/` — MCP 서버(19개 도구), 검색·검증·등록 업무 로직, DB 스키마, Dify Chatflow/Workflow 빌드 스크립트
+- `term-standardization-mcp/` — MCP 서버(22개 도구), 검색·검증·등록 업무 로직, DB 스키마, Dify Chatflow/Workflow 빌드 스크립트
 - `term-standardization-ui/` — 관리자 콘솔 + 채팅 패널 정적 프론트엔드
 - `tools/Caddyfile` — 프론트엔드와 Dify API를 한 오리진(`:8090`)으로 묶는 리버스 프록시 설정
 - `poc-start.ps1` / `poc-stop.ps1` — Windows용 통합 실행/종료
