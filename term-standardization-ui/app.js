@@ -32,9 +32,9 @@ let currentView = "dashboard";
 // ── 상태 ────────────────────────────────────────────────────────
 // termsPage/wordsPage는 각자 독립된 페이지네이션 상태(limit/offset/q/total) -
 // 용어사전과 단어사전은 서로 다른 화면이라 검색어·페이지 위치가 섞이면 안 됨.
-// domains는 list_data_domains 전체(126건, 페이지네이션 불필요)를 그대로 담고,
-// domainDistribution(아래)은 그와 별개로 "지금 로드된 용어들이 어느 도메인에
-// 몰려있나"를 보여주는 대시보드 막대차트 전용 집계다 - 둘을 섞지 않는다.
+// domains는 list_data_domains 전체(126건, 페이지네이션 불필요)를 그대로 담으며
+// 각 항목에 실제 전체 term_count(백엔드 LEFT JOIN 집계)가 포함된다 - 도메인
+// 관리 카드와 대시보드 막대차트 둘 다 이 하나의 소스만 쓴다.
 const state = {
   terms: [...MOCK_TERMS],
   words: [],
@@ -91,23 +91,23 @@ document.querySelectorAll(".nav-item").forEach((btn) => {
 // "도메인"은 백엔드(standard_terms.domain, domains 테이블)에 실제로 존재하는
 // 단 하나의 개념 - 수N7/명V100/율N5,2/코드C2 같은 데이터 형식 도메인뿐입니다.
 // 보건복지/행정/교육 같은 주제 분류는 백엔드 어디에도 없는 별개의 개념이라
-// "도메인"이라는 이름으로 섞어 쓰면 안 됩니다. 여기서는 그 개념을 따로 만들지
-// 않고, 지금 state.terms에 실제로 들어있는 도메인 값을 그대로 집계합니다.
-const DOMAIN_PALETTE = ["#2563eb", "#7c3aed", "#059669", "#d97706", "#db2777", "#64748b"];
+// "도메인"이라는 이름으로 섞어 쓰면 안 됩니다.
+//
+// 도메인별 용어수는 반드시 state.domains(list_data_domains()가 돌려주는 실제
+// 전체 도메인 + term_count, tools.py에서 LEFT JOIN으로 집계한 진짜 전체 합계)
+// 에서만 가져온다 - 예전엔 지금 로드된 state.terms(페이지당 50건)만 세는
+// computeDomainDistribution()을 썼는데, 카탈로그가 13,000건대로 커지면서
+// "도메인 수도, 도메인별 건수도 다 틀리다"는 버그로 실제로 드러났다. 절대
+// 페이지 단위로 로드된 용어 목록에서 도메인 분포를 다시 집계하지 말 것.
+const DOMAIN_PALETTE = ["#2563eb", "#7c3aed", "#059669", "#d97706", "#db2777", "#0891b2", "#65a30d", "#ea580c"];
 
-function computeDomainDistribution() {
-  const counts = new Map();
-  for (const t of state.terms) {
-    counts.set(t.domain, (counts.get(t.domain) || 0) + 1);
-  }
-  return [...counts.entries()]
-    .sort((a, b) => b[1] - a[1])
-    .map(([domain, count], i) => ({ domain, count, color: DOMAIN_PALETTE[i % DOMAIN_PALETTE.length] }));
-}
-
-function domainColor(domainName) {
-  const d = state.domainDistribution.find((x) => x.domain === domainName);
-  return d ? d.color : "#64748b";
+// 도메인 코드 문자열을 해시해 항상 같은 색을 돌려준다 - "상위 N개 안에 드는지"
+// 같은 순위에 색을 의존시키면, 정렬이나 필터가 바뀔 때마다 같은 도메인인데
+// 다른 색으로 보이는 문제가 생긴다.
+function domainColor(code) {
+  let hash = 0;
+  for (let i = 0; i < code.length; i++) hash = (hash * 31 + code.charCodeAt(i)) >>> 0;
+  return DOMAIN_PALETTE[hash % DOMAIN_PALETTE.length];
 }
 
 function renderTermsTable() {
@@ -180,20 +180,22 @@ function changeWordsPage(delta) {
 }
 
 // "도메인 관리" 화면 전용 - list_data_domains가 돌려주는 실제 활성 도메인
-// 전체(126건)를 그대로 그린다. 대시보드의 "도메인별 용어 분포" 막대차트는
-// 이것과 다른 질문("지금 보이는 용어들이 어느 도메인에 몰려있나")이라
-// computeDomainDistribution()을 그대로 쓴다 - 절대 하나로 합치지 않는다.
+// 전체(126건)와, 각 도메인의 진짜 전체 term_count를 그대로 카드로 그린다.
 function renderDomainGrid() {
   const grid = document.getElementById("domain-grid");
   grid.innerHTML = state.domains
     .map(
-      (d, i) => `
+      (d) => `
     <div class="domain-card">
       <div class="domain-card-top">
-        <span class="domain-dot" style="background:${DOMAIN_PALETTE[i % DOMAIN_PALETTE.length]}"></span>
-        <h3>${d.code}</h3>
+        <span class="domain-dot" style="background:${domainColor(d.code)}"></span>
+        <h3>${escapeHtml(d.code)}</h3>
       </div>
-      <p class="muted">${d.description || "-"}</p>
+      <p class="muted">${escapeHtml(d.description || "-")}</p>
+      <div class="domain-card-footer">
+        <strong>${(d.term_count || 0).toLocaleString()}</strong>
+        <span>건 사용 중</span>
+      </div>
     </div>`
     )
     .join("");
@@ -201,21 +203,43 @@ function renderDomainGrid() {
   if (pill) pill.textContent = `${state.domains.length.toLocaleString()}건`;
 }
 
+// 대시보드는 요약용 작은 패널이라 126개 도메인을 다 나열하면 UX가 나빠진다 -
+// 건수 상위 몇 개만 막대로 보여주고, 나머지는 "그 외 N개" 한 줄로 합산한 뒤
+// "도메인 관리" 화면으로 바로 넘어갈 수 있는 링크를 둔다(페이지네이션보다
+// 이 작은 패널에는 더 적합한 요약+드릴다운 패턴).
+const DASHBOARD_DOMAIN_TOP_N = 8;
+
 function renderDomainBars() {
-  const distribution = state.domainDistribution;
-  const total = distribution.reduce((sum, d) => sum + d.count, 0) || 1;
   const wrap = document.getElementById("domain-bars");
-  wrap.innerHTML = distribution
+  if (!wrap) return;
+  const used = state.domains.filter((d) => (d.term_count || 0) > 0).sort((a, b) => b.term_count - a.term_count);
+  const total = used.reduce((sum, d) => sum + d.term_count, 0) || 1;
+  const top = used.slice(0, DASHBOARD_DOMAIN_TOP_N);
+  const rest = used.slice(DASHBOARD_DOMAIN_TOP_N);
+  const restSum = rest.reduce((sum, d) => sum + d.term_count, 0);
+  let html = top
     .map((d) => {
-      const pct = Math.round((d.count / total) * 100);
+      const pct = Math.round((d.term_count / total) * 100);
       return `
       <div class="bar-row">
-        <span class="bar-label">${d.domain}</span>
-        <div class="bar-track"><div class="bar-fill" style="width:${pct}%;background:${d.color}"></div></div>
-        <span class="bar-value">${d.count}</span>
+        <span class="bar-label" title="${escapeHtml(d.description || "")}">${escapeHtml(d.code)}</span>
+        <div class="bar-track"><div class="bar-fill" style="width:${pct}%;background:${domainColor(d.code)}"></div></div>
+        <span class="bar-value">${d.term_count.toLocaleString()}</span>
       </div>`;
     })
     .join("");
+  if (rest.length) {
+    const pct = Math.round((restSum / total) * 100);
+    html += `
+      <div class="bar-row">
+        <span class="bar-label muted">그 외 ${rest.length}개 도메인</span>
+        <div class="bar-track"><div class="bar-fill" style="width:${pct}%;background:#cbd5e1"></div></div>
+        <span class="bar-value">${restSum.toLocaleString()}</span>
+      </div>
+      <button class="btn-ghost domain-bars-more" id="domain-bars-view-all">전체 도메인 보기 (${state.domains.length}건)</button>`;
+  }
+  wrap.innerHTML = html || `<p class="muted">아직 도메인별 용어 데이터가 없습니다.</p>`;
+  document.getElementById("domain-bars-view-all")?.addEventListener("click", () => switchView("domains"));
 }
 
 function renderActivity() {
@@ -257,7 +281,6 @@ function renderHistory() {
 }
 
 function renderAll() {
-  state.domainDistribution = computeDomainDistribution();
   renderTermsTable();
   renderWordsTable();
   renderDomainGrid();
@@ -266,10 +289,9 @@ function renderAll() {
   renderHistory();
   renderPagination("terms-pagination", state.termsPage, () => changeTermsPage(-1), () => changeTermsPage(1));
   renderPagination("words-pagination", state.wordsPage, () => changeWordsPage(-1), () => changeWordsPage(1));
-  // "관리 도메인" 통계는 실제 전체 활성 도메인 수(state.domains) - 아직
-  // 백엔드 응답 전이면 지금 로드된 용어 기준 집계로 대체한다.
+  // "관리 도메인" 통계는 실제 전체 활성 도메인 수(state.domains, 백엔드 응답 전엔 0).
   const domainCountEl = document.getElementById("stat-domain-count");
-  if (domainCountEl) domainCountEl.textContent = state.domains.length || state.domainDistribution.length;
+  if (domainCountEl) domainCountEl.textContent = state.domains.length.toLocaleString();
   const pendingEl = document.getElementById("stat-pending-review");
   if (pendingEl) pendingEl.textContent = state.terms.filter((t) => t.status === "검토중").length;
 }

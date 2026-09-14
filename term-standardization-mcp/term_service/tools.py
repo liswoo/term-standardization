@@ -68,9 +68,15 @@ def analyze_domain_usage(candidate_term: str, similar_term_ids: list[str] | None
 
 @tool
 def list_data_domains() -> dict:
-    """List actual domain metadata; never generate fake domains."""
+    """List actual domain metadata with real term_count per domain; never generate fake domains.
+    term_count is a true aggregate over the full active standard_terms table (a LEFT JOIN so a
+    domain with zero terms still gets 0, not omitted) - never approximate this by counting
+    whatever page of terms happens to be loaded client-side, which undercounts badly once the
+    catalog is paginated (real data has 13,000+ terms across 126 domains, not a handful)."""
     with db.connect() as conn:
-        return {"domains":conn.execute("SELECT code,description,source FROM domains WHERE status='ACTIVE' ORDER BY code").fetchall()}
+        return {"domains":conn.execute("""SELECT d.code,d.description,d.source,COUNT(t.id) AS term_count
+            FROM domains d LEFT JOIN standard_terms t ON t.domain=d.code AND t.status='ACTIVE'
+            WHERE d.status='ACTIVE' GROUP BY d.code,d.description,d.source ORDER BY d.code""").fetchall()}
 
 @tool
 def list_terms(limit: int = 50, offset: int = 0, q: str = "") -> dict:

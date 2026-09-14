@@ -157,11 +157,12 @@ svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width:
 .pagination-label { font-size: 12.5px; color: var(--text-muted); min-width: 140px; text-align: center; }
 
 /* ── 도메인 바 차트 ── */
-.bar-row { display: grid; grid-template-columns: 76px 1fr 26px; align-items: center; gap: 10px; margin-bottom: 12px; }
-.bar-label { font-size: 12.5px; font-weight: 600; }
+.bar-row { display: grid; grid-template-columns: 108px 1fr 48px; align-items: center; gap: 10px; margin-bottom: 12px; }
+.bar-label { font-size: 12.5px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .bar-track { height: 8px; border-radius: 999px; background: var(--bg); overflow: hidden; }
 .bar-fill { height: 100%; border-radius: 999px; }
 .bar-value { font-size: 12.5px; font-weight: 700; text-align: right; color: var(--text-muted); }
+.domain-bars-more { display: block; width: 100%; margin-top: 4px; text-align: center; }
 
 /* ── 활동 리스트 ── */
 .activity-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 14px; }
