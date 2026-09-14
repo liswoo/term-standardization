@@ -14,7 +14,7 @@ const CHAT_USER = "meta-system-ui";
 // LLM 분류 파이프라인을 타는 Chatflow 대신 1회성 /v1/workflows/run으로 분리했습니다.
 const LIST_TERMS_API = "/v1/workflows/run";
 const LIST_TERMS_KEY = "app-U0pwaq4eXx9buXrPLtrqoEF0";
-const STATUS_LABELS = { APPROVED: "승인", PENDING_REVIEW: "검토중", REJECTED: "반려" };
+const STATUS_LABELS = { APPROVED: "승인", PENDING_REVIEW: "검토중", REJECTED: "반려", ACTIVE: "사용중" };
 
 // 워크플로우 그래프의 실제 노드 순서(빌드 스크립트 build_chatflow.py 기준).
 // 사용자에게는 내부 단계를 그대로 노출하지 않고 이해하기 쉬운 라벨로 보여줍니다.
@@ -39,8 +39,8 @@ const state = {
   terms: [...MOCK_TERMS],
   words: [],
   domains: [],
-  termsPage: { limit: 50, offset: 0, total: 0, q: "" },
-  wordsPage: { limit: 50, offset: 0, total: 0, q: "" },
+  termsPage: { limit: 50, offset: 0, total: 0, q: "", status: "", domain: "", requester: "" },
+  wordsPage: { limit: 50, offset: 0, total: 0, q: "", status: "", isFormatWord: "", requester: "" },
   activity: [...MOCK_ACTIVITY],
   history: [],
   chatRegisteredCount: 0,
@@ -122,6 +122,7 @@ function renderTermsTable() {
       <td><span class="domain-tag" style="--tag-color:${domainColor(t.domain)}">${t.domain}</span></td>
       <td>${t.synonyms.length ? t.synonyms.join(", ") : "-"}</td>
       <td><span class="status-badge status-${t.status === "승인" ? "ok" : "pending"}">${t.status}</span></td>
+      <td class="muted">${t.requester || "-"}</td>
       <td class="muted">${t.date}</td>
     </tr>`
     )
@@ -147,7 +148,8 @@ function renderWordsTable() {
       <td class="cell-def">${w.def || "-"}</td>
       <td>${w.isFormatWord ? "예" : "-"}</td>
       <td>${w.domainClassification || "-"}</td>
-      <td><span class="status-badge status-${w.status === "ACTIVE" ? "ok" : "pending"}">${w.status === "ACTIVE" ? "사용중" : w.status}</span></td>
+      <td><span class="status-badge status-${w.status === "ACTIVE" ? "ok" : "pending"}">${STATUS_LABELS[w.status] || w.status}</span></td>
+      <td class="muted">${w.requester || "-"}</td>
     </tr>`
     )
     .join("");
@@ -310,6 +312,7 @@ function backendTermToRow(t) {
     synonyms: t.synonyms || [],
     status: STATUS_LABELS[t.status] || t.status,
     statusCode: t.status,
+    requester: t.requester || "",
     date: (t.created_at || "").slice(0, 10),
     createdAt: t.created_at || "",
     isNew: false,
@@ -325,6 +328,7 @@ function backendWordToRow(w) {
     isFormatWord: !!w.is_format_word,
     domainClassification: w.domain_classification || "",
     status: w.status,
+    requester: w.requester || "",
   };
 }
 
@@ -365,7 +369,14 @@ function activityFromTerms(terms, limit = 6) {
 // 용어/단어/도메인 셋 다 이 워크플로 하나가 한 번에 돌려준다(build_list_terms_workflow.py
 // 참고) - 매번 세 개를 다 요청하는 게 약간 낭비처럼 보일 수 있지만, 페이지당
 // 최대 200건씩이라 비용이 작고, 앱 3개를 따로 배포/키관리하는 것보다 훨씬 단순하다.
+//
+// 필터를 연달아 빠르게 바꾸면 여러 요청이 동시에 떠 있을 수 있고, 네트워크
+// 타이밍에 따라 먼저 보낸(오래된 필터 조건) 요청의 응답이 나중에 도착해 최신
+// 상태를 덮어쓸 수 있다 - fetchToken으로 "가장 최근에 보낸 요청"만 반영하고
+// 그보다 오래된 응답은 조용히 버린다.
+let fetchToken = 0;
 async function fetchCatalogFromBackend() {
+  const myToken = ++fetchToken;
   try {
     const res = await fetch(LIST_TERMS_API, {
       method: "POST",
@@ -373,13 +384,18 @@ async function fetchCatalogFromBackend() {
       body: JSON.stringify({
         inputs: {
           limit: state.termsPage.limit, offset: state.termsPage.offset, q: state.termsPage.q,
+          status: state.termsPage.status, domain: state.termsPage.domain, requester: state.termsPage.requester,
           words_limit: state.wordsPage.limit, words_offset: state.wordsPage.offset, words_q: state.wordsPage.q,
+          words_status: state.wordsPage.status, words_requester: state.wordsPage.requester,
+          words_is_format_word: state.wordsPage.isFormatWord,
         },
         response_mode: "blocking", user: CHAT_USER,
       }),
     });
     if (!res.ok) throw new Error(`목록 조회 실패 (${res.status})`);
+    if (myToken !== fetchToken) return; // 이 사이 더 최신 요청이 나갔으면 이 응답은 버린다.
     const payload = await res.json();
+    if (myToken !== fetchToken) return; // json() 파싱 대기 중에도 더 최신 요청이 나갔을 수 있다.
     const outputs = payload.data?.outputs || {};
     const termsResult = outputs.terms?.[0];
     const wordsResult = outputs.words?.[0];
@@ -393,6 +409,7 @@ async function fetchCatalogFromBackend() {
     }
     if (domainsResult && Array.isArray(domainsResult.domains)) {
       state.domains = domainsResult.domains;
+      populateDomainFilterOptions();
     }
     state.activity = activityFromTerms(state.terms);
     renderAll();
@@ -401,6 +418,69 @@ async function fetchCatalogFromBackend() {
   }
 }
 fetchCatalogFromBackend();
+
+// 용어사전의 도메인 필터 <select>를 실제 도메인 목록(state.domains, 126건)으로
+// 채운다 - 재조회 때마다 다시 그려도 현재 선택값은 유지한다.
+//
+// 도메인 설명 중엔 100자 넘는 것도 있다(예: 신용카드번호 BIN 규칙 전체 나열) -
+// <select>는 옵션 텍스트 길이에 맞춰 스스로 넓어지는 브라우저가 많아서, 그걸
+// 그대로 넣으면 선택하자마자 페이지 전체가 가로로 밀려버린다. 그래서 라벨
+// 자체를 짧게 자르고, 잘리지 않은 전체 설명은 title 속성(마우스 오버 툴팁)
+// 로만 보여준다 - CSS의 text-overflow:ellipsis만으로는 브라우저마다 select
+// 렌더링이 달라 믿을 수 없어서, 문자열 자체를 짧게 만드는 쪽이 확실하다.
+const DOMAIN_OPTION_LABEL_MAX = 40;
+function truncateLabel(text, max = DOMAIN_OPTION_LABEL_MAX) {
+  return text.length > max ? `${text.slice(0, max - 1)}…` : text;
+}
+let domainFilterPopulated = false;
+function populateDomainFilterOptions() {
+  const select = document.getElementById("terms-filter-domain");
+  if (!select || domainFilterPopulated || !state.domains.length) return;
+  domainFilterPopulated = true;
+  const current = select.value;
+  const options = [...state.domains]
+    .sort((a, b) => a.code.localeCompare(b.code))
+    .map((d) => {
+      const full = `${d.code}${d.description ? ` - ${d.description}` : ""}`;
+      return `<option value="${escapeHtml(d.code)}" title="${escapeHtml(full)}">${escapeHtml(truncateLabel(full))}</option>`;
+    })
+    .join("");
+  select.innerHTML = `<option value="">도메인: 전체</option>${options}`;
+  select.value = current;
+}
+
+// 용어사전/단어사전 필터 컨트롤 - select는 즉시, 텍스트 입력(요청자)은 300ms
+// 디바운스로 반영하고 매번 offset을 0으로 되돌려 페이지가 꼬이지 않게 한다.
+function bindFilterControls(page, ids, onChange) {
+  const statusEl = document.getElementById(ids.status);
+  const requesterEl = document.getElementById(ids.requester);
+  const extraEl = ids.extra ? document.getElementById(ids.extra) : null;
+  statusEl?.addEventListener("change", () => {
+    page.status = statusEl.value;
+    page.offset = 0;
+    onChange();
+  });
+  extraEl?.addEventListener("change", () => {
+    if (ids.extraKey) page[ids.extraKey] = extraEl.value;
+    page.offset = 0;
+    onChange();
+  });
+  let timer = null;
+  requesterEl?.addEventListener("input", () => {
+    clearTimeout(timer);
+    timer = setTimeout(() => {
+      page.requester = requesterEl.value.trim();
+      page.offset = 0;
+      onChange();
+    }, 300);
+  });
+}
+bindFilterControls(state.termsPage,
+  { status: "terms-filter-status", requester: "terms-filter-requester", extra: "terms-filter-domain", extraKey: "domain" },
+  fetchCatalogFromBackend);
+bindFilterControls(state.wordsPage,
+  { status: "words-filter-status", requester: "words-filter-requester", extra: "words-filter-format", extraKey: "isFormatWord" },
+  fetchCatalogFromBackend);
 
 // 상단바 검색창은 지금 열려 있는 화면(용어사전/단어사전)에 맞는 검색어로
 // 취급한다. 타이핑마다 재조회하면 낭비니 300ms 디바운스.

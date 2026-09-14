@@ -145,6 +145,22 @@ svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width:
 .panel-header-row { display: flex; align-items: center; justify-content: space-between; }
 .pill { background: var(--primary-soft); color: var(--primary); font-size: 12px; font-weight: 700; padding: 4px 10px; border-radius: 999px; }
 
+/* ── 목록 필터 ── */
+.filter-row { display: flex; align-items: center; gap: 10px; margin: 14px 0 6px; flex-wrap: wrap; }
+.filter-select, .filter-input {
+  background: var(--bg); color: var(--text); border: 1px solid var(--border);
+  border-radius: 10px; padding: 7px 12px; font-size: 13px; font-family: inherit;
+}
+.filter-select {
+  cursor: pointer; max-width: 260px;
+  /* 옵션 텍스트를 아무리 짧게 잘라도, 네이티브 select는 브라우저에 따라
+     스스로 넓어지려는 경우가 있어 max-width만으로는 부족할 수 있다 - 닫힌
+     상태의 표시 텍스트 자체를 말줄임 처리해 이중으로 막아둔다. */
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.filter-input { min-width: 180px; }
+.filter-select:focus, .filter-input:focus { outline: none; border-color: var(--primary); }
+
 /* ── 페이지네이션 ── */
 .pagination-row { display: flex; align-items: center; justify-content: center; gap: 12px; margin-top: 16px; }
 .btn-ghost {

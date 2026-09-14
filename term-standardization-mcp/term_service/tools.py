@@ -79,36 +79,47 @@ def list_data_domains() -> dict:
             WHERE d.status='ACTIVE' GROUP BY d.code,d.description,d.source ORDER BY d.code""").fetchall()}
 
 @tool
-def list_terms(limit: int = 50, offset: int = 0, q: str = "") -> dict:
-    """Page through approved catalog terms plus non-rejected registration requests, most
-    recent first. `q` filters by name/definition substring (case-insensitive) - with a
-    real government-scale catalog (13,000+ terms), unfiltered offset paging alone is not
-    a usable way to find anything. `total_count` is the ACTIVE catalog count matching `q`
-    (registration requests are few enough to always return in full, unpaginated)."""
+def list_terms(limit: int = 50, offset: int = 0, q: str = "", status: str = "", domain: str = "",
+               requester: str = "") -> dict:
+    """Page through the term catalog, most recent first. `q` filters by name/definition
+    substring. `status` narrows to "APPROVED" (standard_terms only), "PENDING_REVIEW" or
+    "REJECTED" (registration_requests only), or "" for both merged (default - matches the
+    old behavior). `domain` narrows to one domain code (exact match, both tables). `requester`
+    narrows to one submitter's own requests - standard_terms has no requester concept (it's
+    the approved catalog, not a personal submission), so a requester filter always excludes
+    APPROVED rows regardless of `status`. `total_count` reflects whichever side is actually
+    being paginated (the approved side when both are shown, matching the old contract)."""
     limit=min(max(limit,1),200)
     offset=max(offset,0)
     like=f"%{q.strip()}%" if q.strip() else None
+    status=status.strip().upper()
+    domain=domain.strip()
+    requester=requester.strip()
+    show_approved=status in ("","APPROVED") and not requester
+    pending_statuses=[status] if status in ("PENDING_REVIEW","REJECTED") else (["PENDING_REVIEW","REJECTED"] if status=="" else [])
+    approved,pending,total=[],[],0
     with db.connect() as conn:
-        if like:
-            total=conn.execute(
-                "SELECT count(*) AS count FROM standard_terms WHERE status='ACTIVE' AND (name ILIKE %s OR definition ILIKE %s)",
-                (like,like)).fetchone()["count"]
-            approved=conn.execute(
-                "SELECT id::text AS id, name AS term_name, definition, domain, synonyms, english_abbr, 'APPROVED' AS status, created_at "
-                "FROM standard_terms WHERE status='ACTIVE' AND (name ILIKE %s OR definition ILIKE %s) "
-                "ORDER BY created_at DESC LIMIT %s OFFSET %s",(like,like,limit,offset)).fetchall()
-            pending=conn.execute(
-                "SELECT id::text AS id, term_name, definition, domain, synonyms, english_abbr, status, created_at "
-                "FROM registration_requests WHERE status!='REJECTED' AND (term_name ILIKE %s OR definition ILIKE %s) "
-                "ORDER BY created_at DESC LIMIT %s",(like,like,limit)).fetchall()
-        else:
-            total=conn.execute("SELECT count(*) AS count FROM standard_terms WHERE status='ACTIVE'").fetchone()["count"]
-            approved=conn.execute(
-                "SELECT id::text AS id, name AS term_name, definition, domain, synonyms, english_abbr, 'APPROVED' AS status, created_at "
-                "FROM standard_terms WHERE status='ACTIVE' ORDER BY created_at DESC LIMIT %s OFFSET %s",(limit,offset)).fetchall()
-            pending=conn.execute(
-                "SELECT id::text AS id, term_name, definition, domain, synonyms, english_abbr, status, created_at "
-                "FROM registration_requests WHERE status!='REJECTED' ORDER BY created_at DESC LIMIT %s",(limit,)).fetchall()
+        if show_approved:
+            where,params=["status='ACTIVE'"],[]
+            if like: where.append("(name ILIKE %s OR definition ILIKE %s)"); params+=[like,like]
+            if domain: where.append("domain=%s"); params.append(domain)
+            clause=" AND ".join(where)
+            total=conn.execute(f"SELECT count(*) AS count FROM standard_terms WHERE {clause}",params).fetchone()["count"]
+            approved=conn.execute(f"""SELECT id::text AS id, name AS term_name, definition, domain, synonyms, english_abbr,
+                'APPROVED' AS status, created_at FROM standard_terms WHERE {clause}
+                ORDER BY created_at DESC LIMIT %s OFFSET %s""",params+[limit,offset]).fetchall()
+        if pending_statuses:
+            where,params=["status=ANY(%s)"],[pending_statuses]
+            if like: where.append("(term_name ILIKE %s OR definition ILIKE %s)"); params+=[like,like]
+            if domain: where.append("domain=%s"); params.append(domain)
+            if requester: where.append("requester=%s"); params.append(requester)
+            clause=" AND ".join(where)
+            pending_total=conn.execute(f"SELECT count(*) AS count FROM registration_requests WHERE {clause}",params).fetchone()["count"]
+            pending=conn.execute(f"""SELECT id::text AS id, term_name, definition, domain, synonyms, english_abbr,
+                status, created_at, requester FROM registration_requests WHERE {clause}
+                ORDER BY created_at DESC LIMIT %s OFFSET %s""",params+[limit,offset]).fetchall()
+            if not show_approved:
+                total=pending_total
         descriptions={r["code"]:r["description"] for r in conn.execute("SELECT code,description FROM domains").fetchall()}
     combined=approved+pending
     for r in combined:
@@ -117,26 +128,53 @@ def list_terms(limit: int = 50, offset: int = 0, q: str = "") -> dict:
     return {"terms":combined,"count":len(combined),"total_count":total,"limit":limit,"offset":offset}
 
 @tool
-def list_standard_words(limit: int = 50, offset: int = 0, q: str = "") -> dict:
-    """Page through the 표준단어(standard word) dictionary that standard_terms are
-    composed from, most recently updated first. `q` filters by name/definition substring."""
+def list_standard_words(limit: int = 50, offset: int = 0, q: str = "", status: str = "",
+                        requester: str = "", is_format_word: str = "") -> dict:
+    """Page through the 표준단어 dictionary PLUS pending/rejected word requests, merged the
+    same way list_terms() merges standard_terms with registration_requests - so a submitter
+    can see whether their proposed word is still PENDING_REVIEW. `status` filters to
+    "APPROVED" (approved standard_words only), "PENDING_REVIEW"/"REJECTED" (word_registration_
+    requests only), or "" for both. `requester` narrows to one submitter's own pending/rejected
+    requests (standard_words has no requester concept, same reasoning as list_terms).
+    `is_format_word` is "true"/"false" to filter both sides (a 분류어 like 코드/명/수 vs an
+    ordinary word - word_registration_requests carries the same column so a pending word is
+    filtered the same way), or "" for no filter - a plain string (not bool) so a Dify workflow
+    input with no selection can pass through as "", which a real boolean can't represent."""
     limit=min(max(limit,1),200)
     offset=max(offset,0)
     like=f"%{q.strip()}%" if q.strip() else None
+    status=status.strip().upper()
+    requester=requester.strip()
+    format_filter={"true":True,"false":False}.get(is_format_word.strip().lower())
+    show_approved=status in ("","APPROVED") and not requester
+    pending_statuses=[status] if status in ("PENDING_REVIEW","REJECTED") else (["PENDING_REVIEW","REJECTED"] if status=="" else [])
     fields="name,english_abbr,english_name,definition,is_format_word,domain_classification,synonyms,status,updated_at"
+    approved,pending,total=[],[],0
     with db.connect() as conn:
-        if like:
-            total=conn.execute(
-                "SELECT count(*) AS count FROM standard_words WHERE status='ACTIVE' AND (name ILIKE %s OR definition ILIKE %s)",
-                (like,like)).fetchone()["count"]
-            rows=conn.execute(f"""SELECT {fields} FROM standard_words
-                WHERE status='ACTIVE' AND (name ILIKE %s OR definition ILIKE %s)
-                ORDER BY updated_at DESC LIMIT %s OFFSET %s""",(like,like,limit,offset)).fetchall()
-        else:
-            total=conn.execute("SELECT count(*) AS count FROM standard_words WHERE status='ACTIVE'").fetchone()["count"]
-            rows=conn.execute(f"""SELECT {fields} FROM standard_words
-                WHERE status='ACTIVE' ORDER BY updated_at DESC LIMIT %s OFFSET %s""",(limit,offset)).fetchall()
-    return {"words":rows,"count":len(rows),"total_count":total,"limit":limit,"offset":offset}
+        if show_approved:
+            where,params=["status='ACTIVE'"],[]
+            if like: where.append("(name ILIKE %s OR definition ILIKE %s)"); params+=[like,like]
+            if format_filter is not None: where.append("is_format_word=%s"); params.append(format_filter)
+            clause=" AND ".join(where)
+            total=conn.execute(f"SELECT count(*) AS count FROM standard_words WHERE {clause}",params).fetchone()["count"]
+            approved=conn.execute(f"""SELECT {fields} FROM standard_words WHERE {clause}
+                ORDER BY updated_at DESC LIMIT %s OFFSET %s""",params+[limit,offset]).fetchall()
+        if pending_statuses:
+            where,params=["status=ANY(%s)"],[pending_statuses]
+            if like: where.append("(word_name ILIKE %s OR definition ILIKE %s)"); params+=[like,like]
+            if requester: where.append("requester=%s"); params.append(requester)
+            if format_filter is not None: where.append("is_format_word=%s"); params.append(format_filter)
+            clause=" AND ".join(where)
+            pending_total=conn.execute(f"SELECT count(*) AS count FROM word_registration_requests WHERE {clause}",params).fetchone()["count"]
+            pending=conn.execute(f"""SELECT word_name AS name, english_abbr, '' AS english_name, definition,
+                is_format_word, domain_classification, ARRAY[]::text[] AS synonyms, status, created_at AS updated_at,
+                requester FROM word_registration_requests WHERE {clause}
+                ORDER BY created_at DESC LIMIT %s OFFSET %s""",params+[limit,offset]).fetchall()
+            if not show_approved:
+                total=pending_total
+    combined=approved+pending
+    combined.sort(key=lambda r:r["updated_at"],reverse=True)
+    return {"words":combined,"count":len(combined),"total_count":total,"limit":limit,"offset":offset}
 
 @tool
 def search_standard_words_semantic(meaning_query: str, limit: int = 10) -> dict:

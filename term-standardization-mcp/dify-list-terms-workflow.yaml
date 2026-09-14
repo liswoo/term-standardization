@@ -85,6 +85,21 @@ workflow:
           type: text-input
           max_length: 200
           required: false
+        - variable: status
+          label: status
+          type: text-input
+          max_length: 20
+          required: false
+        - variable: domain
+          label: domain
+          type: text-input
+          max_length: 100
+          required: false
+        - variable: requester
+          label: requester
+          type: text-input
+          max_length: 200
+          required: false
         - variable: words_limit
           label: words_limit
           type: number
@@ -97,6 +112,21 @@ workflow:
           label: words_q
           type: text-input
           max_length: 200
+          required: false
+        - variable: words_status
+          label: words_status
+          type: text-input
+          max_length: 20
+          required: false
+        - variable: words_requester
+          label: words_requester
+          type: text-input
+          max_length: 200
+          required: false
+        - variable: words_is_format_word
+          label: words_is_format_word
+          type: text-input
+          max_length: 10
           required: false
       position:
         x: 0
@@ -136,6 +166,15 @@ workflow:
           q:
             type: mixed
             value: '{{#start.q#}}'
+          status:
+            type: mixed
+            value: '{{#start.status#}}'
+          domain:
+            type: mixed
+            value: '{{#start.domain#}}'
+          requester:
+            type: mixed
+            value: '{{#start.requester#}}'
         is_team_authorization: true
         paramSchemas: []
         params: {}
@@ -177,6 +216,15 @@ workflow:
           q:
             type: mixed
             value: '{{#start.words_q#}}'
+          status:
+            type: mixed
+            value: '{{#start.words_status#}}'
+          requester:
+            type: mixed
+            value: '{{#start.words_requester#}}'
+          is_format_word:
+            type: mixed
+            value: '{{#start.words_is_format_word#}}'
         is_team_authorization: true
         paramSchemas: []
         params: {}

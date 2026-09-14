@@ -4,10 +4,17 @@ list_data_domains to the frontend admin console.
 Kept separate from the conversational Chatflow: a dashboard read has no user
 intent to classify and no conversation state, so it doesn't belong behind the
 LLM-classification pipeline. Callable via a plain /v1/workflows/run POST with
-`inputs: {limit, offset, q, words_limit, words_offset, words_q}` - the term
-catalog and word dictionary each page independently (separate views, separate
-pagination state), while domains has no inputs since it always returns the
-full active list (126 rows - small enough to never need paging).
+`inputs: {limit, offset, q, status, domain, requester, words_limit, words_offset,
+words_q, words_status, words_requester, words_is_format_word}` - the term catalog
+and word dictionary each page/filter independently (separate views, separate
+filter state), while domains has no inputs since it always returns the full
+active list (126 rows - small enough to never need paging).
+
+All new filter variables are plain "text-input" Dify variables, not "select"/
+"checkbox" - Dify's own UI never renders these (the admin console's own <select>/
+checkbox controls are what the user actually sees; this workflow is just a typed
+pass-through API called by app.js), and a plain string lets "no filter" simply be
+"" for every one of them, including is_format_word ("true"/"false"/"").
 """
 import copy
 from pathlib import Path
@@ -38,14 +45,23 @@ node("start","시작","start",{"variables":[
     {"variable":"limit","label":"limit","type":"number","required":False},
     {"variable":"offset","label":"offset","type":"number","required":False},
     {"variable":"q","label":"q","type":"text-input","max_length":200,"required":False},
+    {"variable":"status","label":"status","type":"text-input","max_length":20,"required":False},
+    {"variable":"domain","label":"domain","type":"text-input","max_length":100,"required":False},
+    {"variable":"requester","label":"requester","type":"text-input","max_length":200,"required":False},
     {"variable":"words_limit","label":"words_limit","type":"number","required":False},
     {"variable":"words_offset","label":"words_offset","type":"number","required":False},
     {"variable":"words_q","label":"words_q","type":"text-input","max_length":200,"required":False},
+    {"variable":"words_status","label":"words_status","type":"text-input","max_length":20,"required":False},
+    {"variable":"words_requester","label":"words_requester","type":"text-input","max_length":200,"required":False},
+    {"variable":"words_is_format_word","label":"words_is_format_word","type":"text-input","max_length":10,"required":False},
 ]})
-tool("list_terms","list_terms",{"limit":"{{#start.limit#}}","offset":"{{#start.offset#}}","q":"{{#start.q#}}"},
+tool("list_terms","list_terms",{"limit":"{{#start.limit#}}","offset":"{{#start.offset#}}","q":"{{#start.q#}}",
+    "status":"{{#start.status#}}","domain":"{{#start.domain#}}","requester":"{{#start.requester#}}"},
     "실제 표준용어 카탈로그와 검토 대기 등록 요청 목록을 페이지 단위로 조회한다.")
 tool("list_standard_words","list_standard_words",
-    {"limit":"{{#start.words_limit#}}","offset":"{{#start.words_offset#}}","q":"{{#start.words_q#}}"},
+    {"limit":"{{#start.words_limit#}}","offset":"{{#start.words_offset#}}","q":"{{#start.words_q#}}",
+     "status":"{{#start.words_status#}}","requester":"{{#start.words_requester#}}",
+     "is_format_word":"{{#start.words_is_format_word#}}"},
     "표준단어(standard_words) 사전을 페이지 단위로 조회한다.")
 tool("list_data_domains","list_data_domains",{},"실제 활성 표준도메인 전체 목록을 조회한다 (페이지네이션 없음).")
 node("end","출력","end",{"outputs":[
