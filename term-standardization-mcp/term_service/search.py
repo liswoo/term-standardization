@@ -76,6 +76,27 @@ def search_words(meaning_query, limit=10):
             ORDER BY embedding <=> %s LIMIT %s""",
             (vector,EMBEDDING_MODEL,vector,SEMANTIC_THRESHOLD,vector,limit)).fetchall()
 
+def search_terms_by_meaning(meaning_query, limit=10):
+    """Meaning-first term search: given a free-text description of a concept (not a
+    candidate term name), find existing standard_terms whose own name+definition is
+    semantically close. Mirrors search_words() but for standard_terms - this is the
+    entry point for "does a standard term already exist for what I mean" (find_term),
+    distinct from vector_search()'s job (candidate-name-shaped similarity during
+    registration, constrained by SearchInput's 200-char name-shaped limit which a
+    free-text meaning description would blow past).
+    """
+    limit = min(max(limit, 1), 30)
+    with db.connect() as conn:
+        count = conn.execute("SELECT count(*) AS count FROM standard_terms WHERE status='ACTIVE'").fetchone()["count"]
+        if not count:
+            return []
+    vector = embed(meaning_query, query=True)
+    with db.connect() as conn:
+        return conn.execute(f"""SELECT {FIELDS},1-(embedding <=> %s) AS similarity
+            FROM standard_terms WHERE embedding_model=%s AND status='ACTIVE' AND 1-(embedding <=> %s)>=%s
+            ORDER BY embedding <=> %s LIMIT %s""",
+            (vector,EMBEDDING_MODEL,vector,SEMANTIC_THRESHOLD,vector,limit)).fetchall()
+
 def search(term, definition="", limit=10):
     SearchInput(term=term, definition=definition, limit=limit)
     rdb = relational(term, limit)

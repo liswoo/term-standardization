@@ -10,13 +10,13 @@ from .definition_suggestion import suggest_definition
 from .guideline import check_guideline
 from .naming import strip_trailing_particle, segment_words
 from .schemas import Schema, RegistrationInput, WordRegistrationInput
-from .search import validate_name, search, domain_usage
+from .search import validate_name, search, domain_usage, search_terms_by_meaning
 from .word_suggestion import suggest_word
 
 class ConversationAction(Schema):
     intent: Literal["propose_term","confirm_term","set_domain","set_definition","set_abbreviation","confirm_registration",
                     "show_candidates","edit_term","edit_domain","edit_definition","cancel","restart","help","unknown",
-                    "propose_word","confirm_word","set_word_abbreviation"]
+                    "propose_word","confirm_word","set_word_abbreviation","find_term"]
     value: str = Field(default="",max_length=4000)
     confirmed: bool = False
 
@@ -267,8 +267,14 @@ def transition(state, action, requester, conversation_id):
         suggestion=s.get("word_suggestion") or {}
         if suggestion.get("existing_word_match"):
             # Nothing to register - the meaning is already covered by an existing
-            # word. Record which one resolved this so the result can name it.
-            s["resolved_word"]={"name":suggestion["existing_word_match"],"reused":True}
+            # word. Fetch its full record (not just the name) so the result the
+            # user sees carries what they'd actually need to use it (abbreviation/
+            # definition/whether it's a format word) instead of a bare name.
+            with db.connect() as conn:
+                existing=conn.execute(
+                    "SELECT name,english_abbr,definition,is_format_word FROM standard_words WHERE name=%s AND status='ACTIVE'",
+                    (suggestion["existing_word_match"],)).fetchone()
+            s["resolved_word"]=dict(existing,reused=True) if existing else {"name":suggestion["existing_word_match"],"reused":True}
             return _resume_or_finish_word_flow(s,"word_reused")
         if not (suggestion.get("name") and suggestion.get("english_abbr") and suggestion.get("definition")):
             return s,{"error":"WORD_SUGGESTION_NOT_READY"}
@@ -294,6 +300,20 @@ def transition(state, action, requester, conversation_id):
         result=word_registration.submit(prepared["confirmation_id"],requester,conversation_id,True)
         s["word_registration"]=result
         return _resume_or_finish_word_flow(s,"word_submitted" if result.get("request_id") else "word_registration_failed")
+    if a.intent=="find_term":
+        # Search-only, read-only: fires from any idle-ish stage when the user
+        # describes a MEANING and asks for the standard TERM (not a raw word) that
+        # already covers it - e.g. "...에 해당하는 용어를 추천해줘". Never touches
+        # term_name/resume_term, and never leads into registration on its own; if
+        # nothing matches well, the render layer tells the user to name a term via
+        # propose_term instead.
+        value=a.value.strip()
+        if not value:
+            return s,{"error":"TERM_MEANING_REQUIRED"}
+        matches=search_terms_by_meaning(value,limit=5)
+        s["term_lookup"]={"query":value,"matches":matches}
+        s["stage"]="term_lookup_result"
+        return s,{"next_action":"SHOW_TERM_LOOKUP"}
     return s,{"error":"UNEXPECTED_INTENT"}
 
 def apply(conversation_id,requester,expected_revision,action):
