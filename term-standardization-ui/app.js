@@ -27,10 +27,20 @@ const NODE_STEPS = [
 ];
 
 let chatConversationId = null;
+let currentView = "dashboard";
 
 // ── 상태 ────────────────────────────────────────────────────────
+// termsPage/wordsPage는 각자 독립된 페이지네이션 상태(limit/offset/q/total) -
+// 용어사전과 단어사전은 서로 다른 화면이라 검색어·페이지 위치가 섞이면 안 됨.
+// domains는 list_data_domains 전체(126건, 페이지네이션 불필요)를 그대로 담고,
+// domainDistribution(아래)은 그와 별개로 "지금 로드된 용어들이 어느 도메인에
+// 몰려있나"를 보여주는 대시보드 막대차트 전용 집계다 - 둘을 섞지 않는다.
 const state = {
   terms: [...MOCK_TERMS],
+  words: [],
+  domains: [],
+  termsPage: { limit: 50, offset: 0, total: 0, q: "" },
+  wordsPage: { limit: 50, offset: 0, total: 0, q: "" },
   activity: [...MOCK_ACTIVITY],
   history: [],
   chatRegisteredCount: 0,
@@ -40,12 +50,14 @@ const state = {
 const VIEW_META = {
   dashboard: { title: "대시보드", subtitle: "용어 표준화 현황을 한눈에 확인하세요" },
   terms: { title: "용어 사전", subtitle: "등록된 표준 용어를 검색하고 관리합니다" },
+  words: { title: "단어 사전", subtitle: "용어를 구성하는 표준단어(標準單語)를 검색하고 관리합니다" },
   domains: { title: "도메인 관리", subtitle: "표준 용어에 적용되는 데이터 도메인(형식·길이) 체계를 관리합니다" },
   history: { title: "표준화 이력", subtitle: "AI 파이프라인 실행 기록을 확인합니다" },
   settings: { title: "설정", subtitle: "백엔드 연동 정보를 확인합니다" },
 };
 
 function switchView(view) {
+  currentView = view;
   document.querySelectorAll(".nav-item").forEach((btn) => {
     btn.classList.toggle("is-active", btn.dataset.view === view);
   });
@@ -54,6 +66,21 @@ function switchView(view) {
   });
   document.getElementById("view-title").textContent = VIEW_META[view].title;
   document.getElementById("view-subtitle").textContent = VIEW_META[view].subtitle;
+  // 검색창은 용어사전/단어사전 화면 전용 - 다른 화면으로 전환된 동안 자기 검색어를
+  // 잊지 않도록 각자 상태에 보관해뒀다가, 그 화면으로 돌아오면 그대로 복원한다.
+  const searchInput = document.getElementById("global-search-input");
+  if (searchInput) {
+    if (view === "words") {
+      searchInput.value = state.wordsPage.q;
+      searchInput.placeholder = "단어명·정의로 검색...";
+    } else if (view === "terms") {
+      searchInput.value = state.termsPage.q;
+      searchInput.placeholder = "용어명·정의로 검색...";
+    } else {
+      searchInput.value = "";
+      searchInput.placeholder = "용어 사전 또는 단어사전 화면에서 이름·정의로 검색...";
+    }
+  }
 }
 
 document.querySelectorAll(".nav-item").forEach((btn) => {
@@ -99,27 +126,79 @@ function renderTermsTable() {
     </tr>`
     )
     .join("");
-  document.getElementById("term-count-pill").textContent = `${state.terms.length}건`;
-  document.getElementById("stat-total-terms").textContent = state.terms.length;
+  // total은 실제 백엔드 total_count(전체 카탈로그 건수) - 화면에 그려진 현재
+  // 페이지 행 수(state.terms.length)와는 다르다. 백엔드 조회 전(목업 데이터
+  // 표시 중)에는 total이 아직 0이라 페이지 길이로 대체한다.
+  const total = state.termsPage.total || state.terms.length;
+  document.getElementById("term-count-pill").textContent = `${total.toLocaleString()}건`;
+  document.getElementById("stat-total-terms").textContent = total.toLocaleString();
 }
 
+function renderWordsTable() {
+  const tbody = document.getElementById("words-tbody");
+  if (!tbody) return;
+  tbody.innerHTML = state.words
+    .map(
+      (w) => `
+    <tr>
+      <td><strong>${w.name}</strong></td>
+      <td><span class="mono">${w.enAbbr || "-"}</span></td>
+      <td>${w.enName || "-"}</td>
+      <td class="cell-def">${w.def || "-"}</td>
+      <td>${w.isFormatWord ? "예" : "-"}</td>
+      <td>${w.domainClassification || "-"}</td>
+      <td><span class="status-badge status-${w.status === "ACTIVE" ? "ok" : "pending"}">${w.status === "ACTIVE" ? "사용중" : w.status}</span></td>
+    </tr>`
+    )
+    .join("");
+  const total = state.wordsPage.total || state.words.length;
+  const pill = document.getElementById("word-count-pill");
+  if (pill) pill.textContent = `${total.toLocaleString()}건`;
+}
+
+// terms/words 공통 페이지네이션 렌더링 - 이전/다음 버튼과 "n건 중 a-b" 라벨.
+function renderPagination(containerId, page, onPrev, onNext) {
+  const el = document.getElementById(containerId);
+  if (!el) return;
+  const from = page.total === 0 ? 0 : page.offset + 1;
+  const to = Math.min(page.offset + page.limit, page.total);
+  el.innerHTML = `
+    <button class="btn-ghost" id="${containerId}-prev" ${page.offset <= 0 ? "disabled" : ""}>이전</button>
+    <span class="pagination-label">${page.total.toLocaleString()}건 중 ${from}-${to}</span>
+    <button class="btn-ghost" id="${containerId}-next" ${page.offset + page.limit >= page.total ? "disabled" : ""}>다음</button>`;
+  document.getElementById(`${containerId}-prev`).addEventListener("click", onPrev);
+  document.getElementById(`${containerId}-next`).addEventListener("click", onNext);
+}
+
+function changeTermsPage(delta) {
+  state.termsPage.offset = Math.max(0, state.termsPage.offset + delta * state.termsPage.limit);
+  fetchCatalogFromBackend();
+}
+function changeWordsPage(delta) {
+  state.wordsPage.offset = Math.max(0, state.wordsPage.offset + delta * state.wordsPage.limit);
+  fetchCatalogFromBackend();
+}
+
+// "도메인 관리" 화면 전용 - list_data_domains가 돌려주는 실제 활성 도메인
+// 전체(126건)를 그대로 그린다. 대시보드의 "도메인별 용어 분포" 막대차트는
+// 이것과 다른 질문("지금 보이는 용어들이 어느 도메인에 몰려있나")이라
+// computeDomainDistribution()을 그대로 쓴다 - 절대 하나로 합치지 않는다.
 function renderDomainGrid() {
   const grid = document.getElementById("domain-grid");
-  grid.innerHTML = state.domainDistribution
+  grid.innerHTML = state.domains
     .map(
-      (d) => `
+      (d, i) => `
     <div class="domain-card">
       <div class="domain-card-top">
-        <span class="domain-dot" style="background:${d.color}"></span>
-        <h3>${d.domain}</h3>
+        <span class="domain-dot" style="background:${DOMAIN_PALETTE[i % DOMAIN_PALETTE.length]}"></span>
+        <h3>${d.code}</h3>
       </div>
-      <div class="domain-card-footer">
-        <strong>${d.count}</strong>
-        <span>등록된 용어</span>
-      </div>
+      <p class="muted">${d.description || "-"}</p>
     </div>`
     )
     .join("");
+  const pill = document.getElementById("domain-count-pill");
+  if (pill) pill.textContent = `${state.domains.length.toLocaleString()}건`;
 }
 
 function renderDomainBars() {
@@ -178,25 +257,27 @@ function renderHistory() {
 }
 
 function renderAll() {
-  // "관리 도메인"/"검토 대기"는 지금 실제로 조회된 state.terms에서 곧바로 센
-  // 값입니다 - 카탈로그에 등록됐지만 용어가 하나도 없는 도메인은 여기 안
-  // 잡힙니다(그런 도메인 목록은 프론트엔드가 조회할 방법이 아직 없음).
   state.domainDistribution = computeDomainDistribution();
   renderTermsTable();
+  renderWordsTable();
   renderDomainGrid();
   renderDomainBars();
   renderActivity();
   renderHistory();
+  renderPagination("terms-pagination", state.termsPage, () => changeTermsPage(-1), () => changeTermsPage(1));
+  renderPagination("words-pagination", state.wordsPage, () => changeWordsPage(-1), () => changeWordsPage(1));
+  // "관리 도메인" 통계는 실제 전체 활성 도메인 수(state.domains) - 아직
+  // 백엔드 응답 전이면 지금 로드된 용어 기준 집계로 대체한다.
   const domainCountEl = document.getElementById("stat-domain-count");
-  if (domainCountEl) domainCountEl.textContent = state.domainDistribution.length;
+  if (domainCountEl) domainCountEl.textContent = state.domains.length || state.domainDistribution.length;
   const pendingEl = document.getElementById("stat-pending-review");
   if (pendingEl) pendingEl.textContent = state.terms.filter((t) => t.status === "검토중").length;
 }
 renderAll();
 
-// ── 실제 백엔드에서 용어 목록 조회 ──────────────────────────────
-// standard_terms/registration_requests를 그대로 반영. 조회 실패 시(백엔드 미기동 등)
-// 위에서 렌더링한 데모 데이터를 그대로 유지합니다.
+// ── 실제 백엔드에서 카탈로그 조회 ──────────────────────────────
+// standard_terms/registration_requests/standard_words/domains를 그대로 반영.
+// 조회 실패 시(백엔드 미기동 등) 위에서 렌더링한 데모 데이터를 그대로 유지합니다.
 function backendTermToRow(t) {
   return {
     id: `backend-${t.id}`,
@@ -210,6 +291,18 @@ function backendTermToRow(t) {
     date: (t.created_at || "").slice(0, 10),
     createdAt: t.created_at || "",
     isNew: false,
+  };
+}
+
+function backendWordToRow(w) {
+  return {
+    name: w.name,
+    enAbbr: w.english_abbr || "",
+    enName: w.english_name || "",
+    def: w.definition || "",
+    isFormatWord: !!w.is_format_word,
+    domainClassification: w.domain_classification || "",
+    status: w.status,
   };
 }
 
@@ -247,25 +340,65 @@ function activityFromTerms(terms, limit = 6) {
     }));
 }
 
-async function fetchTermsFromBackend() {
+// 용어/단어/도메인 셋 다 이 워크플로 하나가 한 번에 돌려준다(build_list_terms_workflow.py
+// 참고) - 매번 세 개를 다 요청하는 게 약간 낭비처럼 보일 수 있지만, 페이지당
+// 최대 200건씩이라 비용이 작고, 앱 3개를 따로 배포/키관리하는 것보다 훨씬 단순하다.
+async function fetchCatalogFromBackend() {
   try {
     const res = await fetch(LIST_TERMS_API, {
       method: "POST",
       headers: { Authorization: `Bearer ${LIST_TERMS_KEY}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ inputs: {}, response_mode: "blocking", user: CHAT_USER }),
+      body: JSON.stringify({
+        inputs: {
+          limit: state.termsPage.limit, offset: state.termsPage.offset, q: state.termsPage.q,
+          words_limit: state.wordsPage.limit, words_offset: state.wordsPage.offset, words_q: state.wordsPage.q,
+        },
+        response_mode: "blocking", user: CHAT_USER,
+      }),
     });
     if (!res.ok) throw new Error(`목록 조회 실패 (${res.status})`);
     const payload = await res.json();
-    const terms = payload.data?.outputs?.terms?.[0]?.terms;
-    if (!Array.isArray(terms)) throw new Error("예상치 못한 응답 형식");
-    state.terms = terms.map(backendTermToRow);
+    const outputs = payload.data?.outputs || {};
+    const termsResult = outputs.terms?.[0];
+    const wordsResult = outputs.words?.[0];
+    const domainsResult = outputs.domains?.[0];
+    if (!termsResult || !Array.isArray(termsResult.terms)) throw new Error("예상치 못한 응답 형식(terms)");
+    state.terms = termsResult.terms.map(backendTermToRow);
+    state.termsPage.total = termsResult.total_count ?? state.terms.length;
+    if (wordsResult && Array.isArray(wordsResult.words)) {
+      state.words = wordsResult.words.map(backendWordToRow);
+      state.wordsPage.total = wordsResult.total_count ?? state.words.length;
+    }
+    if (domainsResult && Array.isArray(domainsResult.domains)) {
+      state.domains = domainsResult.domains;
+    }
     state.activity = activityFromTerms(state.terms);
     renderAll();
   } catch (err) {
-    console.warn("실제 백엔드에서 용어 목록을 불러오지 못해 데모 데이터를 유지합니다:", err);
+    console.warn("실제 백엔드에서 카탈로그를 불러오지 못해 데모 데이터를 유지합니다:", err);
   }
 }
-fetchTermsFromBackend();
+fetchCatalogFromBackend();
+
+// 상단바 검색창은 지금 열려 있는 화면(용어사전/단어사전)에 맞는 검색어로
+// 취급한다. 타이핑마다 재조회하면 낭비니 300ms 디바운스.
+let searchDebounceTimer = null;
+document.getElementById("global-search-input")?.addEventListener("input", (e) => {
+  const value = e.target.value;
+  clearTimeout(searchDebounceTimer);
+  searchDebounceTimer = setTimeout(() => {
+    if (currentView === "words") {
+      state.wordsPage.q = value;
+      state.wordsPage.offset = 0;
+    } else if (currentView === "terms") {
+      state.termsPage.q = value;
+      state.termsPage.offset = 0;
+    } else {
+      return;
+    }
+    fetchCatalogFromBackend();
+  }, 300);
+});
 
 // ── 챗봇 패널 열기/닫기 ─────────────────────────────────────────
 const chatPanel = document.getElementById("chat-panel");
@@ -465,14 +598,18 @@ const RELATION_LABEL = { SAME_MEANING: "동일 의미", RELATED_BUT_DISTINCT: "�
 function renderDomainTable(domains) {
   if (!domains) return "";
   const rows = [];
-  const shown = new Set();
-  for (const d of domains.distribution || []) {
-    shown.add(d.domain);
+  // distribution은 이미 백엔드(domain_usage())에서 "실제 비교군에 1건이라도 등장한
+  // 도메인"만 담고 있음 - 여기서는 그중 상위 10개까지만 보여준다. 후보가 30건까지
+  // 모일 수 있어서 서로 다른 도메인이 10개를 넘어갈 수 있음.
+  for (const d of (domains.distribution || []).slice(0, 10)) {
     rows.push({ code: d.domain, desc: d.domain_description, evidence: `${d.count}/${domains.sample_size}건`, ratio: d.ratio, recommended: d.domain === domains.recommended_domain });
   }
-  for (const d of domains.known_domains || []) {
-    if (shown.has(d.code)) continue;
-    rows.push({ code: d.code, desc: d.description, evidence: "비교 근거 없음", ratio: null, recommended: false });
+  // 비교 근거가 하나도 없을 때만 - 그래도 뭐라도 고를 수 있게 전체 도메인 중 5개까지 폴백.
+  // 근거가 있는데 카탈로그 전체(최대 126개)를 다 나열하던 게 원래 버그였음.
+  if (!rows.length) {
+    for (const d of (domains.known_domains || []).slice(0, 5)) {
+      rows.push({ code: d.code, desc: d.description, evidence: "비교 근거 없음", ratio: null, recommended: false });
+    }
   }
   if (!rows.length) return "";
   return `<div class="table-wrap"><table class="data-table">
@@ -493,10 +630,14 @@ function renderComparisonTable(mcpState) {
   const comparisons = assessment.comparisons || [];
   const candidatesById = {};
   for (const c of (assessment.search || {}).candidates || []) candidatesById[c.term_id] = c;
+  // 신뢰도 높은 순으로 정렬 후 상위 10건만 - 후보가 최대 30건까지 모여서 비교
+  // 결과가 그만큼 나올 수 있는데, 실제로 봐야 할 건 가장 유사한 소수뿐이다.
   const rows = comparisons
     .filter((c) => c.relation !== "DISTINCT")
     .map((c) => ({ ...c, cand: candidatesById[c.existing_term_id] }))
-    .filter((r) => r.cand);
+    .filter((r) => r.cand)
+    .sort((a, b) => (b.confidence || 0) - (a.confidence || 0))
+    .slice(0, 10);
   if (!rows.length) return "";
   return `<div class="table-wrap"><table class="data-table">
     <thead><tr><th>기존 용어</th><th>도메인</th><th>정의</th><th>판정</th><th>신뢰도</th></tr></thead>
@@ -599,6 +740,50 @@ function renderRegistrationCard(mcpState) {
   return summaryCard([["실패 사유 코드", reg.code, true]], "summary-card-fail");
 }
 
+function renderWordSuggestionCard(mcpState) {
+  const sug = mcpState.word_suggestion;
+  if (!sug) return "";
+  if (sug.ambiguous && (sug.options || []).length) {
+    return `<div class="question-card"><strong>확인이 필요합니다</strong>${escapeHtml(sug.question || "")}</div>`;
+  }
+  if (sug.existing_word_match) {
+    return summaryCard([
+      ["기존 단어", sug.existing_word_match, true],
+      ["재사용 사유", sug.match_reason],
+    ]);
+  }
+  if (sug.name && sug.english_abbr) {
+    return `<div class="definition-card"><p><strong class="mono">${escapeHtml(sug.name)}</strong> (${escapeHtml(sug.english_abbr)})${sug.is_format_word ? ' · 형식단어' : ""}</p>
+      <p>${escapeHtml(sug.definition || "")}</p>${sug.rationale ? `<div class="cell-note">${escapeHtml(sug.rationale)}</div>` : ""}</div>`;
+  }
+  return "";
+}
+
+function renderWordAbbreviationCard(mcpState) {
+  const payload = mcpState.word_registration_payload;
+  if (!payload || !payload.english_abbr) return "";
+  return `<div class="abbr-card"><div class="abbr-code">${escapeHtml(payload.english_abbr)}</div>
+    <div class="abbr-rationale">${escapeHtml(payload.word_name || "")} · ${escapeHtml(payload.definition || "")}</div></div>`;
+}
+
+function renderWordResultCard(mcpState) {
+  if (mcpState.resolved_word) {
+    return summaryCard([["재사용한 단어", mcpState.resolved_word.name, true]], "summary-card-ok");
+  }
+  const reg = mcpState.word_registration;
+  if (reg && reg.request_id) {
+    return summaryCard([
+      ["신청 ID", reg.request_id.slice(0, 8) + "…", true],
+      ["단어명", reg.word_name, true],
+      ["영문 약어", reg.english_abbr, true],
+      ["상태", "검토 대기 (PENDING_REVIEW)"],
+    ], "summary-card-ok");
+  }
+  const blocked = mcpState.word_prepare_error;
+  if (blocked) return summaryCard([["실패 사유 코드", blocked.code, true]], "summary-card-fail");
+  return "";
+}
+
 // stage별로 어떤 구조화 블록을 붙일지 결정합니다. 서버(build_chatflow.py의
 // RENDER 프롬프트)는 이 stage들에서 같은 내용을 문장으로 다시 나열하지
 // 않도록 되어 있어, 프론트엔드 표/카드가 유일한 상세 정보 출처입니다.
@@ -624,6 +809,15 @@ function renderStructuredBlock(mcpState) {
     case "submitted":
     case "registration_failed":
       return renderRegistrationCard(mcpState);
+    case "awaiting_word_confirm":
+      return renderWordSuggestionCard(mcpState);
+    case "awaiting_word_abbreviation":
+      return renderWordAbbreviationCard(mcpState);
+    case "word_reused":
+    case "word_submitted":
+    case "word_registration_failed":
+    case "word_request_blocked":
+      return renderWordResultCard(mcpState);
     default:
       return "";
   }
@@ -783,7 +977,7 @@ async function submitChatMessage(raw) {
 
     if (mcpState?.stage === "submitted") {
       handleRegistrationSubmitted(mcpState);
-      fetchTermsFromBackend();
+      fetchCatalogFromBackend();
     }
 
     setChatStatus("연결됨", "ok");

@@ -19,6 +19,18 @@ def insert_guideline_chunk(section,content):
             VALUES(%s,%s,%s,%s,%s,%s) ON CONFLICT(section) DO UPDATE SET content=excluded.content""",
             (str(uuid.uuid4()),section,content,vector,EMBEDDING_MODEL,"TEST_FIXTURE_NOT_PRODUCTION"))
 
+def insert_standard_word(name,english_abbr,definition=""):
+    from term_service.config import EMBEDDING_MODEL
+    from term_service.embeddings import embed
+    from term_service.naming import key
+    vector=embed(name+" : "+definition) if definition else embed(name)
+    with db.connect() as conn:
+        conn.execute("""INSERT INTO standard_words(id,name,normalized_name,english_abbr,definition,status,source,embedding,embedding_model)
+            VALUES(%s,%s,%s,%s,%s,'ACTIVE','TEST_FIXTURE_NOT_PRODUCTION',%s,%s)
+            ON CONFLICT(normalized_name) DO UPDATE SET english_abbr=excluded.english_abbr,definition=excluded.definition,
+            embedding=excluded.embedding,embedding_model=excluded.embedding_model""",
+            (str(uuid.uuid4()),name,key(name),english_abbr,definition,vector,EMBEDDING_MODEL))
+
 @pytest.mark.parametrize("name",["일일권장칼로리","체질량지수(BMI)","나이","국가"])
 def test_valid_names(name):
     assert validate(name).valid
@@ -382,6 +394,54 @@ def test_real_abbreviation_suggestion_reaches_confirm(catalog):
     result=apply(4,"set_abbreviation","DAILY_AVG_STEP")
     assert result["state"]["stage"]=="awaiting_confirm"
     assert result["state"]["english_abbr"]=="DAILY_AVG_STEP"
+
+def test_confirm_term_routes_to_word_request_when_decomposition_fails():
+    # A term fully covered by known standard_words must behave exactly as before
+    # (straight to awaiting_definition) - the new word-gap check must never fire
+    # when it has nothing to report.
+    insert_standard_word("일일","DAILY")
+    insert_standard_word("칼로리","CAL")
+    def apply(revision,intent,value="",confirmed=False):
+        return conversation.apply("word-gap-conv","user",revision,{"intent":intent,"value":value,"confirmed":confirmed})
+    apply(0,"propose_term","일일칼로리")
+    result=apply(1,"confirm_term",confirmed=True)
+    assert result["state"]["stage"]=="awaiting_definition"
+
+    # A name with a portion the dictionary doesn't cover ("보행량") must route into
+    # the word-request sub-flow instead of silently proceeding, with enough state
+    # saved (resume_term) to pick the term registration back up afterward.
+    apply(2,"propose_term","일일보행량")
+    result=apply(3,"confirm_term",confirmed=True)
+    assert result["state"]["stage"]=="awaiting_word_meaning"
+    assert result["state"]["resume_term"]["term_name"]=="일일보행량"
+
+@pytest.mark.skipif(os.getenv("RUN_LLM_TESTS")!="1",reason="Explicit low-volume paid API smoke test")
+def test_real_word_request_flow_resumes_term_registration():
+    insert_standard_word("등기","RG","국가 기관이 법정 절차에 따라 등기부에 부동산이나 동산 등에 대한 권리관계를 기록하는 행위")
+    def apply(revision,intent,value="",confirmed=False):
+        return conversation.apply("word-flow-conv","user",revision,{"intent":intent,"value":value,"confirmed":confirmed})
+    apply(0,"propose_term","등기증명서")  # "증명서" isn't in this tiny test dictionary
+    result=apply(1,"confirm_term",confirmed=True)
+    assert result["state"]["stage"]=="awaiting_word_meaning"
+    rev=2
+    result=apply(rev,"propose_word","등기 내용을 증명하기 위해 발급하는 문서")
+    assert result["state"]["stage"]=="awaiting_word_confirm"
+    suggestion=result["state"]["word_suggestion"]
+    if suggestion.get("ambiguous"):
+        rev+=1
+        result=apply(rev,"propose_word",suggestion["options"][0])
+        suggestion=result["state"]["word_suggestion"]
+    rev+=1
+    result=apply(rev,"confirm_word",confirmed=True)
+    if result["state"]["stage"]=="awaiting_word_abbreviation":
+        rev+=1
+        abbr=result["state"]["word_registration_payload"]["english_abbr"]
+        result=apply(rev,"set_word_abbreviation",abbr)
+    # Whether it reused an existing word or registered a brand-new one, the paused
+    # term registration must resume right where it left off.
+    assert result["state"]["stage"]=="awaiting_definition"
+    assert "resume_term" not in result["state"]
+    assert result["state"]["definition_suggestion"]
 
 @pytest.mark.skipif(os.getenv("RUN_LLM_TESTS")!="1",reason="Explicit low-volume paid API smoke test")
 def test_real_llm_definition_comparison(catalog):

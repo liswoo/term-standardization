@@ -4,23 +4,47 @@ User messages are never implicitly stored as definitions. Trusted identities mus
 from typing import Literal
 from pydantic import Field
 from psycopg.types.json import Jsonb
-from . import db, registration
-from .abbreviation import suggest_abbreviation, validate_abbreviation
+from . import db, registration, word_registration
+from .abbreviation import suggest_abbreviation, validate_abbreviation, validate_word_abbreviation
 from .definition_suggestion import suggest_definition
 from .guideline import check_guideline
-from .naming import strip_trailing_particle
-from .schemas import Schema, RegistrationInput
+from .naming import strip_trailing_particle, segment_words
+from .schemas import Schema, RegistrationInput, WordRegistrationInput
 from .search import validate_name, search, domain_usage
+from .word_suggestion import suggest_word
 
 class ConversationAction(Schema):
     intent: Literal["propose_term","confirm_term","set_domain","set_definition","set_abbreviation","confirm_registration",
-                    "show_candidates","edit_term","edit_domain","edit_definition","cancel","restart","help","unknown"]
+                    "show_candidates","edit_term","edit_domain","edit_definition","cancel","restart","help","unknown",
+                    "propose_word","confirm_word","set_word_abbreviation"]
     value: str = Field(default="",max_length=4000)
     confirmed: bool = False
 
 def db_domain_codes():
     with db.connect() as conn:
-        return conn.execute("SELECT code FROM domains").fetchall()
+        return conn.execute("SELECT code FROM domains WHERE status='ACTIVE'").fetchall()
+
+def _word_lookup():
+    with db.connect() as conn:
+        rows=conn.execute("SELECT normalized_name,name,english_abbr FROM standard_words WHERE status='ACTIVE'").fetchall()
+    return {r["normalized_name"]:r for r in rows}
+
+def _resume_or_finish_word_flow(s, result_stage):
+    """A word request can start two ways: standalone, or embedded inside a term
+    registration whose name didn't fully decompose into known standard_words
+    (see confirm_term below). resume_term marks the latter - once the word
+    question is resolved (reused an existing word, or a new one was submitted
+    for review), jump back to exactly where the term flow paused instead of
+    making the user re-state the term."""
+    resume=s.pop("resume_term",None)
+    for name in ["word_usage_description","word_suggestion","word_registration_payload"]:
+        s.pop(name,None)
+    if resume:
+        s["definition_suggestion"]=suggest_definition(resume["term_name"]).model_dump()
+        s["stage"]="awaiting_definition"
+        return s,{"next_action":"INPUT_DEFINITION","resumed_from_word_request":True}
+    s["stage"]=result_stage
+    return s,{"next_action":"SHOW_WORD_RESULT"}
 
 def get_state(conversation_id,requester):
     with db.connect() as conn:
@@ -91,6 +115,25 @@ def transition(state, action, requester, conversation_id):
             s["pending_request"]=pending
             s["stage"]="pending_request_found"
             return s,{"next_action":"PENDING_REQUEST_FOUND"}
+        # A standard term is supposed to be a pure concatenation of standard words
+        # (e.g. "지사"+"분류"+"코드" -> "지사분류코드") - if the name doesn't fully
+        # decompose into known standard_words, some part of it names a concept with
+        # no official word yet. Silently letting suggest_abbreviation() invent an
+        # abbreviation for that part later means a new word gets coined with no
+        # governance at all. Catch it here instead and route into the word-request
+        # sub-flow first; confirm_word/set_word_abbreviation resume back to
+        # suggest_definition() below once the word question is resolved.
+        # Only applies once a word dictionary actually exists - an empty one (a
+        # fresh install, or a synthetic scenario catalog with no words at all)
+        # means "cannot check", not "everything is a gap", same as how an empty
+        # standard_terms corpus never fails EXACT_MATCH/semantic search.
+        word_lookup=_word_lookup()
+        if word_lookup:
+            matched,full_match=segment_words(s["term_name"],word_lookup)
+            if not full_match:
+                s["resume_term"]={"term_name":s["term_name"]}
+                s["stage"]="awaiting_word_meaning"
+                return s,{"next_action":"REQUEST_NEW_WORD","matched_words":[w["name"] for w in matched]}
         # Definition comes before domain (see set_definition below): the domain
         # step's own comparison-group evidence is far stronger once a definition
         # exists to search with, not just the bare name. Writing a definition
@@ -128,7 +171,14 @@ def transition(state, action, requester, conversation_id):
         # for real domain-recommendation evidence - see the comment on confirm_term.
         result=search(s["term_name"],a.value,limit=30)
         s["search"]=result.model_dump()
-        s["domains"]=domain_usage(s["term_name"],[c.term_id for c in result.candidates])
+        # search() merges up to `limit` matches from EACH of 4 independent groups
+        # (exact/synonym/semantic/lexical), so combined candidates can exceed 30
+        # even though each group individually respects the limit - domain_usage()
+        # hard-caps at 30 comparison IDs (a real catalog easily produces more than
+        # that once every group actually has candidates, unlike the old handful of
+        # synthetic terms). Truncate here, keeping search()'s own priority order
+        # (exact > synonym > semantic > lexical) intact.
+        s["domains"]=domain_usage(s["term_name"],[c.term_id for c in result.candidates][:30])
         s["stage"]="awaiting_domain_choice"
         return s,{"next_action":"CHOOSE_DOMAIN"}
     if a.intent=="edit_domain":
@@ -139,7 +189,7 @@ def transition(state, action, requester, conversation_id):
             s.pop(name,None)
         result=search(s["term_name"],s["definition"],limit=30)
         s["search"]=result.model_dump()
-        s["domains"]=domain_usage(s["term_name"],[c.term_id for c in result.candidates])
+        s["domains"]=domain_usage(s["term_name"],[c.term_id for c in result.candidates][:30])
         s["stage"]="awaiting_domain_choice"
         return s,{"next_action":"CHOOSE_DOMAIN"}
     if a.intent=="set_domain":
@@ -190,6 +240,60 @@ def transition(state, action, requester, conversation_id):
         # exact same failure (e.g. PENDING_REQUEST_ALREADY_EXISTS) forever.
         s["stage"]="submitted" if result.get("request_id") else "registration_failed"
         return s,{"next_action":"SHOW_REGISTRATION_RESULT"}
+    if a.intent=="propose_word":
+        # Fires from ANY stage - a standalone "이런 개념을 단어로 추천해줘" request,
+        # or the first/subsequent description at the embedded awaiting_word_meaning
+        # stage confirm_term routed into above. Never touches term_name/resume_term,
+        # so an embedded word request keeps its place in the paused term flow.
+        value=a.value.strip()
+        if not value:
+            return s,{"error":"WORD_MEANING_REQUIRED"}
+        prior=s.get("word_suggestion") or {}
+        if prior.get("ambiguous") and value in prior.get("options",[]):
+            # Answer to a clarifying question, not a fresh description.
+            suggestion=suggest_word(s["word_usage_description"],clarification_hint=value).model_dump()
+        else:
+            s["word_usage_description"]=value
+            suggestion=suggest_word(value).model_dump()
+        s["word_suggestion"]=suggestion
+        s["stage"]="awaiting_word_confirm"
+        return s,{"next_action":"CONFIRM_WORD"}
+    if a.intent=="confirm_word":
+        if stage!="awaiting_word_confirm":
+            return s,{"error":"UNEXPECTED_INTENT"}
+        if not a.confirmed:
+            s["stage"]="awaiting_word_meaning"
+            return s,{"next_action":"INPUT_WORD_MEANING"}
+        suggestion=s.get("word_suggestion") or {}
+        if suggestion.get("existing_word_match"):
+            # Nothing to register - the meaning is already covered by an existing
+            # word. Record which one resolved this so the result can name it.
+            s["resolved_word"]={"name":suggestion["existing_word_match"],"reused":True}
+            return _resume_or_finish_word_flow(s,"word_reused")
+        if not (suggestion.get("name") and suggestion.get("english_abbr") and suggestion.get("definition")):
+            return s,{"error":"WORD_SUGGESTION_NOT_READY"}
+        s["word_registration_payload"]={"word_name":suggestion["name"],"definition":suggestion["definition"],
+            "english_abbr":suggestion["english_abbr"],"is_format_word":suggestion.get("is_format_word",False)}
+        s["stage"]="awaiting_word_abbreviation"
+        return s,{"next_action":"CONFIRM_WORD_ABBREVIATION"}
+    if a.intent=="set_word_abbreviation":
+        if stage!="awaiting_word_abbreviation":
+            return s,{"error":"UNEXPECTED_INTENT"}
+        value,error=validate_word_abbreviation(a.value)
+        if error:
+            return s,{"error":error}
+        payload=s.get("word_registration_payload") or {}
+        p=WordRegistrationInput(word_name=payload["word_name"],definition=payload["definition"],
+            english_abbr=value,is_format_word=payload.get("is_format_word",False),
+            requester=requester,conversation_id=conversation_id)
+        prepared=word_registration.prepare(p)
+        if not prepared.get("ready"):
+            s["word_prepare_error"]=prepared
+            s["stage"]="word_request_blocked"
+            return s,{"next_action":"EXPLAIN_WORD_BLOCK"}
+        result=word_registration.submit(prepared["confirmation_id"],requester,conversation_id,True)
+        s["word_registration"]=result
+        return _resume_or_finish_word_flow(s,"word_submitted" if result.get("request_id") else "word_registration_failed")
     return s,{"error":"UNEXPECTED_INTENT"}
 
 def apply(conversation_id,requester,expected_revision,action):

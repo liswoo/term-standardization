@@ -30,6 +30,36 @@ def morphology(text: str) -> dict:
         {"form": t.form, "tag": t.tag, "start": t.start, "length": t.len} for t in tokens
     ]}
 
+def segment_words(term_name: str, word_lookup: dict) -> tuple[list, bool]:
+    """Greedy longest-match segmentation of term_name against known standard_words.
+
+    Returns (matched_word_rows_in_order, full_match) where full_match is True
+    only if every character of the normalized name was consumed by a known
+    word with nothing left over (no gaps). A partial result (full_match=False)
+    still reports whichever words WERE recognized - grounding for an LLM
+    fallback (abbreviation.py) or a signal that a genuinely new word is needed
+    (conversation.py's word-registration entry point).
+
+    word_lookup maps normalized_name -> a row dict for that standard_words entry.
+    """
+    text = key(term_name)
+    max_len = max((len(w) for w in word_lookup), default=0)
+    i, n, matched, full = 0, len(text), [], True
+    while i < n:
+        found = 0
+        for length in range(min(max_len, n - i), 0, -1):
+            candidate = word_lookup.get(text[i:i + length])
+            if candidate:
+                matched.append(candidate)
+                found = length
+                break
+        if found:
+            i += found
+        else:
+            full = False
+            i += 1
+    return matched, full and bool(matched)
+
 def strip_trailing_particle(text: str) -> str:
     """Drop a single trailing case/topic particle attached to a noun (e.g. '값을' -> '값').
     This is extraction cleanup for raw user phrasing ("값을 신규 용어로 등록해줘"), not

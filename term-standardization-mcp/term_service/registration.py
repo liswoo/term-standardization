@@ -1,3 +1,4 @@
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 import uuid
 from psycopg.types.json import Jsonb
@@ -26,7 +27,14 @@ def prepare(payload: RegistrationInput):
                 (key(synonym),key(synonym))).fetchall())
     if alias_conflicts:
         return {"ready":False,"code":"SYNONYM_CONFLICT","candidates":alias_conflicts}
-    comparisons=[compare(payload.term_name,payload.definition,c.term_id).model_dump() for c in result.candidates]
+    # Each compare() call is one OpenAI round-trip; result.candidates can hold up to
+    # 30 (see search.py's limit=30 above). Run sequentially and a single confirmation
+    # takes tens of seconds once a real catalog actually produces that many candidates
+    # (a handful of synthetic terms never did) - each call opens its own DB connection
+    # (db.connect() has no shared pool/state), so they're safe to fan out concurrently.
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        comparisons=[c.model_dump() for c in executor.map(
+            lambda candidate: compare(payload.term_name,payload.definition,candidate.term_id), result.candidates)]
     if any(c["relation"]=="SAME_MEANING" for c in comparisons):
         # Unlike EXACT_MATCH above, this block used to omit `search`, so the matched
         # existing term's name/definition/domain never reached rendering - only an

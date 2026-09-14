@@ -3,6 +3,18 @@ CREATE EXTENSION IF NOT EXISTS pg_trgm;
 CREATE TABLE IF NOT EXISTS domains (
  code text PRIMARY KEY, description text NOT NULL DEFAULT '', source text NOT NULL
 );
+-- ACTIVE/DEPRECATED plus the government 공통표준도메인 sheet's own columns (data
+-- type/length/format/unit): DEPRECATED rows are kept, never deleted, so a term
+-- already registered against a domain the standard later retires keeps a valid FK.
+ALTER TABLE domains ADD COLUMN IF NOT EXISTS status text NOT NULL DEFAULT 'ACTIVE' CHECK(status IN ('ACTIVE','DEPRECATED'));
+ALTER TABLE domains ADD COLUMN IF NOT EXISTS data_type text;
+ALTER TABLE domains ADD COLUMN IF NOT EXISTS data_length int;
+ALTER TABLE domains ADD COLUMN IF NOT EXISTS decimal_length int;
+ALTER TABLE domains ADD COLUMN IF NOT EXISTS storage_format text;
+ALTER TABLE domains ADD COLUMN IF NOT EXISTS display_format text;
+ALTER TABLE domains ADD COLUMN IF NOT EXISTS unit text;
+ALTER TABLE domains ADD COLUMN IF NOT EXISTS domain_group text;
+ALTER TABLE domains ADD COLUMN IF NOT EXISTS domain_classification text;
 CREATE TABLE IF NOT EXISTS standard_terms (
  id uuid PRIMARY KEY, name text NOT NULL, normalized_name text NOT NULL UNIQUE,
  definition text NOT NULL, domain text NOT NULL REFERENCES domains(code),
@@ -13,9 +25,46 @@ CREATE TABLE IF NOT EXISTS standard_terms (
  created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now()
 );
 ALTER TABLE standard_terms ADD COLUMN IF NOT EXISTS english_abbr text;
+ALTER TABLE standard_terms ADD COLUMN IF NOT EXISTS status text NOT NULL DEFAULT 'ACTIVE' CHECK(status IN ('ACTIVE','DEPRECATED'));
 CREATE INDEX IF NOT EXISTS term_name_trgm ON standard_terms USING gin(normalized_name gin_trgm_ops);
 CREATE INDEX IF NOT EXISTS term_synonyms ON standard_terms USING gin(normalized_synonyms);
 CREATE INDEX IF NOT EXISTS term_tokens ON standard_terms USING gin(noun_tokens);
+-- 표준단어(Standard Word) layer: the atomic units standard_terms are composed
+-- from (e.g. "지사"+"분류"+"코드" -> "지사분류코드"). Matching an already-known
+-- word during term decomposition is exact/normalized (1의미1단어 - a word IS its
+-- name), but *finding whether a word already exists for a given meaning* (the
+-- entry point for requesting a new word) is a different problem that needs
+-- semantic search just like standard_terms - hence the embedding column below.
+CREATE TABLE IF NOT EXISTS standard_words (
+ id uuid PRIMARY KEY, name text NOT NULL, normalized_name text NOT NULL UNIQUE,
+ english_abbr text NOT NULL, english_name text NOT NULL DEFAULT '',
+ definition text NOT NULL DEFAULT '',
+ is_format_word boolean NOT NULL DEFAULT false, domain_classification text NOT NULL DEFAULT '',
+ synonyms text[] NOT NULL DEFAULT '{}', normalized_synonyms text[] NOT NULL DEFAULT '{}',
+ forbidden_words text[] NOT NULL DEFAULT '{}',
+ status text NOT NULL DEFAULT 'ACTIVE' CHECK(status IN ('ACTIVE','DEPRECATED')),
+ source text NOT NULL, created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now()
+);
+ALTER TABLE standard_words ADD COLUMN IF NOT EXISTS embedding vector(384);
+ALTER TABLE standard_words ADD COLUMN IF NOT EXISTS embedding_model text;
+CREATE INDEX IF NOT EXISTS word_name_trgm ON standard_words USING gin(normalized_name gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS word_synonyms ON standard_words USING gin(normalized_synonyms);
+CREATE TABLE IF NOT EXISTS word_registration_preparations (
+ id uuid PRIMARY KEY, payload jsonb NOT NULL, assessment jsonb NOT NULL,
+ requester text NOT NULL, conversation_id text NOT NULL, catalog_fingerprint text NOT NULL,
+ status text NOT NULL DEFAULT 'AWAITING_CONFIRMATION' CHECK(status IN ('AWAITING_CONFIRMATION','SUBMITTED','CANCELLED')),
+ expires_at timestamptz NOT NULL, created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS word_registration_requests (
+ id uuid PRIMARY KEY, preparation_id uuid NOT NULL UNIQUE REFERENCES word_registration_preparations(id),
+ word_name text NOT NULL, normalized_name text NOT NULL, definition text NOT NULL,
+ english_abbr text NOT NULL, is_format_word boolean NOT NULL DEFAULT false,
+ domain_classification text NOT NULL DEFAULT '',
+ status text NOT NULL DEFAULT 'PENDING_REVIEW' CHECK(status IN ('PENDING_REVIEW','APPROVED','REJECTED')),
+ requester text NOT NULL, conversation_id text NOT NULL, assessment jsonb NOT NULL,
+ created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS pending_word_name_unique ON word_registration_requests(normalized_name) WHERE status='PENDING_REVIEW';
 CREATE TABLE IF NOT EXISTS abbreviation_aliases (
  abbreviation text PRIMARY KEY, names text[] NOT NULL, source text NOT NULL
 );

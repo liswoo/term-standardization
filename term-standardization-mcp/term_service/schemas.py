@@ -118,6 +118,37 @@ class DefinitionSuggestionResult(DefinitionSuggestion):
     model: str | None = None
     error_code: str | None = None
 
+class WordSuggestion(Schema):
+    # existing_word_match declared first, before ambiguous/name, so the model must
+    # commit to "does an existing word already cover this meaning" before it can
+    # write either a clarifying question or a brand-new word proposal - same
+    # forced-intermediate-field trick as DefinitionSuggestion.ambiguous and
+    # GuidelineJudgment.matched_forbidden_word. Meaning-first word search
+    # (search_words()) is fuzzy, so this stops the model from BOTH claiming a
+    # reuse-worthy match AND coining a new word in the same answer.
+    existing_word_match: str = Field(default="", description=
+        "The exact name of an existing standard word from candidate_existing_words "
+        "that already means the same thing as usage_description, or empty string "
+        "if none of them do - do not guess a word that isn't in that list.")
+    match_reason: str = Field(default="", description="Only set when existing_word_match is non-empty: one short Korean sentence why it matches.")
+    ambiguous: bool = Field(default=False, description=
+        "Only relevant when existing_word_match is empty: true only if usage_description "
+        "itself supports two or more genuinely distinct concepts that would need different "
+        "words - not merely because a fully specific name requires domain detail.")
+    question: str = Field(default="", description="Only set when ambiguous=true: a short Korean question naming the fork.")
+    options: list[str] = Field(default_factory=list, max_length=4,
+        description="Only set when ambiguous=true: 2-4 short Korean labels, each a candidate meaning.")
+    name: str = Field(default="", description="Only set when existing_word_match is empty and ambiguous=false: a new Korean standard-word name (a single concept, not a full term).")
+    english_abbr: str = Field(default="", description="Only set alongside name: the new word's English abbreviation, uppercase letters/digits/underscores only, 3-5 letters.")
+    is_format_word: bool = Field(default=False, description="Only set alongside name: true if this word by itself already implies a data format/domain (a 분류어 like 코드/명/수), false otherwise.")
+    definition: str = Field(default="", description="Only set alongside name: a confident one-sentence Korean definition of the new word.")
+    rationale: str = Field(default="", description="One short Korean sentence: why this match, this question, or this new word.")
+
+class WordSuggestionResult(WordSuggestion):
+    method: str
+    model: str | None = None
+    error_code: str | None = None
+
 class RegistrationInput(Schema):
     term_name: str = Field(min_length=2, max_length=20)
     definition: str = Field(min_length=5, max_length=4000)
@@ -133,3 +164,12 @@ class RegistrationInput(Schema):
         if any(not x or len(x) > 100 for x in cleaned):
             raise ValueError("Each synonym must contain 1 to 100 characters")
         return cleaned
+
+class WordRegistrationInput(Schema):
+    word_name: str = Field(min_length=1, max_length=20)
+    definition: str = Field(min_length=5, max_length=4000)
+    english_abbr: str = Field(min_length=1, max_length=20)
+    is_format_word: bool = False
+    domain_classification: str = Field(default="", max_length=100)
+    requester: str = Field(min_length=1, max_length=200)
+    conversation_id: str = Field(min_length=1, max_length=200)

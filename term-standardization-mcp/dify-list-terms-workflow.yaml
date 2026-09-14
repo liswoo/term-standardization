@@ -1,5 +1,6 @@
 app:
-  description: 프론트엔드 대시보드용 읽기 전용 워크플로우. 실제 표준용어 카탈로그와 검토 대기 등록 요청 목록을 반환한다.
+  description: 프론트엔드 대시보드용 읽기 전용 워크플로우. 표준용어/표준단어 카탈로그(페이지네이션), 검토 대기 등록 요청, 표준도메인
+    전체 목록을 반환한다.
   icon: 🤖
   icon_background: '#FFEAD5'
   icon_type: emoji
@@ -70,7 +71,33 @@ workflow:
         type: start
         desc: ''
         version: '1'
-        variables: []
+        variables:
+        - variable: limit
+          label: limit
+          type: number
+          required: false
+        - variable: offset
+          label: offset
+          type: number
+          required: false
+        - variable: q
+          label: q
+          type: text-input
+          max_length: 200
+          required: false
+        - variable: words_limit
+          label: words_limit
+          type: number
+          required: false
+        - variable: words_offset
+          label: words_offset
+          type: number
+          required: false
+        - variable: words_q
+          label: words_q
+          type: text-input
+          max_length: 200
+          required: false
       position:
         x: 0
         y: 150
@@ -96,18 +123,97 @@ workflow:
         plugin_unique_identifier: ''
         tool_name: list_terms
         tool_label: list_terms
-        tool_description: 실제 표준용어 카탈로그와 검토 대기 등록 요청 목록을 조회한다.
+        tool_description: 실제 표준용어 카탈로그와 검토 대기 등록 요청 목록을 페이지 단위로 조회한다.
         tool_node_version: '2'
         tool_configurations: {}
         tool_parameters:
           limit:
-            type: constant
-            value: 100
+            type: mixed
+            value: '{{#start.limit#}}'
+          offset:
+            type: mixed
+            value: '{{#start.offset#}}'
+          q:
+            type: mixed
+            value: '{{#start.q#}}'
         is_team_authorization: true
         paramSchemas: []
         params: {}
       position:
         x: 340
+        y: 150
+      width: 260
+      height: 100
+      sourcePosition: right
+      targetPosition: left
+    - id: list_standard_words
+      type: custom
+      data:
+        title: list_standard_words
+        type: tool
+        desc: ''
+        version: '1'
+        provider_id: term-standardization
+        provider_name: term-standardization
+        provider_show_name: term-standardization
+        provider_type: mcp
+        provider_icon:
+          background: '#6366F1'
+          content: 🔗
+        plugin_id: ''
+        plugin_unique_identifier: ''
+        tool_name: list_standard_words
+        tool_label: list_standard_words
+        tool_description: 표준단어(standard_words) 사전을 페이지 단위로 조회한다.
+        tool_node_version: '2'
+        tool_configurations: {}
+        tool_parameters:
+          limit:
+            type: mixed
+            value: '{{#start.words_limit#}}'
+          offset:
+            type: mixed
+            value: '{{#start.words_offset#}}'
+          q:
+            type: mixed
+            value: '{{#start.words_q#}}'
+        is_team_authorization: true
+        paramSchemas: []
+        params: {}
+      position:
+        x: 680
+        y: 150
+      width: 260
+      height: 100
+      sourcePosition: right
+      targetPosition: left
+    - id: list_data_domains
+      type: custom
+      data:
+        title: list_data_domains
+        type: tool
+        desc: ''
+        version: '1'
+        provider_id: term-standardization
+        provider_name: term-standardization
+        provider_show_name: term-standardization
+        provider_type: mcp
+        provider_icon:
+          background: '#6366F1'
+          content: 🔗
+        plugin_id: ''
+        plugin_unique_identifier: ''
+        tool_name: list_data_domains
+        tool_label: list_data_domains
+        tool_description: 실제 활성 표준도메인 전체 목록을 조회한다 (페이지네이션 없음).
+        tool_node_version: '2'
+        tool_configurations: {}
+        tool_parameters: {}
+        is_team_authorization: true
+        paramSchemas: []
+        params: {}
+      position:
+        x: 1020
         y: 150
       width: 260
       height: 100
@@ -126,8 +232,18 @@ workflow:
           - list_terms
           - json
           value_type: array[object]
+        - variable: words
+          value_selector:
+          - list_standard_words
+          - json
+          value_type: array[object]
+        - variable: domains
+          value_selector:
+          - list_data_domains
+          - json
+          value_type: array[object]
       position:
-        x: 680
+        x: 1360
         y: 150
       width: 260
       height: 100
@@ -143,9 +259,27 @@ workflow:
       data:
         sourceType: start
         targetType: tool
-    - id: list_terms-end
+    - id: list_terms-list_standard_words
       type: custom
       source: list_terms
+      target: list_standard_words
+      sourceHandle: source
+      targetHandle: target
+      data:
+        sourceType: tool
+        targetType: tool
+    - id: list_standard_words-list_data_domains
+      type: custom
+      source: list_standard_words
+      target: list_data_domains
+      sourceHandle: source
+      targetHandle: target
+      data:
+        sourceType: tool
+        targetType: tool
+    - id: list_data_domains-end
+      type: custom
+      source: list_data_domains
       target: end
       sourceHandle: source
       targetHandle: target
