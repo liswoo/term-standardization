@@ -3,7 +3,8 @@ from datetime import datetime, timedelta, timezone
 import uuid
 from psycopg.types.json import Jsonb
 from . import db
-from .config import EMBEDDING_MODEL
+from .config import EMBEDDING_MODEL, LOCAL_COMPARE_CANDIDATE_CAP
+from .credentials import active_provider
 from .embeddings import embed
 from .naming import key, morphology
 from .schemas import RegistrationInput
@@ -29,14 +30,36 @@ def prepare(payload: RegistrationInput):
                 (key(synonym),key(synonym))).fetchall())
     if alias_conflicts:
         return {"ready":False,"code":"SYNONYM_CONFLICT","candidates":alias_conflicts}
-    # Each compare() call is one OpenAI round-trip; result.candidates can hold up to
+    # Each compare() call is one LLM round-trip; result.candidates can hold up to
     # 30 (see search.py's limit=30 above). Run sequentially and a single confirmation
     # takes tens of seconds once a real catalog actually produces that many candidates
     # (a handful of synthetic terms never did) - each call opens its own DB connection
     # (db.connect() has no shared pool/state), so they're safe to fan out concurrently.
+    # With OpenAI's backend this genuinely runs the 8 threads in parallel (~3-4s total,
+    # see CLAUDE.md). ThreadPoolExecutor cannot do the same trick against a single local
+    # GPU serving one Ollama process - the "parallel" calls just queue up and run close
+    # to sequentially, and comparing all 30 candidates can take minutes and blow past
+    # Dify's 5-minute MCP tool timeout with no error surfaced to the user (see CLAUDE.md's
+    # "로컬 모델(Ollama) 테스트" section for how this was diagnosed).
+    #
+    # TEST-ONLY QUALITY TRADEOFF, local provider only: compare only the top
+    # LOCAL_COMPARE_CANDIDATE_CAP candidates (result.candidates is already ordered
+    # exact > synonym > semantic > lexical, most-relevant-first within each group -
+    # see search.py) instead of all of them. This exists purely so local testing
+    # finishes in reasonable time; it is NOT a quality improvement and must never
+    # apply to the OpenAI path - a real duplicate sitting outside the kept slice
+    # becomes a false negative (SAME_MEANING silently missed). Do not raise the
+    # default cap to "fix" speed without re-reading why it exists; the actual fix
+    # is fewer LLM calls per confirmation (batch the candidates into one call) or
+    # faster local throughput (better hardware/quantization), not a bigger cap.
+    to_compare=result.candidates
+    local_cap_applied=False
+    if active_provider()=="local" and len(to_compare)>LOCAL_COMPARE_CANDIDATE_CAP:
+        to_compare=to_compare[:LOCAL_COMPARE_CANDIDATE_CAP]
+        local_cap_applied=True
     with ThreadPoolExecutor(max_workers=8) as executor:
         comparisons=[c.model_dump() for c in executor.map(
-            lambda candidate: compare(payload.term_name,payload.definition,candidate.term_id), result.candidates)]
+            lambda candidate: compare(payload.term_name,payload.definition,candidate.term_id), to_compare)]
     if any(c["relation"]=="SAME_MEANING" for c in comparisons):
         # Unlike EXACT_MATCH above, this block used to omit `search`, so the matched
         # existing term's name/definition/domain never reached rendering - only an
@@ -44,6 +67,13 @@ def prepare(payload: RegistrationInput):
         return {"ready":False,"code":"SAME_MEANING","recommended_action":"USE_EXISTING",
             "comparisons":comparisons,"search":result.model_dump()}
     warnings=list(result.warnings)
+    if local_cap_applied:
+        # Data-level paper trail for the tradeoff above: this specific preparation's
+        # duplicate check did not cover all of result.candidates, so it must read as
+        # weaker evidence than a normal (OpenAI) REVIEW_REQUIRED/CREATE_NEW - never
+        # silently promote this to an approved standard term without a human re-check
+        # against the full candidate list.
+        warnings.append("LOCAL_TEST_COMPARISON_CAPPED")
     if not known_domain:
         warnings.append("UNREGISTERED_DOMAIN_REQUIRES_REVIEW")
     if result.synonym_matches:

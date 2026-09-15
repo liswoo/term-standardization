@@ -13,7 +13,7 @@ import json
 from . import db
 from .config import EMBEDDING_MODEL
 from .embeddings import embed
-from .credentials import llm_client, llm_configured, current_llm_model
+from .credentials import llm_client, llm_configured, current_llm_model, llm_extra_params
 from .schemas import GuidelineChunk, GuidelineJudgment, GuidelineCheckResult
 
 SYSTEM = """You check whether a proposed Korean standard-term name complies with the
@@ -66,10 +66,10 @@ def check_guideline(term_name: str) -> GuidelineCheckResult:
         "guideline_excerpts": [{"section": e.section, "content": e.content} for e in evidence]}
     model = current_llm_model()
     try:
-        client = llm_client(timeout=35, max_retries=1)
+        client = llm_client(max_retries=1)
         response = client.chat.completions.parse(model=model, max_completion_tokens=600,
             messages=[{"role": "system", "content": SYSTEM}, {"role": "user", "content": json.dumps(payload, ensure_ascii=False)}],
-            response_format=GuidelineJudgment)
+            response_format=GuidelineJudgment, **llm_extra_params())
         judgment = response.choices[0].message.parsed
         if judgment is None:
             raise ValueError("Missing structured model output")

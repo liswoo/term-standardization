@@ -46,5 +46,24 @@ def llm_configured():
 def llm_client(**kwargs):
     from openai import OpenAI
     if active_provider() == "local":
+        # A single local generation can sit right at the edge of OpenAI's usual
+        # 35s - measured up to ~70s wall time once a timeout triggers max_retries=1
+        # to redo the whole call from scratch. A local GPU has none of a hosted
+        # API's request-level parallelism/headroom, so give it more room before
+        # giving up rather than burning double the time on a wasted retry.
+        kwargs.setdefault("timeout", 90)
         return OpenAI(api_key="local", base_url=LOCAL_LLM_BASE_URL, **kwargs)
+    kwargs.setdefault("timeout", 35)
     return OpenAI(api_key=api_key(), base_url=None, **kwargs)
+
+def llm_extra_params():
+    """Provider-specific completion kwargs with no equivalent in OpenAI's own API
+    surface, merged into a chat.completions.parse(...) call via **.
+    Currently just Qwen3's thinking-mode switch: measured ~2x wall time per call
+    without this, even though response_format's JSON-schema grammar already keeps
+    the <think>...</think> trace out of the parsed result - the reasoning pass still
+    runs and costs real time before the constrained-decoding answer starts. Same
+    fix as build_chatflow.py's identical think=False for the Dify chatflow nodes."""
+    if active_provider() == "local":
+        return {"extra_body": {"think": False}}
+    return {}

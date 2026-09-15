@@ -132,6 +132,22 @@ RUN_LLM_TESTS=1 .venv/bin/python -m pytest -q    # 실제 OpenAI 호출 포함 (
 
 `insert_standard_word(name, english_abbr, definition)` 헬퍼(`insert_guideline_chunk`와 동일한 패턴)로 테스트 DB에 최소 단어사전을 직접 심을 수 있습니다 — `standard_words`가 비어 있으면 `confirm_term`의 단어분해 체크 자체가 통째로 스킵되므로(아래), 그 분기를 테스트하려면 반드시 이 헬퍼로 최소 1개 이상 단어를 넣어야 합니다.
 
+## 로컬 모델(Ollama) 테스트 지원 — 품질 타협은 절대 OpenAI 경로로 새지 않게
+
+**목적을 먼저 이해하세요**: 이건 "제품을 로컬 모델로 바꾸는 작업"이 아니라 **"로컬 모델로도 서비스가 실제로 돌아가는가?"를 검증하는 실험**입니다. 여기서 유의미한 데이터가 쌓이면(품질은 충분한데 속도만 아쉽다 등) 하드웨어 증설을 검토할 근거가 됩니다. 이 목적 때문에, **테스트를 가능하게 하려고 넣은 타협이 OpenAI(프로덕션) 경로에 조용히 섞여 들어가면 안 됩니다** — 아래 항목들은 전부 `active_provider()=="local"`일 때만 적용되도록 짜여 있고, 코드에도 "TEST-ONLY" 주석이 달려 있습니다. 이 원칙을 어기는 변경은 하지 마세요.
+
+**구성 요소**:
+- `term_service/credentials.py`의 `active_provider()`/`set_active_provider()` — 관리자 UI(설정 화면)의 전환 버튼이 쓰는 런타임 스위치. `.runtime/llm_provider.json`을 매 호출마다 새로 읽어서 서버 재시작 없이 즉시 반영됩니다.
+- `term_service/admin_api.py` — MCP 서버(8100)의 `/admin/llm-status`, `/admin/llm-provider`. POST 시 `build_chatflow.py → dify_admin.py import → publish_chatflow.py` 3단계를 서브프로세스로 실행해 Dify 챗플로우의 intent/reply 노드까지 같이 전환합니다(10~20초 소요).
+- `credentials.llm_client()` — provider별로 타임아웃이 다릅니다(OpenAI 35초, 로컬 90초). 로컬 한 번의 생성이 35초 언저리에서 실패→재시도로 이어져 최대 70초 이상 날리는 걸 실측한 뒤 올렸습니다.
+- `credentials.llm_extra_params()` — 로컬일 때만 `extra_body={"think": False}`를 얹습니다. Qwen3 같은 하이브리드 사고 모델은 구조화 출력(JSON 스키마)이 `<think>` 텍스트 자체는 걸러내도, 내부적으로 "생각"하는 시간 자체는 그대로 걸립니다.
+
+**알려진 병목 — 로컬 GPU 1장은 OpenAI의 병렬 처리량을 못 따라감**: `registration.prepare()`가 후보 용어마다 `compare()`(LLM 1회 호출)를 돌리는데, OpenAI에서는 `ThreadPoolExecutor(max_workers=8)`가 진짜 병렬로 실행돼 3~4초에 끝나지만(위 "실데이터 규모" 절 3번 참고), 로컬은 GPU가 하나뿐이라 스레드 8개를 만들어도 사실상 순차 처리됩니다. 후보 12개짜리 확인 하나가 **Dify의 MCP 도구 호출 타임아웃(`sse_read_timeout=300`, 5분 — `dify_admin.py`의 `mcp-register` 참고)을 넘겨서, 에러 메시지 하나 없이 채팅이 그냥 멈추는 현상**으로 실제로 재현됐습니다(2026-09-15).
+
+**테스트용 타협 — `LOCAL_COMPARE_CANDIDATE_CAP`**: 위 문제 때문에 `registration.py`의 `prepare()`는 `active_provider()=="local"`일 때만 `compare()` 대상을 상위 `LOCAL_COMPARE_CANDIDATE_CAP`(기본 5)개로 자릅니다. **이건 속도 최적화가 아니라 커버리지를 포기한 겁니다** — 캡 밖에 있는 진짜 중복 용어를 놓칠 수 있습니다(SAME_MEANING 거짓음성). 적용됐을 때는 `assessment.warnings`에 `LOCAL_TEST_COMPARISON_CAPPED`가 기록되니, 이 표시가 있는 신청 건은 사람이 전체 후보 목록을 다시 확인하기 전엔 승인하면 안 됩니다. **OpenAI 경로에는 이 캡이 절대 적용되지 않습니다** — 코드를 고칠 때 이 조건 분기를 무너뜨리지 마세요.
+
+이 타협이 "OK, 이제 이렇게 계속 가자"로 굳어지는 걸 막으려면: 로컬 모델로 제품을 실제로 낼 계획이 생기면, 캡을 올리는 게 아니라 **애초에 LLM 호출 횟수 자체를 줄이는 방향**(후보들을 한 번의 호출에 묶어서 비교하는 등)으로 다시 설계해야 합니다.
+
 ## 알려진 미해결 이슈 / 다음 작업 후보
 
 우선순위 순서는 아니고, 각자 다른 이유로 "PoC에서는 넘어갔지만 제품화하려면 반드시 다뤄야 하는" 항목들입니다.

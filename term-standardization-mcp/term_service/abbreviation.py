@@ -22,7 +22,7 @@ were already resolved, so it only has to guess the new part).
 import json
 import re
 from . import db
-from .credentials import llm_client, llm_configured, current_llm_model
+from .credentials import llm_client, llm_configured, current_llm_model, llm_extra_params
 from .guideline import search_guideline
 from .naming import key, segment_words
 from .schemas import AbbreviationSuggestion, AbbreviationResult
@@ -57,12 +57,14 @@ def _dedupe_collision(abbr: str, reserved: set[str]) -> str:
 
 def suggest_abbreviation(term_name: str, extra_words: list[dict] | None = None) -> AbbreviationResult:
     with db.connect() as conn:
-        # Collision set must cover every assigned abbreviation (cheap - one column),
-        # but the LLM-facing grounding examples below are capped: with a real
-        # catalog in the tens of thousands, sending every prior example blew past
-        # the model's request size limit (BadRequestError). Rank by name similarity
-        # to term_name (same pg_trgm index search.py's lexical_matches already
-        # uses) so the ~200 kept are the ones actually relevant to this term.
+        # Collision set (`reserved` below) must cover every assigned abbreviation
+        # (cheap - one column), but everything shown to the LLM is capped: with a
+        # real catalog in the tens of thousands, sending every prior example (or
+        # every reserved abbreviation) blew past the model's context - OpenAI's
+        # 128k tokens absorbed it unnoticed, but a locally-hosted model's much
+        # smaller context does not. Rank by name similarity to term_name (same
+        # pg_trgm index search.py's lexical_matches already uses) so the ~200
+        # kept are the ones actually relevant to this term.
         all_abbrs = conn.execute(
             "SELECT english_abbr FROM standard_terms WHERE english_abbr IS NOT NULL AND status='ACTIVE'").fetchall()
         existing = conn.execute("""SELECT name,english_abbr FROM standard_terms
@@ -101,13 +103,18 @@ def suggest_abbreviation(term_name: str, extra_words: list[dict] | None = None) 
         # Words this term already resolved against standard_words - the model should
         # reuse these abbreviations verbatim and only guess the remaining part.
         "resolved_words": [{"word": w["name"], "abbreviation": w["english_abbr"]} for w in matched_words],
-        "reserved_abbreviations": sorted(reserved)}
+        # Capped the same way as prior_examples above (see comment) - this is only
+        # a hint so the model doesn't propose something already taken. Correctness
+        # doesn't depend on it: _dedupe_collision() below always checks the FULL
+        # `reserved` set regardless of what the model saw here, so a collision the
+        # model didn't know to avoid still gets caught and suffixed deterministically.
+        "reserved_abbreviations": sorted({r["english_abbr"] for r in existing} | {r["english_abbr"] for r in pending})}
     model = current_llm_model()
     try:
-        client = llm_client(timeout=35, max_retries=1)
+        client = llm_client(max_retries=1)
         response = client.chat.completions.parse(model=model, max_completion_tokens=400,
             messages=[{"role": "system", "content": SYSTEM}, {"role": "user", "content": json.dumps(payload, ensure_ascii=False)}],
-            response_format=AbbreviationSuggestion)
+            response_format=AbbreviationSuggestion, **llm_extra_params())
         suggestion = response.choices[0].message.parsed
         if suggestion is None:
             raise ValueError("Missing structured model output")

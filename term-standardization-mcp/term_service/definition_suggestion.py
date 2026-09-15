@@ -12,7 +12,7 @@ options, and otherwise takes it as the user's own final definition verbatim.
 """
 import json
 from . import db
-from .credentials import llm_client, llm_configured, current_llm_model
+from .credentials import llm_client, llm_configured, current_llm_model, llm_extra_params
 from .schemas import DefinitionSuggestion, DefinitionSuggestionResult
 from .search import search
 
@@ -69,10 +69,10 @@ def suggest_definition(term_name: str, clarification_hint: str = "") -> Definiti
         "prior_examples": [{"term": r["name"], "definition": r["definition"]} for r in examples]}
     model = current_llm_model()
     try:
-        client = llm_client(timeout=35, max_retries=1)
+        client = llm_client(max_retries=1)
         response = client.chat.completions.parse(model=model, max_completion_tokens=500,
             messages=[{"role": "system", "content": SYSTEM}, {"role": "user", "content": json.dumps(payload, ensure_ascii=False)}],
-            response_format=DefinitionSuggestion)
+            response_format=DefinitionSuggestion, **llm_extra_params())
         suggestion = response.choices[0].message.parsed
         if suggestion is None:
             raise ValueError("Missing structured model output")

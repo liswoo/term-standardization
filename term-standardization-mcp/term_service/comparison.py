@@ -7,7 +7,7 @@ from .config import CONFIDENCE_THRESHOLD
 from .naming import key
 from .schemas import SearchInput, DefinitionJudgment, ComparisonResult
 from .search import get_term
-from .credentials import llm_client, llm_configured, current_llm_model
+from .credentials import llm_client, llm_configured, current_llm_model, llm_extra_params
 
 POLICY_VERSION = "definition-compare-v1"
 SYSTEM = """You compare Korean standard data-term definitions, not their spellings.
@@ -40,10 +40,10 @@ def compare(new_term, new_definition, existing_term_id):
         return ComparisonResult(**base,relation="UNCERTAIN",confidence=0,reason="의미 비교 모델이 설정되지 않음",
             differences=[],recommended_action="REVIEW_REQUIRED",method="unavailable",error_code="LLM_NOT_CONFIGURED")
     try:
-        client=llm_client(timeout=35,max_retries=1)
+        client=llm_client(max_retries=1)
         response=client.chat.completions.parse(model=model,max_completion_tokens=900,
             messages=[{"role":"system","content":SYSTEM},{"role":"user","content":json.dumps(payload,ensure_ascii=False)}],
-            response_format=DefinitionJudgment)
+            response_format=DefinitionJudgment,**llm_extra_params())
         judgment=response.choices[0].message.parsed
         if judgment is None:
             raise ValueError("Missing structured model output")

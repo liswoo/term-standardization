@@ -14,7 +14,7 @@ AND coin a new word in the same answer.
 import json
 from . import db
 from .abbreviation import ABBR_PATTERN, _dedupe_collision, _normalize
-from .credentials import llm_client, llm_configured, current_llm_model
+from .credentials import llm_client, llm_configured, current_llm_model, llm_extra_params
 from .guideline import search_guideline
 from .naming import key
 from .schemas import WordSuggestion, WordSuggestionResult
@@ -67,10 +67,10 @@ def suggest_word(usage_description: str, clarification_hint: str = "") -> WordSu
         "reserved_abbreviations": sorted(reserved)}
     model = current_llm_model()
     try:
-        client = llm_client(timeout=35, max_retries=1)
+        client = llm_client(max_retries=1)
         response = client.chat.completions.parse(model=model, max_completion_tokens=500,
             messages=[{"role": "system", "content": SYSTEM}, {"role": "user", "content": json.dumps(payload, ensure_ascii=False)}],
-            response_format=WordSuggestion)
+            response_format=WordSuggestion, **llm_extra_params())
         suggestion = response.choices[0].message.parsed
         if suggestion is None:
             raise ValueError("Missing structured model output")
