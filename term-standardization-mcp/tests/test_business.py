@@ -99,7 +99,7 @@ def test_definition_identical_and_failure(catalog,monkeypatch):
     existing_id=catalog["일일섭취칼로리"]
     assert compare("섭취열량","한 사람이 하루 동안 음식으로 실제 섭취한 에너지의 총량",existing_id).relation=="SAME_MEANING"
     import term_service.comparison as module
-    monkeypatch.setattr(module,"api_key",lambda:None)
+    monkeypatch.setattr(module,"llm_configured",lambda:False)
     assert compare("권장칼로리","하루 권장 기준 에너지량",existing_id).relation=="UNCERTAIN"
 
 def payload(name="일일권장칼로리",who="test-user",conv="test-conversation"):
@@ -245,7 +245,7 @@ def test_check_guideline_no_index_is_compliant():
 def test_check_guideline_unavailable_when_no_api_key(monkeypatch):
     import term_service.guideline as module
     insert_guideline_chunk("2-1. 용어 전체 길이 기준","최소 길이는 공백 제외 2자 이상이어야 한다.")
-    monkeypatch.setattr(module,"api_key",lambda:None)
+    monkeypatch.setattr(module,"llm_configured",lambda:False)
     result=module.check_guideline("정보")
     assert result.compliant  # fails open, matching compare()'s UNCERTAIN-not-blocking philosophy
     assert result.method=="unavailable"
@@ -270,7 +270,7 @@ def test_validate_abbreviation_uniqueness(catalog):
 
 def test_suggest_abbreviation_unavailable_when_no_api_key(monkeypatch):
     import term_service.abbreviation as module
-    monkeypatch.setattr(module,"api_key",lambda:None)
+    monkeypatch.setattr(module,"llm_configured",lambda:False)
     result=module.suggest_abbreviation("일일권장열량")
     assert result.abbreviation==""
     assert result.method=="unavailable"
@@ -278,7 +278,7 @@ def test_suggest_abbreviation_unavailable_when_no_api_key(monkeypatch):
 
 def test_suggest_definition_unavailable_when_no_api_key(monkeypatch):
     import term_service.definition_suggestion as module
-    monkeypatch.setattr(module,"api_key",lambda:None)
+    monkeypatch.setattr(module,"llm_configured",lambda:False)
     result=module.suggest_definition("일일권장열량")
     assert result.definition==""
     assert not result.ambiguous

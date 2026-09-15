@@ -239,6 +239,18 @@ svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width:
 .status-dot.status-ok { color: var(--ok); }
 .status-dot.status-error { color: var(--danger); }
 
+.llm-switch { display: flex; gap: 8px; }
+.llm-switch-btn {
+  display: inline-flex; align-items: center; gap: 6px;
+  border: 1px solid var(--border); border-radius: 10px; padding: 8px 14px;
+  font-size: 13px; font-weight: 600; cursor: pointer; font-family: inherit;
+  background: var(--panel); color: var(--text-muted);
+  transition: background .15s, color .15s, border-color .15s;
+}
+.llm-switch-btn:hover:not(:disabled) { border-color: var(--primary); color: var(--text); }
+.llm-switch-btn.is-active { background: var(--primary-soft); border-color: var(--primary); color: var(--primary-dark); }
+.llm-switch-btn:disabled { opacity: .6; cursor: wait; }
+
 /* ── 챗봇 FAB ── */
 .chat-fab {
   position: fixed; right: 28px; bottom: 28px; z-index: 40;

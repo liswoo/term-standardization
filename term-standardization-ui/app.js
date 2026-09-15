@@ -81,6 +81,7 @@ function switchView(view) {
       searchInput.placeholder = "용어 사전 또는 단어사전 화면에서 이름·정의로 검색...";
     }
   }
+  if (view === "settings") refreshLlmStatus();
 }
 
 document.querySelectorAll(".nav-item").forEach((btn) => {
@@ -574,6 +575,78 @@ function openDifyStudio() {
 }
 document.getElementById("dify-studio-nav-btn").addEventListener("click", openDifyStudio);
 document.getElementById("open-dify-studio-btn").addEventListener("click", openDifyStudio);
+
+// ── LLM 모델 전환 (설정 화면) ────────────────────────────────────
+// MCP 서버(term_service/admin_api.py)의 /admin/* 라우트를 Caddy가 이 오리진의
+// 상대경로로 그대로 프록시합니다(tools/Caddyfile) - 위 /v1/* 프록시와 같은 이유.
+const LLM_SWITCH_BUTTONS = {
+  openai: document.getElementById("llm-switch-openai"),
+  local: document.getElementById("llm-switch-local"),
+};
+const llmStatusDot = document.getElementById("llm-status-dot");
+
+function setLlmSwitchButtonsDisabled(disabled) {
+  Object.values(LLM_SWITCH_BUTTONS).forEach((btn) => {
+    if (btn) btn.disabled = disabled;
+  });
+}
+
+function renderLlmProvider(provider, configured) {
+  Object.entries(LLM_SWITCH_BUTTONS).forEach(([key, btn]) => {
+    if (btn) btn.classList.toggle("is-active", key === provider);
+  });
+  if (!llmStatusDot) return;
+  if (configured) {
+    llmStatusDot.textContent = provider === "local" ? "● 로컬 Qwen3 설정됨" : "● OpenAI 설정됨";
+    llmStatusDot.className = "status-dot status-ok";
+  } else {
+    llmStatusDot.textContent = "● 설정 안 됨";
+    llmStatusDot.className = "status-dot status-error";
+  }
+}
+
+async function refreshLlmStatus() {
+  try {
+    const res = await fetch("/admin/llm-status");
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    renderLlmProvider(data.provider, data.configured);
+  } catch {
+    if (llmStatusDot) {
+      llmStatusDot.textContent = "● 확인 실패 (MCP 서버 8100 확인)";
+      llmStatusDot.className = "status-dot status-error";
+    }
+  }
+}
+
+async function switchLlmProvider(provider) {
+  setLlmSwitchButtonsDisabled(true);
+  if (llmStatusDot) {
+    llmStatusDot.textContent = "● 전환 중... (챗플로우 재배포, 10~20초)";
+    llmStatusDot.className = "status-dot";
+  }
+  try {
+    const res = await fetch("/admin/llm-provider", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ provider }),
+    });
+    const data = await res.json();
+    if (!res.ok || !data.ok) throw new Error(data.error || `HTTP ${res.status}`);
+    renderLlmProvider(data.provider, data.configured);
+  } catch (err) {
+    if (llmStatusDot) {
+      llmStatusDot.textContent = `● 전환 실패: ${err.message}`;
+      llmStatusDot.className = "status-dot status-error";
+    }
+  } finally {
+    setLlmSwitchButtonsDisabled(false);
+  }
+}
+
+Object.entries(LLM_SWITCH_BUTTONS).forEach(([key, btn]) => {
+  if (btn) btn.addEventListener("click", () => switchLlmProvider(key));
+});
 
 // ── 채팅 UI 헬퍼 ────────────────────────────────────────────────
 const chatBody = document.getElementById("chat-body");

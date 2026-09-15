@@ -10,11 +10,10 @@ standard_guide.md and re-running `manage.py import-guideline` changes what
 this check enforces, with no code change.
 """
 import json
-from openai import OpenAI
 from . import db
-from .config import LLM_MODEL, EMBEDDING_MODEL
+from .config import EMBEDDING_MODEL
 from .embeddings import embed
-from .credentials import api_key
+from .credentials import llm_client, llm_configured, current_llm_model
 from .schemas import GuidelineChunk, GuidelineJudgment, GuidelineCheckResult
 
 SYSTEM = """You check whether a proposed Korean standard-term name complies with the
@@ -60,17 +59,18 @@ def check_guideline(term_name: str) -> GuidelineCheckResult:
     if not evidence:
         return GuidelineCheckResult(**base, compliant=True,
             reason="검색 가능한 표준화 가이드 문서가 없어 판단을 건너뜀", method="no_guideline_indexed")
-    if not api_key():
+    if not llm_configured():
         return GuidelineCheckResult(**base, compliant=True,
             reason="가이드 판정 모델이 설정되지 않아 판단을 건너뜀", method="unavailable", error_code="LLM_NOT_CONFIGURED")
     payload = {"term_name": term_name,
         "guideline_excerpts": [{"section": e.section, "content": e.content} for e in evidence]}
+    model = current_llm_model()
     try:
-        client = OpenAI(api_key=api_key(), timeout=35, max_retries=1)
-        response = client.responses.parse(model=LLM_MODEL, store=False, max_output_tokens=600,
-            input=[{"role": "system", "content": SYSTEM}, {"role": "user", "content": json.dumps(payload, ensure_ascii=False)}],
-            text_format=GuidelineJudgment)
-        judgment = response.output_parsed
+        client = llm_client(timeout=35, max_retries=1)
+        response = client.chat.completions.parse(model=model, max_completion_tokens=600,
+            messages=[{"role": "system", "content": SYSTEM}, {"role": "user", "content": json.dumps(payload, ensure_ascii=False)}],
+            response_format=GuidelineJudgment)
+        judgment = response.choices[0].message.parsed
         if judgment is None:
             raise ValueError("Missing structured model output")
         # Deterministic guardrail: by the rule's own definition, a genuine match
@@ -90,10 +90,10 @@ def check_guideline(term_name: str) -> GuidelineCheckResult:
             # quoted anyway - reporting a violation ("체온측정값" -> suggested
             # "체온측정치") for a term this guardrail had just cleared.
             judgment_data.update(compliant=True, violated_section="", reason="", suggested_term="")
-        return GuidelineCheckResult(**base, **judgment_data, method="structured_llm_rag", model=LLM_MODEL)
+        return GuidelineCheckResult(**base, **judgment_data, method="structured_llm_rag", model=model)
     except Exception as error:
         # Fail open, matching compare()'s UNCERTAIN-not-blocking philosophy: a checker
         # outage must never silently prevent every registration.
         return GuidelineCheckResult(**base, compliant=True,
             reason="가이드 판정 요청 실패로 자동 판단할 수 없어 통과 처리함", method="unavailable",
-            model=LLM_MODEL, error_code=type(error).__name__)
+            model=model, error_code=type(error).__name__)

@@ -298,13 +298,14 @@ def register_term(standard_name: str, definition: str, synonyms: list[str] | Non
 @tool
 def terminology_health() -> dict:
     """Report configuration and real catalog counts without exposing secrets."""
-    from .credentials import api_key
-    from .config import EMBEDDING_MODEL, LLM_MODEL
+    from .credentials import llm_configured, current_llm_model, active_provider
+    from .config import EMBEDDING_MODEL
     with db.connect() as conn:
         count=conn.execute("SELECT count(*) AS count FROM standard_terms WHERE status='ACTIVE'").fetchone()["count"]
         domains=conn.execute("SELECT count(*) AS count FROM domains WHERE status='ACTIVE'").fetchone()["count"]
     return {"ok":True,"catalog_count":count,"domain_count":domains,"embedding_model":EMBEDDING_MODEL,
-        "definition_model":LLM_MODEL,"definition_model_configured":bool(api_key()),
+        "definition_model":current_llm_model(),"llm_provider":active_provider(),
+        "definition_model_configured":llm_configured(),
         "catalog_ready":bool(count),"warning":None if count else "REFERENCE_DATA_IMPORT_REQUIRED"}
 
 @tool

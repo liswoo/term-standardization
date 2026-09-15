@@ -20,9 +20,22 @@ import json
 from pathlib import Path
 import yaml
 from dify_mcp_config import MCP_PROVIDER_FIELDS as provider
+from term_service.config import OPENAI_MODEL, LOCAL_LLM_MODEL
+from term_service.credentials import active_provider
 
 CLASSIFY_MODE = "split"  # "split" or "monolithic" - see module docstring.
-CLASSIFY_MODEL = "gpt-4o-mini"
+# Same switch the admin UI's Settings screen writes to (term_service/credentials.py
+# active_provider()) - one source of truth so the MCP business-logic calls and this
+# chatflow's intent/reply nodes never point at different models. The Ollama model
+# named here must already be registered in Dify (see .runtime/register_ollama_model.py
+# pattern used during setup) before publishing against it.
+_PROVIDER_PROFILES = {
+    "openai": {"provider": "langgenius/openai/openai", "model": OPENAI_MODEL},
+    "local": {"provider": "langgenius/ollama/ollama", "model": LOCAL_LLM_MODEL},
+}
+_active = _PROVIDER_PROFILES[active_provider()]
+CLASSIFY_PROVIDER = _active["provider"]
+CLASSIFY_MODEL = _active["model"]
 
 ROOT=Path(__file__).parent
 original=yaml.safe_load((ROOT/"templates/dify_app_base.yaml").read_text(encoding="utf-8"))
@@ -42,8 +55,13 @@ def tool(ident,name,params):
     return node(ident,name,"tool",data)
 
 def llm(ident,title,model,prompt,user):
-    return node(ident,title,"llm",{"model":{"provider":"langgenius/openai/openai","name":model,"mode":"chat",
-        "completion_params":{"temperature":0.1,"max_tokens":1300}},
+    completion_params={"temperature":0.1,"max_tokens":1300}
+    if CLASSIFY_PROVIDER=="langgenius/ollama/ollama":
+        # Qwen3 is a hybrid thinking model - without this its raw <think>...</think>
+        # reasoning leaks straight into the chat reply text instead of staying internal.
+        completion_params["think"]=False
+    return node(ident,title,"llm",{"model":{"provider":CLASSIFY_PROVIDER,"name":model,"mode":"chat",
+        "completion_params":completion_params},
         "prompt_template":[{"id":ident+"s","role":"system","text":prompt},{"id":ident+"u","role":"user","text":user}],
         "context":{"enabled":False,"variable_selector":[]},"vision":{"enabled":False}})
 

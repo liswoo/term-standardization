@@ -265,6 +265,23 @@
               열기
             </button>
           </div>
+          <div class="settings-row">
+            <div>
+              <strong>LLM 모델</strong>
+              <p class="muted">가이드라인 판정·정의 제안 등 업무 로직과 챗봇 의도분류·응답 생성에 쓸 모델입니다. 전환 시 챗플로우를 재배포하므로 10~20초 걸립니다.</p>
+            </div>
+            <div class="llm-switch" id="llm-switch">
+              <button type="button" class="llm-switch-btn" id="llm-switch-openai" data-provider="openai">OpenAI (gpt-4o-mini)</button>
+              <button type="button" class="llm-switch-btn" id="llm-switch-local" data-provider="local">로컬 Qwen3 (Ollama)</button>
+            </div>
+          </div>
+          <div class="settings-row">
+            <div>
+              <strong>LLM 상태</strong>
+              <p class="muted">현재 활성화된 모델의 실제 설정 여부(API 키/로컬 서버 주소)</p>
+            </div>
+            <span class="status-dot" id="llm-status-dot">● 확인 전</span>
+          </div>
         </div>
       </section>
 

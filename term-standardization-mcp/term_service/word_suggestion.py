@@ -12,11 +12,9 @@ ambiguous/name in WordSuggestion) so the model can't claim a reuse-worthy match
 AND coin a new word in the same answer.
 """
 import json
-from openai import OpenAI
 from . import db
 from .abbreviation import ABBR_PATTERN, _dedupe_collision, _normalize
-from .config import LLM_MODEL
-from .credentials import api_key
+from .credentials import llm_client, llm_configured, current_llm_model
 from .guideline import search_guideline
 from .naming import key
 from .schemas import WordSuggestion, WordSuggestionResult
@@ -53,7 +51,7 @@ def _candidate_existing_words(usage_description: str, limit: int = 8):
     return matches
 
 def suggest_word(usage_description: str, clarification_hint: str = "") -> WordSuggestionResult:
-    if not api_key():
+    if not llm_configured():
         return WordSuggestionResult(rationale="추천 모델이 설정되지 않음", method="unavailable", error_code="LLM_NOT_CONFIGURED")
     candidates = _candidate_existing_words(usage_description)
     evidence = search_guideline("표준단어 및 영문 약어 작성 규칙: " + usage_description, top_k=3)
@@ -67,12 +65,13 @@ def suggest_word(usage_description: str, clarification_hint: str = "") -> WordSu
             "abbreviation": c["english_abbr"], "similarity": c.get("similarity")} for c in candidates],
         "guideline_excerpts": [{"section": e.section, "content": e.content} for e in evidence],
         "reserved_abbreviations": sorted(reserved)}
+    model = current_llm_model()
     try:
-        client = OpenAI(api_key=api_key(), timeout=35, max_retries=1)
-        response = client.responses.parse(model=LLM_MODEL, store=False, max_output_tokens=500,
-            input=[{"role": "system", "content": SYSTEM}, {"role": "user", "content": json.dumps(payload, ensure_ascii=False)}],
-            text_format=WordSuggestion)
-        suggestion = response.output_parsed
+        client = llm_client(timeout=35, max_retries=1)
+        response = client.chat.completions.parse(model=model, max_completion_tokens=500,
+            messages=[{"role": "system", "content": SYSTEM}, {"role": "user", "content": json.dumps(payload, ensure_ascii=False)}],
+            response_format=WordSuggestion)
+        suggestion = response.choices[0].message.parsed
         if suggestion is None:
             raise ValueError("Missing structured model output")
         data = suggestion.model_dump()
@@ -100,9 +99,9 @@ def suggest_word(usage_description: str, clarification_hint: str = "") -> WordSu
                 if not (data["name"] and ABBR_PATTERN.fullmatch(abbr) and data["definition"]):
                     raise ValueError("Model returned an incomplete new-word proposal")
                 data["english_abbr"] = _dedupe_collision(abbr, reserved)
-        return WordSuggestionResult(**data, method="structured_llm_rag", model=LLM_MODEL)
+        return WordSuggestionResult(**data, method="structured_llm_rag", model=model)
     except Exception as error:
         # Fail open: the user can still describe the meaning again or type their own
         # word, so a suggestion outage must never block the word-request sub-flow.
         return WordSuggestionResult(rationale="추천 요청 실패로 자동 생성할 수 없음", method="unavailable",
-            model=LLM_MODEL, error_code=type(error).__name__)
+            model=model, error_code=type(error).__name__)

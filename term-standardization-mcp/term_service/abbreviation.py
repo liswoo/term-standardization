@@ -21,10 +21,8 @@ were already resolved, so it only has to guess the new part).
 """
 import json
 import re
-from openai import OpenAI
 from . import db
-from .config import LLM_MODEL
-from .credentials import api_key
+from .credentials import llm_client, llm_configured, current_llm_model
 from .guideline import search_guideline
 from .naming import key, segment_words
 from .schemas import AbbreviationSuggestion, AbbreviationResult
@@ -93,7 +91,7 @@ def suggest_abbreviation(term_name: str, extra_words: list[dict] | None = None) 
             rationale="표준단어 사전 완전 분해로 결정론적 조합: " + "+".join(w["name"] for w in matched_words),
             method="deterministic_word_dictionary")
     evidence = search_guideline("영문 약어 작성 규칙과 예시: " + term_name, top_k=3)
-    if not api_key():
+    if not llm_configured():
         return AbbreviationResult(abbreviation="", rationale="추천 모델이 설정되지 않음",
             method="unavailable", error_code="LLM_NOT_CONFIGURED")
     payload = {"term_name": term_name,
@@ -104,12 +102,13 @@ def suggest_abbreviation(term_name: str, extra_words: list[dict] | None = None) 
         # reuse these abbreviations verbatim and only guess the remaining part.
         "resolved_words": [{"word": w["name"], "abbreviation": w["english_abbr"]} for w in matched_words],
         "reserved_abbreviations": sorted(reserved)}
+    model = current_llm_model()
     try:
-        client = OpenAI(api_key=api_key(), timeout=35, max_retries=1)
-        response = client.responses.parse(model=LLM_MODEL, store=False, max_output_tokens=400,
-            input=[{"role": "system", "content": SYSTEM}, {"role": "user", "content": json.dumps(payload, ensure_ascii=False)}],
-            text_format=AbbreviationSuggestion)
-        suggestion = response.output_parsed
+        client = llm_client(timeout=35, max_retries=1)
+        response = client.chat.completions.parse(model=model, max_completion_tokens=400,
+            messages=[{"role": "system", "content": SYSTEM}, {"role": "user", "content": json.dumps(payload, ensure_ascii=False)}],
+            response_format=AbbreviationSuggestion)
+        suggestion = response.choices[0].message.parsed
         if suggestion is None:
             raise ValueError("Missing structured model output")
         abbr = _normalize(suggestion.abbreviation)
@@ -117,10 +116,10 @@ def suggest_abbreviation(term_name: str, extra_words: list[dict] | None = None) 
             raise ValueError("Model returned a non-conforming abbreviation")
         abbr = _dedupe_collision(abbr, reserved)
         return AbbreviationResult(abbreviation=abbr, rationale=suggestion.rationale,
-            method="structured_llm_rag", model=LLM_MODEL)
+            method="structured_llm_rag", model=model)
     except Exception as error:
         return AbbreviationResult(abbreviation="", rationale="추천 요청 실패로 자동 생성할 수 없음",
-            method="unavailable", model=LLM_MODEL, error_code=type(error).__name__)
+            method="unavailable", model=model, error_code=type(error).__name__)
 
 def validate_abbreviation(raw: str) -> tuple[str | None, str | None]:
     """Returns (normalized_value, None) if acceptable, or (None, error_code)."""

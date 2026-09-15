@@ -11,10 +11,8 @@ as answering the clarification when it exactly matches one of the offered
 options, and otherwise takes it as the user's own final definition verbatim.
 """
 import json
-from openai import OpenAI
 from . import db
-from .config import LLM_MODEL
-from .credentials import api_key
+from .credentials import llm_client, llm_configured, current_llm_model
 from .schemas import DefinitionSuggestion, DefinitionSuggestionResult
 from .search import search
 
@@ -63,18 +61,19 @@ def _prior_examples(term_name: str, limit: int = 5):
     return rows
 
 def suggest_definition(term_name: str, clarification_hint: str = "") -> DefinitionSuggestionResult:
-    if not api_key():
+    if not llm_configured():
         return DefinitionSuggestionResult(ambiguous=False, definition="",
             rationale="추천 모델이 설정되지 않음", method="unavailable", error_code="LLM_NOT_CONFIGURED")
     examples = _prior_examples(term_name)
     payload = {"term_name": term_name, "clarification_hint": clarification_hint,
         "prior_examples": [{"term": r["name"], "definition": r["definition"]} for r in examples]}
+    model = current_llm_model()
     try:
-        client = OpenAI(api_key=api_key(), timeout=35, max_retries=1)
-        response = client.responses.parse(model=LLM_MODEL, store=False, max_output_tokens=500,
-            input=[{"role": "system", "content": SYSTEM}, {"role": "user", "content": json.dumps(payload, ensure_ascii=False)}],
-            text_format=DefinitionSuggestion)
-        suggestion = response.output_parsed
+        client = llm_client(timeout=35, max_retries=1)
+        response = client.chat.completions.parse(model=model, max_completion_tokens=500,
+            messages=[{"role": "system", "content": SYSTEM}, {"role": "user", "content": json.dumps(payload, ensure_ascii=False)}],
+            response_format=DefinitionSuggestion)
+        suggestion = response.choices[0].message.parsed
         if suggestion is None:
             raise ValueError("Missing structured model output")
         data = suggestion.model_dump()
@@ -91,10 +90,10 @@ def suggest_definition(term_name: str, clarification_hint: str = "") -> Definiti
                 raise ValueError("Model returned neither a definition nor a valid clarifying question")
         else:
             data["definition"] = ""
-        return DefinitionSuggestionResult(**data, method="structured_llm_rag", model=LLM_MODEL)
+        return DefinitionSuggestionResult(**data, method="structured_llm_rag", model=model)
     except Exception as error:
         # Fail open: the user can still always type their own definition, so a
         # suggestion outage must never block reaching awaiting_definition.
         return DefinitionSuggestionResult(ambiguous=False, definition="",
             rationale="추천 요청 실패로 자동 생성할 수 없음", method="unavailable",
-            model=LLM_MODEL, error_code=type(error).__name__)
+            model=model, error_code=type(error).__name__)

@@ -10,6 +10,15 @@
 		reverse_proxy localhost:80
 	}
 
+	# MCP server's admin routes (term_service/admin_api.py) - the Settings
+	# screen's OpenAI/local-model switch. Same same-origin reasoning as /v1/*
+	# above; the MCP server runs directly on this host (not in Docker), so
+	# localhost is correct here even though Dify's own containers reach it via
+	# host.docker.internal.
+	handle /admin/* {
+		reverse_proxy localhost:8100
+	}
+
 	# term-standardization-ui static frontend. UI_DIR is exported by
 	# poc-start.ps1 / poc-start.sh before launching Caddy, so this file
 	# doesn't hardcode an OS-specific absolute path.
