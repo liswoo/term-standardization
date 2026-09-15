@@ -16,7 +16,7 @@ function Start-QuickTunnel {
     # Start-Process refuses to redirect both streams to the same file ("RedirectStandardOutput
     # and RedirectStandardError are same"), so only stderr - the stream that actually
     # matters here - is redirected.
-    $process=Start-Process -FilePath 'cloudflared' -ArgumentList @('tunnel','--url',$Target) `
+    $process=Start-Process -FilePath (Join-Path $TOOLS 'cloudflared.exe') -ArgumentList @('tunnel','--url',$Target) `
         -WindowStyle Hidden -RedirectStandardError $LogFile -PassThru
     $process.Id | Set-Content -LiteralPath $PidFile
     for ($i=0; $i -lt 30; $i++) {
@@ -39,7 +39,7 @@ Write-Output '[2/4] 용어표준화 DB + MCP 서버...'
 Write-Output '[3/4] Caddy (프론트엔드 + Dify API 프록시, :8090)...'
 if (!(Get-NetTCPConnection -LocalPort 8090 -State Listen -ErrorAction SilentlyContinue)) {
     $env:UI_DIR=Join-Path $ROOT 'term-standardization-ui'
-    $process=Start-Process -FilePath 'caddy' -ArgumentList @('run','--config',(Join-Path $TOOLS 'Caddyfile')) `
+    $process=Start-Process -FilePath (Join-Path $TOOLS 'caddy.exe') -ArgumentList @('run','--config',(Join-Path $TOOLS 'Caddyfile')) `
         -WindowStyle Hidden -RedirectStandardOutput (Join-Path $RUNTIME 'caddy.log') -RedirectStandardError (Join-Path $RUNTIME 'caddy-error.log') -PassThru
     $process.Id | Set-Content -LiteralPath (Join-Path $RUNTIME 'caddy.pid')
     Start-Sleep -Seconds 2

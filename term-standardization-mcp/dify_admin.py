@@ -119,9 +119,35 @@ print('RESULT='+json.dumps({{'status':status,'tool_count':tool_count,'server_url
         if not key:
             raise SystemExit("OPENAI_API_KEY is empty in .env - set it before running this action.")
         result=execute(f"""
+import time
 from services.model_provider_service import ModelProviderService
+from services.errors.app_model_config import ProviderNotFoundError
+from core.helper import marketplace as mp
+from core.plugin.plugin_service import PluginService
+from core.plugin.entities.plugin_daemon import PluginInstallTaskStatus
+
 mps=ModelProviderService()
-existing=mps.get_provider_credential(tenant_id=tenant_id,provider='langgenius/openai/openai')
+try:
+    existing=mps.get_provider_credential(tenant_id=tenant_id,provider='langgenius/openai/openai')
+except ProviderNotFoundError:
+    # A fresh Dify instance doesn't ship the OpenAI model provider - it's a
+    # marketplace plugin now (Dify 1.17+), not bundled. Install it before
+    # trying to attach credentials, so this stays a one-command setup.
+    manifests={{m.plugin_id:m for m in mp.batch_fetch_plugin_manifests(['langgenius/openai'])}}
+    identifier=manifests['langgenius/openai'].latest_package_identifier
+    install=PluginService.install_from_marketplace_pkg(tenant_id,[identifier])
+    if not install.all_installed:
+        task=None
+        for _ in range(60):
+            task=PluginService.fetch_install_task(tenant_id,install.task_id)
+            if task.status in (PluginInstallTaskStatus.Success,PluginInstallTaskStatus.Failed):
+                break
+            time.sleep(3)
+        else:
+            raise SystemExit('OpenAI plugin install timed out')
+        if task.status==PluginInstallTaskStatus.Failed:
+            raise SystemExit('OpenAI plugin install failed: '+str([p.message for p in task.plugins]))
+    existing=None
 if existing:
     status='already_configured'
 else:
