@@ -111,7 +111,7 @@ curl -sN -X POST http://localhost:8090/v1/chat-messages \
 
 `start.sh`/`start.ps1`이 `docker compose up`에 이어 매번 `manage.py init-db` → `import-catalog`(시나리오 12건) → `import-guideline`을 자동 실행합니다(커밋 `49beeb1`). DB는 `compose.yaml`의 `terms_data` Docker 볼륨이라 컴퓨터마다 독립이고, Mac↔Windows를 오가거나 새로 클론하면 매번 빈 상태로 시작하지만 위 자동 시딩 덕분에 즉시 시나리오 데이터가 채워집니다.
 
-**실제 정부 표준 데이터(용어 13,168·단어 3,281·도메인 126)는 자동 시딩 대상이 아닙니다** — data.go.kr의 "공공데이터 공통표준" xlsx를 받아서 `manage.py import-standard-catalog <xlsx경로>` 를 수동으로 1회(또는 새 차수가 나올 때마다) 실행해야 합니다. 이 명령은:
+**실제 정부 표준 데이터(용어 13,168·단어 3,281·도메인 126)는 자동 시딩 대상이 아닙니다** — 원본 xlsx(data.go.kr "공공데이터 공통표준")는 `term-standardization-mcp/data/`에 저장소와 함께 커밋되어 있으므로, `manage.py import-standard-catalog "data/공공데이터 공통표준(2025.11월).xlsx"` 를 수동으로 1회(또는 data.go.kr에 새 개정판이 올라와 그 파일을 교체했을 때) 실행해야 합니다. 이 명령은:
 - **재실행해도 안전**합니다(idempotent) — 이름+정의가 안 바뀐 행은 재임베딩도 안 하고 `updated_at`도 안 건드립니다(위 스케일 버그 절 참고 — `catalog_fingerprint()`가 모든 행의 `updated_at`을 해시하므로, 안 바뀐 행까지 건드리면 진행 중이던 모든 등록이 무효화됩니다).
 - **폐기(deprecated) 행을 삭제하지 않고 `status='DEPRECATED'`로만 표시**합니다 — 이미 등록된 용어의 도메인 FK가 깨지지 않게. 모든 조회 경로(`search.py`/`conversation.py`/`tools.py`)는 `status='ACTIVE'`만 봅니다.
 - 도메인 → 단어 → 용어 순으로 적재하고, 용어의 도메인 코드가 도메인 시트에 없으면(원본 데이터 불일치) 그 용어만 건너뛰고 개수를 보고합니다.
@@ -167,8 +167,8 @@ cd term-standardization-mcp
 # 목록조회 워크플로우(용어사전/단어사전/도메인관리 화면) 수정 후 - 1단계로 끝남
 cd term-standardization-mcp && .venv/bin/python scripts/publish_list_terms_workflow.py
 
-# 실제 정부 표준 데이터 적재/재동기화 (data.go.kr "공공데이터 공통표준" xlsx)
-cd term-standardization-mcp && .venv/bin/python manage.py import-standard-catalog "<xlsx 경로>"
+# 실제 정부 표준 데이터 적재/재동기화 (xlsx는 term-standardization-mcp/data/에 커밋되어 있음)
+cd term-standardization-mcp && .venv/bin/python manage.py import-standard-catalog "data/공공데이터 공통표준(2025.11월).xlsx"
 
 # 테스트
 cd term-standardization-mcp && .venv/bin/python -m pytest -q

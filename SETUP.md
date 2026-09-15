@@ -174,4 +174,28 @@ DB는 `compose.yaml`의 `terms_data`라는 Docker 볼륨에 저장되며, 이 �
 2. `manage.py import-catalog data/scenario_catalog.json` — 시나리오 용어 12개, 도메인, 국제표준약어 채우기
 3. `manage.py import-guideline data/standard_guide.md` — 표준가이드 RAG 검사용 벡터 청크 채우기
 
-즉 새 컴퓨터에서 처음 `poc-start.sh`/`poc-start.ps1`을 실행해도 시나리오 데이터와 가이드라인 검사가 곧바로 동작합니다. 다만 실제로 접수된 등록 신청(`registration_requests`)이나 대화 상태(`conversation_state`)는 그 컴퓨터에서 생성된 것만 남아 있고 다른 설치본으로 옮겨지지 않습니다 — 데모/검증용으로는 문제 없지만, 실제 운영 환경이라면 별도의 DB 백업·복제 전략이 필요합니다.
+즉 새 컴퓨터에서 처음 `poc-start.sh`/`poc-start.ps1`을 실행해도 시나리오 데이터와 가이드라인 검사가 곧바로 동작합니다. **이 자동 시딩에는 실제 정부표준 데이터(용어 13,000여 건)가 포함되지 않습니다** — 아래 절을 반드시 이어서 진행하세요.
+
+다만 실제로 접수된 등록 신청(`registration_requests`)이나 대화 상태(`conversation_state`)는 그 컴퓨터에서 생성된 것만 남아 있고 다른 설치본으로 옮겨지지 않습니다 — 데모/검증용으로는 문제 없지만, 실제 운영 환경이라면 별도의 DB 백업·복제 전략이 필요합니다.
+
+## 6. 실제 정부표준 데이터 적재 (강력 권장)
+
+위 자동 시딩은 시나리오용 가상 데이터(용어 12건)만 채웁니다. 실제 표준(용어 13,000여 건·단어 3,000여 건·도메인 126건)을 채우려면 컴퓨터마다 아래 절차를 한 번 직접 실행해야 합니다.
+
+원본 xlsx(`공공데이터 공통표준(2025.11월).xlsx`, [공공데이터포털](https://www.data.go.kr) 배포본)는 `term-standardization-mcp/data/`에 저장소와 함께 커밋되어 있으므로 따로 내려받을 필요 없이 바로 적재하면 됩니다.
+
+**Mac/Linux**
+```bash
+cd term-standardization-mcp
+.venv/bin/python manage.py import-standard-catalog "data/공공데이터 공통표준(2025.11월).xlsx"
+```
+
+**Windows (PowerShell)**
+```powershell
+cd term-standardization-mcp
+.venv\Scripts\python.exe manage.py import-standard-catalog "data/공공데이터 공통표준(2025.11월).xlsx"
+```
+
+몇 분 정도 걸립니다(모든 용어/단어를 새로 임베딩하는 최초 1회 한정 — 재실행 시 안 바뀐 행은 건너뜁니다). 완료되면 대시보드의 "등록된 표준 용어" 건수가 13,000대로 올라갑니다. 이 명령의 idempotency·폐기(deprecated) 행 처리 방식 등 자세한 내용은 [CLAUDE.md](CLAUDE.md)의 "DB 시딩은 매 실행마다 자동" 절을 참고하세요.
+
+data.go.kr에 더 최신 개정판이 올라오면 그 xlsx로 저장소의 파일을 교체하고 같은 명령을 다시 실행하면 됩니다(재실행해도 안전).
