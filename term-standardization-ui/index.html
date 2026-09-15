@@ -299,8 +299,16 @@
     <div class="chat-body" id="chat-body">
       <div class="msg msg-bot">
         <div class="bubble">
-          등록하려는 용어를 알려주세요. 현재는 시나리오용 가상 표준용어 데이터로 동작합니다.<br />
-          예: <em>"일일권장칼로리를 신규 용어로 등록해줘"</em> · <em>"BMI를 신규 용어로 등록해줘"</em>
+          무엇을 도와드릴까요? 아래 중 하나를 선택하거나 자유롭게 말씀해주세요.<br />
+          ① 용어를 추천해주세요 - 개념을 설명하면 이미 있는 표준용어를 찾아드려요<br />
+          ② 용어를 등록할래요 - 등록하려는 용어명이 이미 있을 때<br />
+          ③ 단어를 등록할래요 - 표준단어 단위로 새로 만들고 싶을 때<br />
+          정부 표준 데이터와 일부 시나리오용 가상 데이터가 함께 있습니다.
+          <div class="option-row" id="opening-option-row">
+            <button type="button" class="option-chip" data-value="용어를 추천해주세요">용어를 추천해주세요</button>
+            <button type="button" class="option-chip" data-value="용어를 등록할래요">용어를 등록할래요</button>
+            <button type="button" class="option-chip" data-value="단어를 등록할래요">단어를 등록할래요</button>
+          </div>
         </div>
       </div>
     </div>

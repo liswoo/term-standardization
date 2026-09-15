@@ -57,7 +57,7 @@ def _dedupe_collision(abbr: str, reserved: set[str]) -> str:
         i += 1
     return f"{base}_{i}"
 
-def suggest_abbreviation(term_name: str) -> AbbreviationResult:
+def suggest_abbreviation(term_name: str, extra_words: list[dict] | None = None) -> AbbreviationResult:
     with db.connect() as conn:
         # Collision set must cover every assigned abbreviation (cheap - one column),
         # but the LLM-facing grounding examples below are capped: with a real
@@ -80,6 +80,12 @@ def suggest_abbreviation(term_name: str) -> AbbreviationResult:
         word_rows = conn.execute(
             "SELECT normalized_name,name,english_abbr FROM standard_words WHERE status='ACTIVE'").fetchall()
     word_lookup = {r["normalized_name"]: r for r in word_rows}
+    # A word this same term just had submitted for review (not yet ACTIVE, so not in
+    # word_rows above) must still be treated as resolved here - otherwise this falls
+    # through to the LLM fallback and invents a totally unrelated abbreviation for the
+    # very word it just proposed, leaving two inconsistent English names for one concept.
+    for w in extra_words or []:
+        word_lookup[w["normalized_name"]] = w
     matched_words, full_match = segment_words(term_name, word_lookup)
     if full_match:
         abbr = _dedupe_collision("_".join(w["english_abbr"] for w in matched_words), reserved)

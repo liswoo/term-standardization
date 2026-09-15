@@ -579,12 +579,25 @@ document.getElementById("open-dify-studio-btn").addEventListener("click", openDi
 const chatBody = document.getElementById("chat-body");
 const CHAT_INITIAL_HTML = chatBody.innerHTML;
 
+// 첫 인사말의 3개 버튼은 정적 HTML이라 클릭 리스너가 없습니다 - innerHTML을
+// 다시 써넣을 때마다(최초 로드, 대화 초기화) 새로 바인딩해줘야 합니다.
+function wireOpeningOptions() {
+  chatBody.querySelectorAll("#opening-option-row .option-chip").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      chatBody.querySelectorAll("#opening-option-row .option-chip").forEach((b) => (b.disabled = true));
+      submitChatMessage(btn.dataset.value);
+    });
+  });
+}
+wireOpeningOptions();
+
 // 여러 용어를 연달아 등록하다 보면 이전 대화의 상태(선택한 도메인, 추천받은
 // 정의/약어 등)가 새 요청과 뒤섞여 엉뚱한 답변으로 이어질 수 있습니다 - 새
 // Dify conversation_id로 완전히 새로 시작해서 그 가능성을 원천 차단합니다.
 document.getElementById("chat-reset").addEventListener("click", () => {
   chatConversationId = null;
   chatBody.innerHTML = CHAT_INITIAL_HTML;
+  wireOpeningOptions();
   setChatStatus("대기 중", undefined);
   chatInput.focus();
 });
@@ -689,6 +702,47 @@ function addOptionButtons(bubbleWrap, options, onPick) {
     });
   });
   scrollChatToBottom();
+}
+
+// 결과/막힘 등 "끝난 지점"(터미널 스테이지)에서 다음 행동을 버튼으로 제시합니다.
+// 두 버튼 모두 실제 서버 왕복을 거칩니다 - "사용/종료" 쪽을 로컬에서만 처리하도록
+// 했다가, 서버 쪽 stage가 그 터미널 스테이지에 영영 멈춰 있게 되어 그 다음
+// 무관한 메시지에도 이 stage의 카드/서술이 계속 재등장하는 버그로 이어진 적이
+// 있습니다(실사용 중 재현됨). "여기서 마칠게요"는 이미 있는 restart 인텐트로
+// 보내 상태를 실제로 awaiting_term_direct까지 초기화합니다. 전송값은 라벨과
+// 무관하게 고정된 값들로만 보내서, 분류 LLM이 어떤 표현으로도 헷갈리지 않게
+// 합니다(build_chatflow.py CLASSIFY_TERMINAL_RULE 참고).
+const CONTINUE_TERM_VALUE = "다른 용어를 등록할래요";
+const CONTINUE_WORD_VALUE = "다른 단어를 등록할래요";
+const CLOSE_VALUE = "여기서 마칠게요";
+
+function terminalActionsFor(mcpState) {
+  if (!mcpState) return null;
+  switch (mcpState.stage) {
+    case "term_lookup_result": {
+      const hasMatches = !!(mcpState.term_lookup || {}).matches?.length;
+      const bLabel = hasMatches ? "이 용어를 사용할게요" : "여기서 마칠게요";
+      return [{ label: "새 용어를 등록할래요", value: CONTINUE_TERM_VALUE }, { label: bLabel, value: CLOSE_VALUE }];
+    }
+    case "existing_term_found":
+    case "definition_blocked":
+      return [{ label: "새 용어를 등록할래요", value: CONTINUE_TERM_VALUE }, { label: "이 용어를 사용할게요", value: CLOSE_VALUE }];
+    case "pending_request_found":
+      return [{ label: "새 용어를 등록할래요", value: CONTINUE_TERM_VALUE }, { label: "알겠어요, 기다릴게요", value: CLOSE_VALUE }];
+    case "cancelled":
+    case "registration_failed":
+      return [{ label: "새 용어를 등록할래요", value: CONTINUE_TERM_VALUE }, { label: "여기서 마칠게요", value: CLOSE_VALUE }];
+    case "submitted":
+      return [{ label: "새 용어도 등록할래요", value: CONTINUE_TERM_VALUE }, { label: "여기서 마칠게요", value: CLOSE_VALUE }];
+    case "word_reused":
+    case "word_submitted":
+      return [{ label: "새 단어도 등록할래요", value: CONTINUE_WORD_VALUE }, { label: "여기서 마칠게요", value: CLOSE_VALUE }];
+    case "word_registration_failed":
+    case "word_request_blocked":
+      return [{ label: "새 단어를 등록할래요", value: CONTINUE_WORD_VALUE }, { label: "여기서 마칠게요", value: CLOSE_VALUE }];
+    default:
+      return null;
+  }
 }
 
 // ── 구조화된 데이터 렌더링 ────────────────────────────────────
@@ -827,6 +881,11 @@ function renderPendingCard(mcpState) {
   ]);
 }
 
+const REGISTRATION_STATUS_LABEL = {
+  PENDING_REVIEW: "검토 대기 (PENDING_REVIEW)",
+  WAITING_FOR_WORD_APPROVAL: "단어 승인 대기 (WAITING_FOR_WORD_APPROVAL)",
+};
+
 function renderRegistrationCard(mcpState) {
   const reg = mcpState.registration;
   if (!reg) return "";
@@ -836,7 +895,7 @@ function renderRegistrationCard(mcpState) {
       ["용어명", reg.term_name || mcpState.term_name],
       ["도메인", reg.domain || mcpState.domain, true],
       ["영문 약어", reg.english_abbr || mcpState.english_abbr, true],
-      ["상태", "검토 대기 (PENDING_REVIEW)"],
+      ["상태", REGISTRATION_STATUS_LABEL[reg.status] || "검토 대기 (PENDING_REVIEW)"],
     ], "summary-card-ok");
   }
   return summaryCard([["실패 사유 코드", reg.code, true]], "summary-card-fail");
@@ -886,6 +945,22 @@ function renderWordResultCard(mcpState) {
   return "";
 }
 
+function renderTermLookupTable(mcpState) {
+  const matches = (mcpState.term_lookup || {}).matches || [];
+  if (!matches.length) return "";
+  return `<div class="table-wrap"><table class="data-table">
+    <thead><tr><th>용어명</th><th>영문 약어</th><th>도메인</th><th>정의</th><th>유사도</th></tr></thead>
+    <tbody>${matches.map((m) => `
+      <tr>
+        <td><strong>${escapeHtml(m.name)}</strong></td>
+        <td><span class="mono">${escapeHtml(m.english_abbr || "-")}</span></td>
+        <td><span class="mono">${escapeHtml(m.domain || "-")}</span></td>
+        <td class="cell-def">${escapeHtml(m.definition || "")}</td>
+        <td>${Math.round((m.similarity || 0) * 100)}%</td>
+      </tr>`).join("")}</tbody>
+  </table></div>`;
+}
+
 // stage별로 어떤 구조화 블록을 붙일지 결정합니다. 서버(build_chatflow.py의
 // RENDER 프롬프트)는 이 stage들에서 같은 내용을 문장으로 다시 나열하지
 // 않도록 되어 있어, 프론트엔드 표/카드가 유일한 상세 정보 출처입니다.
@@ -894,6 +969,8 @@ function renderStructuredBlock(mcpState) {
   switch (mcpState.stage) {
     case "awaiting_domain_choice":
       return renderDomainTable(mcpState.domains);
+    case "term_lookup_result":
+      return renderTermLookupTable(mcpState);
     case "awaiting_definition":
       return renderDefinitionSuggestionCard(mcpState);
     case "awaiting_confirm":
@@ -1075,6 +1152,9 @@ async function submitChatMessage(raw) {
 
     if (options && options.length) {
       addOptionButtons(bubble, options, (value) => submitChatMessage(value));
+    } else {
+      const terminalActions = terminalActionsFor(mcpState);
+      if (terminalActions) addOptionButtons(bubble, terminalActions, (value) => submitChatMessage(value));
     }
 
     if (mcpState?.stage === "submitted") {

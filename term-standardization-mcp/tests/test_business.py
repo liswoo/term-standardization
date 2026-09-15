@@ -2,7 +2,7 @@ import os
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 import pytest
-from term_service import db, registration, conversation
+from term_service import db, registration, word_registration, conversation
 from term_service.config import ROOT
 from term_service.naming import validate, morphology, strip_trailing_particle
 from term_service.search import search, domain_usage, validate_name
@@ -179,7 +179,7 @@ def test_multiturn_help_does_not_become_definition(monkeypatch):
     # stays a free, deterministic test like the rest of the suite (see their
     # own unavailable-path tests below for the paid-call boundary).
     monkeypatch.setattr(conversation,"suggest_abbreviation",
-        lambda term_name: AbbreviationResult(abbreviation="TEST_ABBR",rationale="테스트 고정값",method="test_stub"))
+        lambda term_name,extra_words=None: AbbreviationResult(abbreviation="TEST_ABBR",rationale="테스트 고정값",method="test_stub"))
     monkeypatch.setattr(conversation,"suggest_definition",
         lambda term_name,clarification_hint="": DefinitionSuggestionResult(ambiguous=False,definition="",rationale="",method="test_stub"))
     with db.connect() as conn:
@@ -212,7 +212,7 @@ def test_confirm_term_detects_already_pending_request(monkeypatch):
     # PENDING_REQUEST_ALREADY_EXISTS) - after the user redid the whole
     # conversation. confirm_term must catch this immediately, like EXACT_MATCH.
     monkeypatch.setattr(conversation,"suggest_abbreviation",
-        lambda term_name: AbbreviationResult(abbreviation="TEST_ABBR",rationale="테스트 고정값",method="test_stub"))
+        lambda term_name,extra_words=None: AbbreviationResult(abbreviation="TEST_ABBR",rationale="테스트 고정값",method="test_stub"))
     monkeypatch.setattr(conversation,"suggest_definition",
         lambda term_name,clarification_hint="": DefinitionSuggestionResult(ambiguous=False,definition="",rationale="",method="test_stub"))
     with db.connect() as conn:
@@ -304,7 +304,7 @@ def test_definition_clarification_round_trip(monkeypatch):
             definition=f"{clarification_hint}으로 계산한 하루 소모 에너지량",rationale="테스트 고정값",method="test_stub")
     monkeypatch.setattr(conversation,"suggest_definition",fake_suggest_definition)
     monkeypatch.setattr(conversation,"suggest_abbreviation",
-        lambda term_name: AbbreviationResult(abbreviation="TEST_ABBR",rationale="테스트 고정값",method="test_stub"))
+        lambda term_name,extra_words=None: AbbreviationResult(abbreviation="TEST_ABBR",rationale="테스트 고정값",method="test_stub"))
     with db.connect() as conn:
         conn.execute("INSERT INTO domains(code,description,source) VALUES('수N7','테스트 숫자 도메인','TEST')")
     def apply(revision,intent,value="",confirmed=False):
@@ -336,7 +336,7 @@ def test_definition_suggestion_own_text_bypasses_suggestion(monkeypatch):
         lambda term_name,clarification_hint="": DefinitionSuggestionResult(
             ambiguous=True,question="q",options=["A","B"],method="test_stub"))
     monkeypatch.setattr(conversation,"suggest_abbreviation",
-        lambda term_name: AbbreviationResult(abbreviation="TEST_ABBR2",rationale="",method="test_stub"))
+        lambda term_name,extra_words=None: AbbreviationResult(abbreviation="TEST_ABBR2",rationale="",method="test_stub"))
     with db.connect() as conn:
         conn.execute("INSERT INTO domains(code,description,source) VALUES('수N7','테스트 숫자 도메인','TEST') ON CONFLICT DO NOTHING")
     def apply(revision,intent,value="",confirmed=False):
@@ -442,6 +442,71 @@ def test_real_word_request_flow_resumes_term_registration():
     assert result["state"]["stage"]=="awaiting_definition"
     assert "resume_term" not in result["state"]
     assert result["state"]["definition_suggestion"]
+
+def test_term_waits_for_new_word_approval_and_reuses_its_abbreviation(monkeypatch):
+    # Regression for a real user report: registering "일일보행량" (일일=known word,
+    # 보행량=missing) routed into the word sub-flow, submitted a brand-new word
+    # "보행량"/WALKCNT for review, then - after resuming - the TERM's own abbreviation
+    # suggestion had no idea that word existed (it isn't in standard_words yet, only
+    # word_registration_requests) and invented a totally unrelated one via the LLM
+    # fallback, producing two different English names for one concept. Also: the term
+    # must not sit in the same ready-to-review queue as a term whose dependency is
+    # already a real standard - it must wait for the word to be approved first.
+    insert_standard_word("일일","DAILY")
+    with db.connect() as conn:
+        conn.execute("INSERT INTO domains(code,description,source) VALUES('수N7','테스트 숫자 도메인','TEST') ON CONFLICT DO NOTHING")
+    monkeypatch.setattr(conversation,"suggest_word",
+        lambda usage_description,clarification_hint="": type("R",(),{"model_dump":lambda self: {
+            "existing_word_match":"","match_reason":"","ambiguous":False,"question":"","options":[],
+            "name":"보행량","english_abbr":"WALKCNT","is_format_word":False,
+            "definition":"하루 동안 걸은 걸음 수","rationale":"","method":"test_stub"}})())
+    monkeypatch.setattr(conversation,"suggest_definition",
+        lambda term_name,clarification_hint="": DefinitionSuggestionResult(
+            ambiguous=False,definition="하루 동안 걸은 걸음 수를 합산한 값",rationale="",method="test_stub"))
+    def apply(revision,intent,value="",confirmed=False):
+        return conversation.apply("word-approval-conv","user",revision,{"intent":intent,"value":value,"confirmed":confirmed})
+    apply(0,"propose_term","일일보행량")
+    result=apply(1,"confirm_term",confirmed=True)
+    assert result["state"]["stage"]=="awaiting_word_meaning"
+    result=apply(2,"propose_word","하루 동안 걸은 걸음 수를 세는 개념")
+    assert result["state"]["stage"]=="awaiting_word_confirm"
+    result=apply(3,"confirm_word",confirmed=True)
+    assert result["state"]["stage"]=="awaiting_word_abbreviation"
+    result=apply(4,"set_word_abbreviation","WALKCNT")
+    # Resumed straight back into the paused term flow, carrying the new word forward.
+    assert result["state"]["stage"]=="awaiting_definition"
+    word_request_id=result["state"]["term_pending_word"]["request_id"]
+    assert result["state"]["term_pending_word"]["english_abbr"]=="WALKCNT"
+    result=apply(5,"set_definition",result["state"]["definition_suggestion"]["definition"])
+    assert result["state"]["stage"]=="awaiting_domain_choice"
+    result=apply(6,"set_domain","수N7")
+    assert result["state"]["stage"]=="awaiting_abbreviation"
+    # The whole point: composed from the real word abbreviation, not LLM-invented.
+    assert result["state"]["abbreviation_suggestion"]["abbreviation"]=="DAILY_WALKCNT"
+    assert result["state"]["abbreviation_suggestion"]["method"]=="deterministic_word_dictionary"
+    result=apply(7,"set_abbreviation","DAILY_WALKCNT")
+    assert result["state"]["stage"]=="awaiting_confirm"
+    result=apply(8,"confirm_registration",confirmed=True)
+    assert result["state"]["stage"]=="submitted"
+    term_request_id=result["state"]["registration"]["request_id"]
+    # Not ready for review yet - it depends on a word that isn't a real standard yet.
+    assert result["state"]["registration"]["status"]=="WAITING_FOR_WORD_APPROVAL"
+    assert registration.approve(term_request_id)["code"]=="NOT_PENDING_REVIEW"
+
+    approval=word_registration.approve(word_request_id)
+    assert approval["approved"]
+    assert term_request_id in [p["request_id"] for p in approval["promoted_terms"]]
+    with db.connect() as conn:
+        row=conn.execute("SELECT status FROM registration_requests WHERE id=%s",(term_request_id,)).fetchone()
+    assert row["status"]=="PENDING_REVIEW"
+
+    final=registration.approve(term_request_id)
+    assert final["approved"]
+    with db.connect() as conn:
+        term_row=conn.execute("SELECT english_abbr,status FROM standard_terms WHERE name='일일보행량'").fetchone()
+        word_row=conn.execute("SELECT english_abbr,status FROM standard_words WHERE name='보행량'").fetchone()
+    assert term_row["english_abbr"]=="DAILY_WALKCNT" and term_row["status"]=="ACTIVE"
+    assert word_row["english_abbr"]=="WALKCNT" and word_row["status"]=="ACTIVE"
 
 @pytest.mark.skipif(os.getenv("RUN_LLM_TESTS")!="1",reason="Explicit low-volume paid API smoke test")
 def test_real_llm_definition_comparison(catalog):

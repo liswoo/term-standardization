@@ -3,7 +3,9 @@ from datetime import datetime, timedelta, timezone
 import uuid
 from psycopg.types.json import Jsonb
 from . import db
-from .naming import key
+from .config import EMBEDDING_MODEL
+from .embeddings import embed
+from .naming import key, morphology
 from .schemas import RegistrationInput
 from .search import search, validate_name
 from .comparison import compare
@@ -67,7 +69,7 @@ def prepare(payload: RegistrationInput):
     return {"ready":True,"confirmation_id":prep_id,"expires_at":expires.isoformat(),"payload":payload.model_dump(),
         "assessment":assessment,"requires_final_confirmation":True,"resulting_status":"PENDING_REVIEW"}
 
-def submit(confirmation_id, requester, conversation_id, confirmed, english_abbr=""):
+def submit(confirmation_id, requester, conversation_id, confirmed, english_abbr="", depends_on_word_request_id=None):
     uuid.UUID(confirmation_id)
     if confirmed is not True:
         return {"created":False,"code":"EXPLICIT_CONFIRMATION_REQUIRED"}
@@ -88,18 +90,51 @@ def submit(confirmation_id, requester, conversation_id, confirmed, english_abbr=
         p=prep["payload"]
         # Serialize pending requests for the same normalized name.
         conn.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s,0))",(key(p["term_name"]),))
-        pending=conn.execute("SELECT id FROM registration_requests WHERE normalized_name=%s AND status='PENDING_REVIEW'",(key(p["term_name"]),)).fetchone()
+        pending=conn.execute("SELECT id FROM registration_requests WHERE normalized_name=%s AND status IN ('PENDING_REVIEW','WAITING_FOR_WORD_APPROVAL')",(key(p["term_name"]),)).fetchone()
         if pending:
             return {"created":False,"code":"PENDING_REQUEST_ALREADY_EXISTS"}
+        # A term whose required word was just submitted (not reused - see conversation.py's
+        # set_word_abbreviation/confirm_word) depends on that word being approved first:
+        # the term isn't ready for review on its own merits yet, so it must not sit in the
+        # same PENDING_REVIEW queue as one that is.
+        initial_status="WAITING_FOR_WORD_APPROVAL" if depends_on_word_request_id else "PENDING_REVIEW"
         row=conn.execute("""INSERT INTO registration_requests
-            (id,preparation_id,term_name,normalized_name,definition,domain,synonyms,english_abbr,requester,conversation_id,assessment)
-            VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+            (id,preparation_id,term_name,normalized_name,definition,domain,synonyms,english_abbr,requester,conversation_id,assessment,status,depends_on_word_request_id)
+            VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
             RETURNING id::text AS request_id,status,created_at,english_abbr""",
             (str(uuid.uuid4()),confirmation_id,p["term_name"],key(p["term_name"]),p["definition"],p["domain"],
-             p["synonyms"],english_abbr or None,requester,conversation_id,Jsonb(prep["assessment"]))).fetchone()
+             p["synonyms"],english_abbr or None,requester,conversation_id,Jsonb(prep["assessment"]),
+             initial_status,depends_on_word_request_id)).fetchone()
         conn.execute("UPDATE registration_preparations SET status='SUBMITTED' WHERE id=%s",(confirmation_id,))
     row["created_at"]=row["created_at"].isoformat()
     return {"created":True,"is_official_standard":False,**row,"term_name":p["term_name"],"definition":p["definition"],"domain":p["domain"]}
+
+def approve(request_id):
+    """Promote a PENDING_REVIEW term request into the live standard_terms catalog.
+
+    There is no admin UI yet (see CLAUDE.md's known gaps) - this is the minimal
+    entry point a human reviewer invokes (via manage.py) once they've actually
+    read and accepted the request. WAITING_FOR_WORD_APPROVAL requests are refused
+    here on purpose: approving the term before its dependency word is real would
+    publish a term whose abbreviation composition points at a word that doesn't
+    exist yet.
+    """
+    with db.connect() as conn:
+        req=conn.execute("SELECT * FROM registration_requests WHERE id=%s",(request_id,)).fetchone()
+        if not req:
+            return {"approved":False,"code":"REQUEST_NOT_FOUND"}
+        if req["status"]!="PENDING_REVIEW":
+            return {"approved":False,"code":"NOT_PENDING_REVIEW","status":req["status"]}
+        nouns=[m["form"] for m in morphology(req["term_name"])["morphemes"] if m["tag"].startswith("N")]
+        vector=embed(req["term_name"]+" : "+req["definition"])
+        conn.execute("""INSERT INTO standard_terms(id,name,normalized_name,definition,domain,synonyms,
+            normalized_synonyms,noun_tokens,source,embedding,embedding_model,english_abbr,status)
+            VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'ACTIVE')""",
+            (str(uuid.uuid4()),req["term_name"],req["normalized_name"],req["definition"],req["domain"],
+             req["synonyms"],[key(s) for s in req["synonyms"]],nouns,"CHATBOT_APPROVED",vector,EMBEDDING_MODEL,
+             req["english_abbr"]))
+        conn.execute("UPDATE registration_requests SET status='APPROVED' WHERE id=%s",(request_id,))
+    return {"approved":True,"term_name":req["term_name"]}
 
 def find_pending(term_name):
     """The most recent still-pending request for this exact normalized name, if any.
@@ -109,8 +144,8 @@ def find_pending(term_name):
     abbreviation flow only to hit PENDING_REQUEST_ALREADY_EXISTS at the very end.
     """
     with db.connect() as conn:
-        row=conn.execute("""SELECT id::text AS request_id,term_name,definition,domain,english_abbr,created_at
-            FROM registration_requests WHERE normalized_name=%s AND status='PENDING_REVIEW'
+        row=conn.execute("""SELECT id::text AS request_id,term_name,definition,domain,english_abbr,status,created_at
+            FROM registration_requests WHERE normalized_name=%s AND status IN ('PENDING_REVIEW','WAITING_FOR_WORD_APPROVAL')
             ORDER BY created_at DESC LIMIT 1""",(key(term_name),)).fetchone()
     if row:
         row["created_at"]=row["created_at"].isoformat()

@@ -82,21 +82,25 @@ def list_data_domains() -> dict:
 def list_terms(limit: int = 50, offset: int = 0, q: str = "", status: str = "", domain: str = "",
                requester: str = "") -> dict:
     """Page through the term catalog, most recent first. `q` filters by name/definition
-    substring. `status` narrows to "APPROVED" (standard_terms only), "PENDING_REVIEW" or
-    "REJECTED" (registration_requests only), or "" for both merged (default - matches the
-    old behavior). `domain` narrows to one domain code (exact match, both tables). `requester`
-    narrows to one submitter's own requests - standard_terms has no requester concept (it's
-    the approved catalog, not a personal submission), so a requester filter always excludes
-    APPROVED rows regardless of `status`. `total_count` reflects whichever side is actually
-    being paginated (the approved side when both are shown, matching the old contract)."""
+    substring. `status` narrows to "APPROVED" (standard_terms only), "PENDING_REVIEW",
+    "WAITING_FOR_WORD_APPROVAL" (a term whose own required standard word hasn't been
+    approved yet - not actually ready for review despite also being a pending request)
+    or "REJECTED" (registration_requests only), or "" for all merged (default - matches
+    the old behavior). `domain` narrows to one domain code (exact match, both tables).
+    `requester` narrows to one submitter's own requests - standard_terms has no requester
+    concept (it's the approved catalog, not a personal submission), so a requester filter
+    always excludes APPROVED rows regardless of `status`. `total_count` reflects whichever
+    side is actually being paginated (the approved side when both are shown, matching the
+    old contract)."""
     limit=min(max(limit,1),200)
     offset=max(offset,0)
     like=f"%{q.strip()}%" if q.strip() else None
     status=status.strip().upper()
     domain=domain.strip()
     requester=requester.strip()
+    all_pending_statuses=["PENDING_REVIEW","WAITING_FOR_WORD_APPROVAL","REJECTED"]
     show_approved=status in ("","APPROVED") and not requester
-    pending_statuses=[status] if status in ("PENDING_REVIEW","REJECTED") else (["PENDING_REVIEW","REJECTED"] if status=="" else [])
+    pending_statuses=[status] if status in all_pending_statuses else (all_pending_statuses if status=="" else [])
     approved,pending,total=[],[],0
     with db.connect() as conn:
         if show_approved:

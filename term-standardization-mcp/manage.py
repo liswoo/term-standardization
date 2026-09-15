@@ -225,7 +225,8 @@ def import_guideline(path):
 
 if __name__=="__main__":
     parser=argparse.ArgumentParser()
-    parser.add_argument("command",choices=["init-db","import-catalog","import-standard-catalog","import-guideline","health","export-schemas"])
+    parser.add_argument("command",choices=["init-db","import-catalog","import-standard-catalog","import-guideline",
+        "health","export-schemas","approve-word","approve-term"])
     parser.add_argument("file",nargs="?")
     args=parser.parse_args()
     if args.command=="init-db":
@@ -239,6 +240,17 @@ if __name__=="__main__":
     elif args.command=="health":
         from term_service.tools import terminology_health
         print(json.dumps(terminology_health(),ensure_ascii=False))
+    elif args.command=="approve-word":
+        # No admin UI yet (see CLAUDE.md's known gaps) - this is the only way to move a
+        # word_registration_requests row from PENDING_REVIEW into the live standard_words
+        # catalog. Also promotes any term that was waiting on this exact word.
+        from term_service import word_registration
+        print(json.dumps(word_registration.approve(args.file),ensure_ascii=False))
+    elif args.command=="approve-term":
+        # Refuses a WAITING_FOR_WORD_APPROVAL request on purpose - approve-word must run
+        # first, which flips it to PENDING_REVIEW automatically.
+        from term_service import registration
+        print(json.dumps(registration.approve(args.file),ensure_ascii=False))
     else:
         from term_service import schemas
         output={name:cls.model_json_schema() for name,cls in vars(schemas).items() if isinstance(cls,type) and issubclass(cls,schemas.Schema) and cls is not schemas.Schema}

@@ -83,7 +83,19 @@ CREATE TABLE IF NOT EXISTS registration_requests (
  created_at timestamptz NOT NULL DEFAULT now()
 );
 ALTER TABLE registration_requests ADD COLUMN IF NOT EXISTS english_abbr text;
-CREATE UNIQUE INDEX IF NOT EXISTS pending_name_unique ON registration_requests(normalized_name) WHERE status='PENDING_REVIEW';
+-- A term whose name didn't fully decompose into known standard_words gets its
+-- missing word submitted alongside it (see conversation.py's confirm_term/
+-- _resume_or_finish_word_flow) - but that word isn't an official standard yet,
+-- so the term must not sit in the same PENDING_REVIEW queue as a term ready for
+-- review on its own merits. WAITING_FOR_WORD_APPROVAL marks that dependency;
+-- word_registration.approve() promotes it to PENDING_REVIEW once the word is in.
+ALTER TABLE registration_requests DROP CONSTRAINT IF EXISTS registration_requests_status_check;
+ALTER TABLE registration_requests ADD CONSTRAINT registration_requests_status_check
+    CHECK(status IN ('PENDING_REVIEW','WAITING_FOR_WORD_APPROVAL','APPROVED','REJECTED'));
+ALTER TABLE registration_requests ADD COLUMN IF NOT EXISTS depends_on_word_request_id uuid REFERENCES word_registration_requests(id);
+DROP INDEX IF EXISTS pending_name_unique;
+CREATE UNIQUE INDEX IF NOT EXISTS pending_name_unique ON registration_requests(normalized_name)
+    WHERE status IN ('PENDING_REVIEW','WAITING_FOR_WORD_APPROVAL');
 CREATE TABLE IF NOT EXISTS comparison_cache (
  fingerprint text PRIMARY KEY, result jsonb NOT NULL, created_at timestamptz NOT NULL DEFAULT now()
 );

@@ -8,7 +8,7 @@ from . import db, registration, word_registration
 from .abbreviation import suggest_abbreviation, validate_abbreviation, validate_word_abbreviation
 from .definition_suggestion import suggest_definition
 from .guideline import check_guideline
-from .naming import strip_trailing_particle, segment_words
+from .naming import strip_trailing_particle, segment_words, key
 from .schemas import Schema, RegistrationInput, WordRegistrationInput
 from .search import validate_name, search, domain_usage, search_terms_by_meaning
 from .word_suggestion import suggest_word
@@ -210,8 +210,13 @@ def transition(state, action, requester, conversation_id):
             s["stage"]="definition_blocked"
             return s,{"next_action":"EXPLAIN_BLOCK"}
         # A Korean term and its English abbreviation are registered as one set; recommend
-        # one now so the user isn't left to invent a compliant abbreviation unaided.
-        s["abbreviation_suggestion"]=suggest_abbreviation(s["term_name"]).model_dump()
+        # one now so the user isn't left to invent a compliant abbreviation unaided. If
+        # this term's decomposition required submitting a brand-new word earlier in this
+        # same flow (term_pending_word - see set_word_abbreviation below), that word isn't
+        # in standard_words yet, so it must be handed in explicitly or the composition
+        # falls through to the LLM and invents an unrelated abbreviation for it.
+        extra_words=[s["term_pending_word"]] if s.get("term_pending_word") else []
+        s["abbreviation_suggestion"]=suggest_abbreviation(s["term_name"],extra_words=extra_words).model_dump()
         s.pop("english_abbr",None)
         s["stage"]="awaiting_abbreviation"
         return s,{"next_action":"CONFIRM_ABBREVIATION"}
@@ -232,7 +237,8 @@ def transition(state, action, requester, conversation_id):
             s["stage"]="cancelled"
             return s,{"next_action":"CANCELLED"}
         result=registration.submit(s["preparation"]["confirmation_id"],requester,conversation_id,True,
-            english_abbr=s["english_abbr"])
+            english_abbr=s["english_abbr"],
+            depends_on_word_request_id=(s.get("term_pending_word") or {}).get("request_id"))
         s["registration"]=result
         # A failed submit() must not leave the conversation parked in
         # awaiting_confirm: preparation.ready is still true, so a repeated
@@ -299,6 +305,14 @@ def transition(state, action, requester, conversation_id):
             return s,{"next_action":"EXPLAIN_WORD_BLOCK"}
         result=word_registration.submit(prepared["confirmation_id"],requester,conversation_id,True)
         s["word_registration"]=result
+        # Only meaningful for the embedded case (resume_term set - a term's decomposition
+        # was missing this word): carries the new word's own request_id/abbreviation
+        # forward through the rest of the term flow, so registration.submit() can mark
+        # the term as depending on it, and suggest_abbreviation() can reuse its
+        # abbreviation instead of inventing an unrelated one (see set_domain above).
+        if result.get("request_id") and s.get("resume_term"):
+            s["term_pending_word"]={"request_id":result["request_id"],"name":payload["word_name"],
+                "normalized_name":key(payload["word_name"]),"english_abbr":value}
         return _resume_or_finish_word_flow(s,"word_submitted" if result.get("request_id") else "word_registration_failed")
     if a.intent=="find_term":
         # Search-only, read-only: fires from any idle-ish stage when the user

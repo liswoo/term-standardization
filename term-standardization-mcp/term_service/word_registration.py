@@ -6,13 +6,17 @@ standard_terms: a word and a term have different shapes (no domain, but is_forma
 domain_classification) and different lifecycles (a word can be reused across many
 future terms, so its own review queue shouldn't be entangled with any one term's).
 
-No approval workflow exists for terms either (see CLAUDE.md's known gaps) - so a new
-word is used immediately at PENDING_REVIEW status, same as a term would be.
+There is still no admin UI (see CLAUDE.md's known gaps) - approve() below is the
+minimal entry point a human reviewer invokes (via manage.py) once they've actually
+read and accepted a PENDING_REVIEW request. A word is otherwise usable for search/
+comparison purposes at PENDING_REVIEW (never treated as an approved standard).
 """
 from datetime import datetime, timedelta, timezone
 import uuid
 from psycopg.types.json import Jsonb
 from . import db
+from .config import EMBEDDING_MODEL
+from .embeddings import embed
 from .naming import key
 from .schemas import WordRegistrationInput
 
@@ -93,3 +97,30 @@ def cancel(requester, conversation_id):
             WHERE requester=%s AND conversation_id=%s AND status='AWAITING_CONFIRMATION' RETURNING id""",
             (requester, conversation_id)).fetchall()
     return {"cancelled_confirmations": len(rows)}
+
+def approve(word_request_id):
+    """Promote a PENDING_REVIEW word request into the live standard_words catalog.
+
+    Also promotes any term registration that was waiting on this exact word
+    (WAITING_FOR_WORD_APPROVAL, set by registration.submit() when a term's required
+    word didn't exist yet - see conversation.py's confirm_term/set_word_abbreviation)
+    to PENDING_REVIEW, since the dependency is now satisfied.
+    """
+    with db.connect() as conn:
+        req = conn.execute("SELECT * FROM word_registration_requests WHERE id=%s", (word_request_id,)).fetchone()
+        if not req:
+            return {"approved": False, "code": "REQUEST_NOT_FOUND"}
+        if req["status"] != "PENDING_REVIEW":
+            return {"approved": False, "code": "NOT_PENDING_REVIEW", "status": req["status"]}
+        vector = embed(req["word_name"] + " : " + req["definition"]) if req["definition"] else embed(req["word_name"])
+        conn.execute("""INSERT INTO standard_words(id,name,normalized_name,english_abbr,definition,
+            is_format_word,domain_classification,source,embedding,embedding_model,status)
+            VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'ACTIVE')""",
+            (str(uuid.uuid4()), req["word_name"], req["normalized_name"], req["english_abbr"], req["definition"],
+             req["is_format_word"], req["domain_classification"], "CHATBOT_APPROVED", vector, EMBEDDING_MODEL))
+        conn.execute("UPDATE word_registration_requests SET status='APPROVED' WHERE id=%s", (word_request_id,))
+        promoted = conn.execute("""UPDATE registration_requests SET status='PENDING_REVIEW'
+            WHERE depends_on_word_request_id=%s AND status='WAITING_FOR_WORD_APPROVAL'
+            RETURNING id::text AS request_id, term_name""", (word_request_id,)).fetchall()
+    return {"approved": True, "word_name": req["word_name"],
+        "promoted_terms": [dict(r) for r in promoted]}
