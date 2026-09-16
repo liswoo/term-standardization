@@ -777,6 +777,25 @@ function addOptionButtons(bubbleWrap, options, onPick) {
   scrollChatToBottom();
 }
 
+// A term's awaiting_definition already accepts free text as the definition verbatim
+// (set_definition) - unlike a new word, which needed a real backend mode switch
+// (edit_word_definition) since typing there re-triggers a whole new suggestion instead.
+// So this button is purely a client-side nudge: no round trip, no value sent through
+// classify at all - sending "내가 새로 정의할래요" itself through set_definition would
+// register that literal phrase as the definition, which is exactly the bug this avoids.
+function addWriteOwnDefinitionButton(bubbleWrap) {
+  const row = document.createElement("div");
+  row.className = "option-row";
+  row.innerHTML = `<button type="button" class="option-chip">내가 새로 정의할래요</button>`;
+  bubbleWrap.querySelector(".bubble").appendChild(row);
+  row.querySelector(".option-chip").addEventListener("click", () => {
+    row.querySelector(".option-chip").disabled = true;
+    addBotBubble(escapeHtml("네, 정의를 직접 입력해 주세요."));
+    chatInput.focus();
+  });
+  scrollChatToBottom();
+}
+
 // 결과/막힘 등 "끝난 지점"(터미널 스테이지)에서 다음 행동을 버튼으로 제시합니다.
 // 두 버튼 모두 실제 서버 왕복을 거칩니다 - "사용/종료" 쪽을 로컬에서만 처리하도록
 // 했다가, 서버 쪽 stage가 그 터미널 스테이지에 영영 멈춰 있게 되어 그 다음
@@ -788,15 +807,25 @@ function addOptionButtons(bubbleWrap, options, onPick) {
 const CONTINUE_TERM_VALUE = "다른 용어를 등록할래요";
 const CONTINUE_WORD_VALUE = "다른 단어를 등록할래요";
 const CLOSE_VALUE = "여기서 마칠게요";
+// Same 3 phrases as the opening bubble's static buttons (index.html) - reused after
+// "여기서 마칠게요" resets to idle, so the user gets the same fresh set of next-step
+// options instead of a dead-end "알겠습니다" with nothing to click.
+const OPENING_MENU_OPTIONS = [
+  { label: "용어를 추천해주세요", value: "용어를 추천해주세요" },
+  { label: "용어를 등록할래요", value: "용어를 등록할래요" },
+  { label: "단어를 등록할래요", value: "단어를 등록할래요" },
+];
 
 function terminalActionsFor(mcpState) {
   if (!mcpState) return null;
   switch (mcpState.stage) {
-    case "term_lookup_result": {
-      const hasMatches = !!(mcpState.term_lookup || {}).matches?.length;
-      const bLabel = hasMatches ? "이 용어를 사용할게요" : "여기서 마칠게요";
-      return [{ label: "새 용어를 등록할래요", value: CONTINUE_TERM_VALUE }, { label: bLabel, value: CLOSE_VALUE }];
-    }
+    case "term_lookup_result":
+      // Always "여기서 마칠게요", never "이 용어를 사용할게요" - up to 5 candidates are
+      // shown here (search_terms_by_meaning's limit), so "이 용어" ("this term") is
+      // ambiguous about which one, and the button's label must also match what the
+      // click actually sends/displays as the user's own message (see CLOSE_VALUE) or
+      // the two feel like a non sequitur back to back - reported live by the user.
+      return [{ label: "새 용어를 등록할래요", value: CONTINUE_TERM_VALUE }, { label: "여기서 마칠게요", value: CLOSE_VALUE }];
     case "existing_term_found":
     case "definition_blocked":
       return [{ label: "새 용어를 등록할래요", value: CONTINUE_TERM_VALUE }, { label: "이 용어를 사용할게요", value: CLOSE_VALUE }];
@@ -1105,6 +1134,7 @@ async function streamChatMessage(query, { onStep, onAnswerChunk } = {}) {
   let buffer = "";
   let answer = "";
   let mcpState = null;
+  let mcpError = "";
   let options = [];
 
   while (true) {
@@ -1134,6 +1164,16 @@ async function streamChatMessage(query, { onStep, onAnswerChunk } = {}) {
         if (payload.data?.node_id) onStep?.(payload.data.node_id, "done");
         if (payload.data?.node_id === "action" && payload.data?.outputs?.state) {
           mcpState = payload.data.outputs.state;
+          // The action node's own JSON already carries this sibling to .state (see
+          // conversation.py's transition() returning {"error": "..."} alongside the
+          // unchanged state on a rejected/incomplete turn - e.g. clicking "새 용어를
+          // 등록할래요" re-fires propose_term with an empty value, which errors with
+          // TERM_REQUIRED and leaves state.stage exactly as it was). Previously unread
+          // here, which was the actual bug behind the stale term_lookup_result table
+          // reappearing after that click - the reply text already knew to ask for a
+          // name (build_chatflow.py's suppress_stage_summary), but nothing told the
+          // frontend the leftover table/buttons were now stale too.
+          mcpError = payload.data.outputs.error || "";
         }
         // options is its own node output (not nested in .context) so the reply-
         // rendering LLM's prompt never sees the option labels' full descriptive
@@ -1154,7 +1194,7 @@ async function streamChatMessage(query, { onStep, onAnswerChunk } = {}) {
     }
   }
 
-  return { answer, state: mcpState, options };
+  return { answer, state: mcpState, options, error: mcpError };
 }
 
 // ── 등록 완료(state.stage === "submitted") 시 메타시스템에 실제 반영 ──
@@ -1206,28 +1246,62 @@ async function submitChatMessage(raw) {
 
   const tracker = addStepTracker();
   const bubble = addBotBubble('<p class="thinking">답변 작성 중...</p>');
+  // "여기서 마칠게요" always resets state to a bare {"stage":"awaiting_term_direct"}
+  // server-side (deterministic, verified directly) - but the reply LLM has shown it
+  // will sometimes ignore render_context's close_hint instruction and describe the
+  // now-idle stage as if it were asking for a new term name instead (same "prose
+  // alone isn't reliable" class of bug already hit with resume_notice). Since this
+  // button's outcome never varies, skip the LLM's text for it entirely rather than
+  // fight the prompt further, and show the same opening menu as the very first
+  // greeting so there's something to click instead of a dead end.
+  const isCloseAction = raw === CLOSE_VALUE;
 
   try {
-    const { answer, state: mcpState, options } = await streamChatMessage(raw, {
+    const { answer, state: mcpState, options, error: mcpError } = await streamChatMessage(raw, {
       onStep: (nodeId, status) => setStepState(tracker, nodeId, status),
-      onAnswerChunk: (partial) => setBubbleContent(bubble, formatAnswer(partial) || '<p class="thinking">답변 작성 중...</p>'),
+      onAnswerChunk: (partial) => {
+        if (isCloseAction) return;
+        setBubbleContent(bubble, formatAnswer(partial) || '<p class="thinking">답변 작성 중...</p>');
+      },
     });
 
-    setBubbleContent(bubble, formatAnswer(answer));
+    const closed = isCloseAction && mcpState?.stage === "awaiting_term_direct";
+    setBubbleContent(bubble, formatAnswer(closed ? "네, 알겠습니다! 필요하시면 아래 중 하나를 선택하거나 자유롭게 말씀해주세요." : answer));
     tracker.remove();
 
-    const structuredHtml = renderStructuredBlock(mcpState);
+    // These three errors mean a terminal-stage "새 용어를/단어를 등록할래요" button
+    // re-fired propose_term/propose_word/find_term with an empty value on purpose
+    // (see CLASSIFY_TERMINAL_RULE) - business logic intentionally leaves state
+    // completely unchanged so the old term_lookup_result/word_reused/etc. table and
+    // buttons stay technically valid data, but they're no longer what this turn is
+    // about (we're now just waiting for a plain-text name/description). Rendering
+    // them again looked like the click did nothing and the user was stuck in a loop -
+    // reported live. The reply text already knows to ask for the name (build_chatflow.py's
+    // suppress_stage_summary); this is the same suppression for the frontend's cards.
+    const needsFreshInput = ["TERM_REQUIRED", "WORD_MEANING_REQUIRED", "TERM_MEANING_REQUIRED"].includes(mcpError);
+
+    const structuredHtml = needsFreshInput ? "" : renderStructuredBlock(mcpState);
     if (structuredHtml) {
       bubble.querySelector(".bubble").classList.add("has-data");
       bubble.querySelector(".bubble").insertAdjacentHTML("beforeend", structuredHtml);
       scrollChatToBottom();
     }
 
-    if (options && options.length) {
+    if (closed) {
+      addOptionButtons(bubble, OPENING_MENU_OPTIONS, (value) => submitChatMessage(value));
+    } else if (options && options.length) {
       addOptionButtons(bubble, options, (value) => submitChatMessage(value));
-    } else {
+    } else if (!needsFreshInput) {
       const terminalActions = terminalActionsFor(mcpState);
       if (terminalActions) addOptionButtons(bubble, terminalActions, (value) => submitChatMessage(value));
+    }
+
+    // Alongside "네, 이 정의로 할게요" (from the block above) - only when there's an
+    // actual suggested definition on screen to override, not the ambiguous-question
+    // or no-suggestion-yet cases, which already just want free text with nothing to opt out of.
+    const defSug = mcpState?.definition_suggestion;
+    if (mcpState?.stage === "awaiting_definition" && defSug && !defSug.ambiguous && defSug.definition) {
+      addWriteOwnDefinitionButton(bubble);
     }
 
     if (mcpState?.stage === "submitted") {

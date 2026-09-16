@@ -240,38 +240,68 @@ workflow:
           \ 'At awaiting_term_confirm, explicit yes -> confirm_term confirmed=true;\
           \ no -> confirm_term false;\\ndifferent term text -> propose_term. Preserve\
           \ a confirmation step even for confident extraction.', 'awaiting_guideline_choice':\
-          \ 'At awaiting_guideline_choice, a selected correction or new name -> propose_term.',\
-          \ 'awaiting_domain_choice': 'At awaiting_domain_choice, set_domain value\
-          \ must be an actual domain code from domain_options/recommended_domain in\
-          \ the stored state (e.g. \"수N7\"), never the user\\'s raw wording.\\nA request\
-          \ to see, repeat, or explain the domain options (e.g. \\'제공해줘\\', \\'알려줘\\\
-          ', \\'뭐가 있어\\', \\'추천해줘\\', \\'보여줘\\') is NOT a selection -> show_candidates.\\\
-          nExample: \\'제공해줘\\' -> show_candidates, NOT set_domain.\\nOnly classify\
-          \ set_domain when the user names/picks an actual domain (by its code or\
-          \ its description) or explicitly repeats a code you already showed them.\\\
-          nA request to change the definition just given (e.g. \\'정의를 다시 쓸게\\', \\\
-          '정의를 바꾸고 싶어\\') -> edit_definition.', 'awaiting_definition': \"At awaiting_definition,\
-          \ the stored state's definition_suggestion field may hold a proposed\\ndefinition\
-          \ (definition_suggestion.definition) or, if the term name was ambiguous,\
-          \ a clarifying\\nquestion with short candidate-meaning labels (definition_suggestion.options).\\\
-          nA description of what the term means, an acceptance of the suggested definition\
-          \ (e.g. '네', '좋아요',\\n'그걸로 할게요'), or a pick of one of the candidate-meaning\
-          \ labels -> set_definition in every case,\\nvalue = that exact text verbatim\
-          \ (the suggested definition string, the chosen option label string, or\\\
-          nthe user's own wording) - never invent, reformat, or expand it yourself;\
-          \ downstream logic tells the two\\ncases apart by matching value against\
-          \ the stored options.\\nAccept short noun phrases, informal Korean, and\
-          \ missing spaces/punctuation. Do not require a complete sentence or the\
-          \ word 정의.\\nDo not judge its quality or similarity; the comparison tool\
-          \ handles that next.\\nExamples at awaiting_definition:\\n성인기준 하루에 권장하는\
-          \ 칼로리의 양 -> set_definition, value exactly that text.\\n하루 권장 에너지량 -> set_definition.\\\
-          n네, 그걸로 할게요 (suggestion accepted) -> set_definition, value = definition_suggestion.definition\
-          \ copied verbatim.\\n실제 소모한 칼로리 기준 (one of definition_suggestion.options,\
-          \ clicked or typed exactly) -> set_definition, value = that exact option\
-          \ text.\\n담당자가 검토한 이유 -> set_definition.\\n정의는 어떻게 쓰면 돼? -> help.\\n기존 용어\
-          \ 정의 다시 보여줘 -> show_candidates.\\n취소할게 -> cancel.\\nOnly actual questions\
-          \ about the process or requests for assistance -> help. Never classify a\
-          \ descriptive phrase as help just because it is short.\", 'awaiting_abbreviation':\
+          \ 'At awaiting_guideline_choice, a selected correction (one of the stored\
+          \ options shown as buttons -\\nvalidation.suggestions / guideline_check.suggested_term)\
+          \ or a freshly typed new name -> propose_term,\\nvalue = that exact text\
+          \ VERBATIM, character-for-character, in EITHER case.\\nCritical, a real\
+          \ incident: do NOT apply the awaiting_term_direct-style \"extract just the\
+          \ term from a\\nsentence\" habit here - a clicked suggestion is not a sentence\
+          \ to parse, it already IS the exact\\ncandidate name. Never trim, shorten,\
+          \ or drop any word from it - a suggested correction is often several\\nwords\
+          \ specifically added to fix the violation (e.g. a qualifier word appended\
+          \ to stop it looking like a\\nbare generic noun), and every one of those\
+          \ words matters. Example: suggestion shown is \"기본 규칙 이름\"\\n(three words\
+          \ - the trailing \"이름\" was added on purpose to fix the violation) -> propose_term\\\
+          nvalue=\"기본 규칙 이름\" exactly as shown, NOT \"기본 규칙\" (dropping \"이름\" here\
+          \ was a real incident that\\nlet the still-violating original name slip\
+          \ through registration unchanged).', 'awaiting_domain_choice': 'At awaiting_domain_choice,\
+          \ set_domain value must be an actual domain code from domain_options/recommended_domain\
+          \ in the stored state (e.g. \"수N7\"), never the user\\'s raw wording.\\\
+          nA request to see, repeat, or explain the domain options (e.g. \\'제공해줘\\\
+          ', \\'알려줘\\', \\'뭐가 있어\\', \\'추천해줘\\', \\'보여줘\\') is NOT a selection ->\
+          \ show_candidates.\\nExample: \\'제공해줘\\' -> show_candidates, NOT set_domain.\\\
+          nOnly classify set_domain when the user names/picks an actual domain (by\
+          \ its code or its description) or explicitly repeats a code you already\
+          \ showed them.\\nA request to change the definition just given (e.g. \\\
+          '정의를 다시 쓸게\\', \\'정의를 바꾸고 싶어\\') -> edit_definition.', 'awaiting_definition':\
+          \ 'At awaiting_definition, the stored state\\'s definition_suggestion field\
+          \ may hold a proposed\\ndefinition (definition_suggestion.definition) or,\
+          \ if the term name was ambiguous, a clarifying\\nquestion with short candidate-meaning\
+          \ labels (definition_suggestion.options).\\nA description of what the term\
+          \ means, or a pick of one of the candidate-meaning labels -> set_definition,\\\
+          nvalue = that exact text verbatim (the chosen option label string, or the\
+          \ user\\'s own wording) - never\\ninvent, reformat, or expand it yourself;\
+          \ downstream logic tells the two cases apart by matching value\\nagainst\
+          \ the stored options.\\nA bare acceptance of the suggested definition with\
+          \ NO descriptive content of its own (네/좋아요/그걸로\\n할게요/동의/수락, or equivalents\
+          \ - nothing else in the message) -> set_definition, value=\"\" (empty on\\\
+          npurpose - do NOT type out definition_suggestion.definition yourself; downstream\
+          \ code already has that\\ntext and fills it in). The instant the message\
+          \ contains ANY of the user\\'s own wording describing the\\nconcept - even\
+          \ one sentence, even if it reuses phrases from the suggestion or covers\
+          \ the same ground -\\nit is NOT acceptance: value MUST be that message\\\
+          's own text verbatim, copied exactly as sent. When in\\ndoubt (the message\
+          \ is more than a short accept phrase), treat it as the user\\'s own wording,\
+          \ not\\nacceptance.\\nAccept short noun phrases, informal Korean, and missing\
+          \ spaces/punctuation. Do not require a complete sentence or the word 정의.\\\
+          nDo not judge its quality or similarity; the comparison tool handles that\
+          \ next.\\nExamples at awaiting_definition (assume definition_suggestion.definition\
+          \ = \"객실개편은 객실 내부를 리모델링하거나\\n구조적으로 변경하여 새로운 형태나 기능을 갖추도록 하는 과정을 의미한다.\"\
+          \ for the last two):\\n성인기준 하루에 권장하는 칼로리의 양 -> set_definition, value exactly\
+          \ that text.\\n하루 권장 에너지량 -> set_definition.\\n네, 그걸로 할게요 (suggestion accepted,\
+          \ nothing else in the message) -> set_definition, value=\"\".\\n실제 소모한 칼로리\
+          \ 기준 (one of definition_suggestion.options, clicked or typed exactly) ->\
+          \ set_definition, value = that exact option text.\\n객실개편은 객실 내부를 리모델링하거나\
+          \ 구조적으로 변경하여 새로운 형태나 기능을 갖추어 새로운 환경을 구축하는 것을 의미한다.\\n(the user\\'s OWN rewrite\
+          \ - shares an opening clause with definition_suggestion.definition above\
+          \ but is\\nNOT the same sentence and is NOT a bare acceptance) -> set_definition,\
+          \ value = that message\\'s own text\\nverbatim, character-for-character\
+          \ as sent - this is a real incident: value=definition_suggestion.definition\\\
+          nhere once silently discarded the user\\'s actual edit and registered the\
+          \ wrong definition.\\n담당자가 검토한 이유 -> set_definition.\\n정의는 어떻게 쓰면 돼? ->\
+          \ help.\\n기존 용어 정의 다시 보여줘 -> show_candidates.\\n취소할게 -> cancel.\\nOnly actual\
+          \ questions about the process or requests for assistance -> help. Never\
+          \ classify a descriptive phrase as help just because it is short.', 'awaiting_abbreviation':\
           \ \"At awaiting_abbreviation, the stored state's abbreviation_suggestion\
           \ field holds a recommended English abbreviation.\\nIf the user accepts\
           \ it (e.g. '네', '좋아요', '그걸로 할게요', '네 그걸로 해줘'), set_abbreviation with value\
@@ -287,18 +317,29 @@ workflow:
           \ the FIRST time, NOT naming a term or a word directly -> propose_word,\
           \ value = that\\nfree-text description verbatim (never shorten it to just\
           \ a candidate word).\\nOnly an actual question about this step -> help.',\
-          \ 'awaiting_word_confirm': \"At awaiting_word_confirm, the stored state's\
-          \ word_suggestion field is already populated. Three cases:\\n(1) word_suggestion.ambiguous=true:\
+          \ 'awaiting_word_confirm': 'At awaiting_word_confirm, the stored state\\\
+          's word_suggestion field is already populated. Four cases:\\n(1) word_suggestion.ambiguous=true:\
           \ a pick of one of its options (short candidate-meaning labels) ->\\npropose_word,\
           \ value = that exact option text copied verbatim - this is answering the\
           \ clarifying\\nquestion, NOT a yes/no confirmation.\\n(2) word_suggestion\
           \ holds existing_word_match or a complete new-word proposal (name/english_abbr/\\\
-          ndefinition all set): explicit acceptance (e.g. '네', '그 단어 쓸게요', '좋아요',\
-          \ '그걸로 등록해줘') ->\\nconfirm_word confirmed=true; explicit rejection (e.g.\
-          \ '아니요', '다른 단어로') -> confirm_word confirmed=false.\\n(3) A completely different\
-          \ usage description (not answering an option or a yes/no) -> propose_word\\\
-          ninstead, value = that new description.\", 'awaiting_word_abbreviation':\
-          \ \"At awaiting_word_abbreviation, the stored state's word_registration_payload.english_abbr\
+          ndefinition all set): explicit acceptance (e.g. \\'네\\', \\'그 단어 쓸게요\\',\
+          \ \\'좋아요\\', \\'그걸로 등록해줘\\') ->\\nconfirm_word confirmed=true; explicit\
+          \ rejection (e.g. \\'아니요\\', \\'다른 단어로\\') -> confirm_word confirmed=false.\\\
+          n(3) Only when word_suggestion has a new-word proposal (not existing_word_match):\
+          \ a request to keep the\\nproposed name/abbreviation but write the definition\
+          \ themselves (e.g. \\'내가 새로 정의할래요\\', \\'정의만 다시\\n쓸게요\\', \\'직접 정의하고 싶어\\\
+          ') -> edit_word_definition, value=\"\" (bare - this is a mode switch, not\
+          \ the\\ndefinition text itself; the next turn provides that).\\n(4) A completely\
+          \ different usage description (not answering an option, not a yes/no, not\
+          \ asking to\\nself-write the definition) -> propose_word instead, value\
+          \ = that new description.', 'awaiting_word_definition': 'At awaiting_word_definition,\
+          \ the user is directly writing their OWN definition for the new standard\\\
+          nword (its name/abbreviation are already fixed and unaffected by this step)\
+          \ - any descriptive text ->\\nset_word_definition, value = that exact text\
+          \ verbatim, never invent/reformat/expand it.\\nOnly an actual question about\
+          \ this step -> help. 취소할게 -> cancel.', 'awaiting_word_abbreviation': \"\
+          At awaiting_word_abbreviation, the stored state's word_registration_payload.english_abbr\
           \ field holds\\na recommended English abbreviation for the new word.\\nAcceptance\
           \ (e.g. '네', '좋아요', '그걸로 할게요') -> set_word_abbreviation, value = that exact\
           \ suggested\\nabbreviation string, copied verbatim from the stored state\
@@ -359,7 +400,7 @@ workflow:
 
             show_candidates,edit_term,edit_domain,edit_definition,cancel,restart,help,unknown,
 
-            propose_word,confirm_word,set_word_abbreviation,find_term.
+            propose_word,confirm_word,set_word_abbreviation,find_term,edit_word_definition,set_word_definition.
 
             Only explicit help/query/edit/cancel/restart REQUESTS take priority over
             a field answer. A short descriptive noun phrase is an answer, not a help
@@ -496,15 +537,19 @@ workflow:
           \ to do both).\n    state=result.get(\"state\",{})\n    domains=state.get(\"\
           domains\",{})\n    stage=state.get(\"stage\")\n    error=result.get(\"error\"\
           )\n    # The \"새 용어를/단어를 등록할래요\" terminal-stage buttons deliberately re-fire\n\
-          \    # propose_term/propose_word with an empty value (see CLASSIFY_TERMINAL_RULE)\
-          \ to\n    # reuse the existing TERM_REQUIRED/WORD_MEANING_REQUIRED \"ask\
-          \ for the next\n    # name/description\" flow - but the stage itself is\
-          \ still e.g. \"submitted\" or\n    # \"word_reused\", whose own RENDER guidance\
-          \ narrates a completed/blocked outcome.\n    # Both instructions would otherwise\
-          \ fire in the same turn and the reply LLM\n    # would restate stale \"\
-          접수 완료\"/\"차단\" narration nobody asked about this turn -\n    # same \"don't\
-          \ let two simultaneous instructions blend\" lesson as meaning_required_hint.\n\
-          \    suppress_stage_summary=error in (\"TERM_REQUIRED\",\"WORD_MEANING_REQUIRED\"\
+          \    # propose_term/propose_word/find_term with an empty value (see CLASSIFY_TERMINAL_RULE)\n\
+          \    # to reuse the existing TERM_REQUIRED/WORD_MEANING_REQUIRED/TERM_MEANING_REQUIRED\n\
+          \    # \"ask for the next name/description\" flow - but the stage itself\
+          \ is still e.g.\n    # \"submitted\" or \"word_reused\", whose own RENDER\
+          \ guidance narrates a completed/\n    # blocked outcome. Both instructions\
+          \ would otherwise fire in the same turn and the\n    # reply LLM would restate\
+          \ stale \"접수 완료\"/\"차단\" narration nobody asked about this\n    # turn -\
+          \ same \"don't let two simultaneous instructions blend\" lesson as\n   \
+          \ # meaning_required_hint. (The frontend has the same \"stale stage\" problem\
+          \ for the\n    # table/buttons it renders from business_result.state - see\
+          \ app.js's needsFreshInput,\n    # which reads this same set of error codes\
+          \ off the action node's own output.)\n    suppress_stage_summary=error in\
+          \ (\"TERM_REQUIRED\",\"WORD_MEANING_REQUIRED\",\"TERM_MEANING_REQUIRED\"\
           ) and stage in (\n        \"submitted\",\"registration_failed\",\"existing_term_found\"\
           ,\"pending_request_found\",\"definition_blocked\",\"cancelled\",\n     \
           \   \"word_reused\",\"word_submitted\",\"word_registration_failed\",\"word_request_blocked\"\
@@ -573,7 +618,8 @@ workflow:
           \ options=[{\"label\":f\"네, '{word_sug['existing_word_match']}' 단어를 쓸게요\"\
           ,\"value\":\"네, 그 단어 쓸게요\"}]\n        elif word_sug.get(\"name\") and word_sug.get(\"\
           english_abbr\"):\n            options=[{\"label\":f\"네, '{word_sug['name']}'(으)로\
-          \ 등록할게요\",\"value\":\"네, 등록할게요\"}]\n    elif stage==\"awaiting_word_abbreviation\"\
+          \ 등록할게요\",\"value\":\"네, 등록할게요\"},\n                {\"label\":\"내가 새로 정의할래요\"\
+          ,\"value\":\"내가 새로 정의할래요\"}]\n    elif stage==\"awaiting_word_abbreviation\"\
           :\n        suggested=(state.get(\"word_registration_payload\") or {}).get(\"\
           english_abbr\")\n        options=[{\"label\":f\"네, {suggested}로 할게요\",\"\
           value\":suggested}] if suggested else []\n    # Same reliability problem\
@@ -853,6 +899,9 @@ workflow:
             awaiting_word_confirm: word_hint에 이번 턴에 안내할 문장이 정해져 있습니다 - 그대로 다듬어 포함하세요(has_word_suggestion
             값으로 직접 판단하지 마세요). 단어 후보/질문/기존 매칭의 구체적 내용은 화면에 별도로 표시되니 문장에서 반복하지 마세요.
 
+            awaiting_word_definition: 단어명과 영문 약어는 이미 정해졌고, 이제 그 단어의 정의만 직접 입력받는 단계라고
+            한 문장으로 안내하세요.
+
             awaiting_word_abbreviation: 새 표준단어의 영문 약어 후보가 아래에 제시되었다고만 안내하고, 그 약어로
             할지 다른 약어를 직접 입력할지 물으세요. 약어 값 자체를 문장에서 다시 쓰지 마세요.
 
@@ -872,8 +921,8 @@ workflow:
             중 선택, awaiting_guideline_choice→아래 후보 중 선택 또는 새 용어명, awaiting_domain_choice→도메인
             선택, awaiting_definition→정의 작성, awaiting_abbreviation→아래 약어 후보 확인 또는 직접
             입력, awaiting_confirm→등록 여부, awaiting_word_meaning→개념 사용 용도 설명, awaiting_word_confirm→단어
-            후보 확인, awaiting_word_abbreviation→단어 약어 후보 확인 또는 직접 입력. 다른 단계에서나 나올 법한
-            질문(예: 정의 작성 요청)을 지어내지 마세요.
+            후보 확인, awaiting_word_definition→단어의 정의 작성, awaiting_word_abbreviation→단어
+            약어 후보 확인 또는 직접 입력. 다른 단계에서나 나올 법한 질문(예: 정의 작성 요청)을 지어내지 마세요.
 
             error가 WORD_MEANING_REQUIRED 또는 TERM_MEANING_REQUIRED이면 meaning_required_hint에
             이번 턴에 안내할 문장이 이미 정해져 있습니다 - 그 문장을 자연스럽게 다듬어 그대로 답변하세요(두 에러가 서로 비슷해 보여도
@@ -887,11 +936,16 @@ workflow:
             다듬어 답변에 포함하세요(has_term_matches 값으로 직접 판단하지 마세요). 후보 목록의 이름/약어/도메인/정의는
             화면 표에 나오므로 문장에서 나열하지 마세요.
 
-            error가 TERM_REQUIRED이면 등록하려는 용어명을 한 문장으로 다시 말해달라고 요청하세요. suppress_stage_summary가
+            error가 TERM_REQUIRED이면 등록하려는 용어명을 한 문장으로 알려달라고 요청하세요("다시"라는 표현은 쓰지 마세요
+            - 이전에 이름을 말한 적이 없는 turn에서도 나오는 에러라 "다시 말해달라"는 어색합니다). suppress_stage_summary가
             true이면 stage의 완료/차단 설명(예: 접수 완료, 기존 용어 안내)은 이번 턴에 언급하지 말고 새 용어명 요청만 하세요.
 
             error가 INVALID_ABBREVIATION_FORMAT이면 영문 대문자·숫자·밑줄(_)만 사용해 20자 이내로 다시 입력해달라고
             요청하세요.
+
+            error가 DEFINITION_REQUIRED이면 등록하려는 용어의 정의를 한 문장으로 알려달라고 요청하세요.
+
+            error가 WORD_DEFINITION_REQUIRED이면 등록하려는 단어의 정의를 한 문장으로 알려달라고 요청하세요.
 
             error가 ABBREVIATION_ALREADY_USED이면 그 약어는 이미 다른 용어가 사용 중이라고 안내하고 다른 약어를
             입력해달라고 요청하세요.

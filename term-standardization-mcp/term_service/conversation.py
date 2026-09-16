@@ -16,7 +16,8 @@ from .word_suggestion import suggest_word
 class ConversationAction(Schema):
     intent: Literal["propose_term","confirm_term","set_domain","set_definition","set_abbreviation","confirm_registration",
                     "show_candidates","edit_term","edit_domain","edit_definition","cancel","restart","help","unknown",
-                    "propose_word","confirm_word","set_word_abbreviation","find_term"]
+                    "propose_word","confirm_word","set_word_abbreviation","find_term",
+                    "edit_word_definition","set_word_definition"]
     value: str = Field(default="",max_length=4000)
     confirmed: bool = False
 
@@ -64,13 +65,21 @@ def transition(state, action, requester, conversation_id):
         return {"stage":"awaiting_term_direct"},{"next_action":a.intent}
     if a.intent in {"propose_term","edit_term"}:
         if not a.value.strip() or len(a.value)>200:
-            return s,{"error":"TERM_REQUIRED"}
+            # Reset to awaiting_term_direct instead of leaving s (and stage) untouched -
+            # a terminal-stage "새 용어를 등록할래요" button re-fires this with value=""
+            # on purpose (see CLASSIFY_TERMINAL_RULE), and leaving stage parked at e.g.
+            # term_lookup_result meant the user's NEXT message (a plain candidate name)
+            # was classified under that stage's terser 3-way rule instead of
+            # awaiting_term_direct's - verified live, a bare name kept getting misrouted
+            # into find_term again instead of accepted as the name. Nothing here needs
+            # preserving: no registration_preparations row exists yet at a terminal stage.
+            return {"stage":"awaiting_term_direct"},{"error":"TERM_REQUIRED"}
         # A trailing case particle (e.g. "값을") is part of the request sentence, never
         # the term itself; drop it here so the user isn't asked to confirm-then-correct
         # something they never actually proposed.
         term_name=strip_trailing_particle(a.value.strip())
         if not term_name:
-            return s,{"error":"TERM_REQUIRED"}
+            return {"stage":"awaiting_term_direct"},{"error":"TERM_REQUIRED"}
         registration.cancel(requester,conversation_id)
         return {"stage":"awaiting_term_confirm","term_name":term_name},{"next_action":"CONFIRM_EXTRACTED_TERM"}
     if a.intent=="confirm_term":
@@ -163,10 +172,23 @@ def transition(state, action, requester, conversation_id):
             # itself as the term's definition.
             s["definition_suggestion"]=suggest_definition(s["term_name"],clarification_hint=a.value).model_dump()
             return s,{"next_action":"INPUT_DEFINITION"}
+        # A bare acceptance ("네", "좋아요", the "네, 이 정의로 할게요" button) is
+        # classified with an EMPTY value on purpose (see CLASSIFY's awaiting_definition
+        # rule) instead of asking the model to reproduce definition_suggestion.definition
+        # itself - that reproduction step was exactly where the model sometimes silently
+        # substituted the suggestion for the user's own freshly-typed rewrite instead
+        # (a real incident: a long custom definition sharing an opening clause with the
+        # suggestion got replaced by the suggestion at the final confirm screen). The
+        # actual text is already known here in state, so there is nothing left for the
+        # model to get wrong by copying it - same "code fills in the value it already
+        # knows" pattern as close_hint/meaning_required_hint elsewhere in this project.
+        value=a.value.strip() or suggestion.get("definition","")
+        if not value:
+            return s,{"error":"DEFINITION_REQUIRED"}
         # Full shape/length validation (RegistrationInput) happens once at
         # set_domain below, where term_name/definition/domain are all finally
         # known together - domain isn't chosen yet at this point.
-        s["definition"]=a.value
+        s["definition"]=value
         # Now that a definition exists, search with it (not just the bare name)
         # for real domain-recommendation evidence - see the comment on confirm_term.
         result=search(s["term_name"],a.value,limit=30)
@@ -253,6 +275,14 @@ def transition(state, action, requester, conversation_id):
         # so an embedded word request keeps its place in the paused term flow.
         value=a.value.strip()
         if not value:
+            # Move to awaiting_word_meaning (in place - resume_term/etc. untouched, so an
+            # embedded word request stays put) instead of leaving stage at whatever it
+            # was. Same fix and reason as propose_term above: a terminal-stage "다른
+            # 단어를 등록할래요" button re-fires this with value="" on purpose, and
+            # leaving stage parked there routes the user's next message (a plain meaning
+            # description) through that stage's terser 3-way CLASSIFY_TERMINAL_RULE
+            # instead of awaiting_word_meaning's own unambiguous "always propose_word" rule.
+            s["stage"]="awaiting_word_meaning"
             return s,{"error":"WORD_MEANING_REQUIRED"}
         prior=s.get("word_suggestion") or {}
         if prior.get("ambiguous") and value in prior.get("options",[]):
@@ -285,6 +315,33 @@ def transition(state, action, requester, conversation_id):
         if not (suggestion.get("name") and suggestion.get("english_abbr") and suggestion.get("definition")):
             return s,{"error":"WORD_SUGGESTION_NOT_READY"}
         s["word_registration_payload"]={"word_name":suggestion["name"],"definition":suggestion["definition"],
+            "english_abbr":suggestion["english_abbr"],"is_format_word":suggestion.get("is_format_word",False)}
+        s["stage"]="awaiting_word_abbreviation"
+        return s,{"next_action":"CONFIRM_WORD_ABBREVIATION"}
+    if a.intent=="edit_word_definition":
+        # A new word's name/abbreviation come from suggest_word() as one package with the
+        # definition, and confirm_word only ever accepts or fully re-describes all three
+        # together (back to awaiting_word_meaning) - there was no way to keep a name/
+        # abbreviation the user already liked while only rewriting the definition text,
+        # unlike a term's awaiting_definition step which always took free-text overrides.
+        # This is the word-side entry point for that: bare click, no value yet.
+        if stage!="awaiting_word_confirm":
+            return s,{"error":"UNEXPECTED_INTENT"}
+        suggestion=s.get("word_suggestion") or {}
+        if not (suggestion.get("name") and suggestion.get("english_abbr")):
+            return s,{"error":"WORD_SUGGESTION_NOT_READY"}
+        s["stage"]="awaiting_word_definition"
+        return s,{"next_action":"INPUT_WORD_DEFINITION"}
+    if a.intent=="set_word_definition":
+        if stage!="awaiting_word_definition":
+            return s,{"error":"UNEXPECTED_INTENT"}
+        value=a.value.strip()
+        if not value:
+            return s,{"error":"WORD_DEFINITION_REQUIRED"}
+        suggestion=s.get("word_suggestion") or {}
+        suggestion["definition"]=value
+        s["word_suggestion"]=suggestion
+        s["word_registration_payload"]={"word_name":suggestion["name"],"definition":value,
             "english_abbr":suggestion["english_abbr"],"is_format_word":suggestion.get("is_format_word",False)}
         s["stage"]="awaiting_word_abbreviation"
         return s,{"next_action":"CONFIRM_WORD_ABBREVIATION"}

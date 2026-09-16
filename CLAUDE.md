@@ -107,6 +107,25 @@ curl -sN -X POST http://localhost:8090/v1/chat-messages \
 ```
 `node_finished` 이벤트 중 `node_id":"action"`의 `outputs.state`가 실제 MCP 상태이고, `node_id":"reply"`의 `process_data.prompts`로 실제 전달된 시스템/유저 프롬프트를 확인할 수 있습니다. `gpt-4o-mini`는 `temperature=0.1`(0 아님)이라 3회 이상 반복 확인하세요.
 
+## `Caddyfile`을 고쳤으면 Caddy도 따로 재기동해야 합니다
+
+`./start.sh --restart`는 MCP 서버(Python 프로세스)만 재시작합니다 — **Caddy는 완전히 별개의 프로세스라 그 재시작에 전혀 영향받지 않고, 자기가 시작될 때 읽은 `tools/Caddyfile` 설정을 계속 그대로 씁니다.** `poc-start.sh`/`poc-start.ps1`도 포트 8090이 이미 리스닝 중이면 "이미 실행 중"이라고 보고 건너뛰므로, 오래전에 띄워둔 Caddy가 그 뒤에 추가된 새 라우트(예: `admin_api.py`의 `/admin/*`)를 전혀 모른 채 계속 남아있을 수 있습니다.
+
+실제로 이 문제로 겪은 사례(2026-09-16): 다른 세션에서 커밋한 `/admin/*` 라우트(설정 화면의 OpenAI/로컬 LLM 전환 API)를 pull하고 MCP 서버는 재시작했는데, 며칠 전부터 떠 있던 Caddy가 옛날 설정 그대로라 `/admin/llm-status` 호출이 계속 404 → 프론트엔드에서 "Unexpected end of JSON input" 에러로 나타났습니다. 백엔드 자체(`curl localhost:8100/admin/llm-status`)는 처음부터 정상이었어서, 원인 파악이 "프록시를 안 거치면 되는데 거치면 깨진다"는 것부터 시작해야 했습니다.
+
+이 Caddyfile은 `{ admin off }`라 `caddy reload`(무중단 설정 리로드)도 안 됩니다 — 완전히 내렸다 다시 띄워야 합니다. 가장 안전한 방법은 전체 스택을 한 번 내렸다 올리는 것입니다:
+
+```bash
+# Mac/Linux
+./poc-stop.sh && ./poc-start.sh
+```
+```powershell
+# Windows
+.\poc-stop.ps1; .\poc-start.ps1
+```
+
+**Caddyfile을 고칠 때마다(라우트 추가/변경) 이 절차를 거치세요** — MCP 코드만 바뀌었을 때의 `./start.sh --restart`와는 별개입니다.
+
 ## DB 시딩은 매 실행마다 자동 (idempotent) — 단, 실데이터는 수동 1회
 
 `start.sh`/`start.ps1`이 `docker compose up`에 이어 매번 `manage.py init-db` → `import-catalog`(시나리오 12건) → `import-guideline`을 자동 실행합니다(커밋 `49beeb1`). DB는 `compose.yaml`의 `terms_data` Docker 볼륨이라 컴퓨터마다 독립이고, Mac↔Windows를 오가거나 새로 클론하면 매번 빈 상태로 시작하지만 위 자동 시딩 덕분에 즉시 시나리오 데이터가 채워집니다.
