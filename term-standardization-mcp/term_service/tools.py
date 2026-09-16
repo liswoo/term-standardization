@@ -190,13 +190,14 @@ def search_standard_words_semantic(meaning_query: str, limit: int = 10) -> dict:
     return {"query":meaning_query,"results":search_words(meaning_query,limit=limit)}
 
 @tool
-def suggest_standard_word(usage_description: str, clarification_hint: str = "") -> dict:
+def suggest_standard_word(usage_description: str, clarification_history: list[dict] | None = None) -> dict:
     """Given a description of how a concept/word is being used (not a name the user
     already picked), judge whether an existing standard word already covers it
     (existing_word_match) or propose a brand-new one (name/english_abbr/definition).
     Ambiguous descriptions get a clarifying question instead of a guess; answer it by
-    calling again with clarification_hint set to the chosen option label."""
-    return suggest_word(usage_description,clarification_hint)
+    calling again with clarification_history set to the full ordered list of every
+    {question, answer} pair so far (not just the latest one)."""
+    return suggest_word(usage_description,clarification_history)
 
 @tool
 def prepare_word_registration(word_name: str, definition: str, english_abbr: str, requester: str,

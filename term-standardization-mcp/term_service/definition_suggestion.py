@@ -40,10 +40,15 @@ the fork and 2-4 short
 Korean option labels, each a distinct candidate meaning - never write the definition field in
 that case. When not ambiguous, write a confident one-to-two sentence Korean definition in the
 same style as prior_examples, formal register, no chatbot greetings - never write question/
-options in that case. If a clarification_hint is given, it is the user's answer to a previous
-question of yours: incorporate it and this time you MUST return ambiguous=false with a
-confident definition, even if some detail is still uncertain. Always fill rationale with one
-short Korean sentence explaining your definition or your question."""
+options in that case. If clarification_history is non-empty, it is the FULL ordered list of
+every question you asked and how the user answered each one so far (not just the latest) - read
+all of it together and incorporate everything learned across every round. If you now have enough
+to commit, return ambiguous=false with a confident definition. If the term name is still
+genuinely open to 2+ distinct meanings even given the whole history, you may ask again - but the
+new question must be different from every question already in clarification_history and make
+real progress using everything you were already told; never repeat the same fork or a
+near-identical question, and never ask something an earlier answer already settled. Always fill
+rationale with one short Korean sentence explaining your definition or your question."""
 
 def _prior_examples(term_name: str, limit: int = 5):
     # Terms textually/semantically similar to the candidate name are far more
@@ -60,12 +65,16 @@ def _prior_examples(term_name: str, limit: int = 5):
                 (limit - len(rows),)).fetchall()
     return rows
 
-def suggest_definition(term_name: str, clarification_hint: str = "") -> DefinitionSuggestionResult:
+def suggest_definition(term_name: str, clarification_history: list[dict] | None = None) -> DefinitionSuggestionResult:
     if not llm_configured():
         return DefinitionSuggestionResult(ambiguous=False, definition="",
             rationale="추천 모델이 설정되지 않음", method="unavailable", error_code="LLM_NOT_CONFIGURED")
     examples = _prior_examples(term_name)
-    payload = {"term_name": term_name, "clarification_hint": clarification_hint,
+    # The full Q&A history (not just the latest answer), same reasoning and same live-verified
+    # failure mode as word_suggestion.py's identical fix: passing only the newest hint lost
+    # earlier context and either forced a hard failure or made the model re-ask a near-identical
+    # question instead of narrowing further across rounds.
+    payload = {"term_name": term_name, "clarification_history": clarification_history or [],
         "prior_examples": [{"term": r["name"], "definition": r["definition"]} for r in examples]}
     model = current_llm_model()
     try:
@@ -77,11 +86,11 @@ def suggest_definition(term_name: str, clarification_hint: str = "") -> Definiti
         if suggestion is None:
             raise ValueError("Missing structured model output")
         data = suggestion.model_dump()
-        # Deterministic guardrail: a clarification round must always resolve to a
-        # confident definition, and either branch must actually carry the fields
-        # it claims to - never trust the model's own internal consistency alone.
-        if clarification_hint:
-            data["ambiguous"] = False
+        # Deterministic guardrail: an internally-inconsistent "ambiguous" claim (no actual
+        # question/options attached) can't be trusted as real ambiguity - fall through to
+        # requiring a real definition instead. No longer force ambiguous=False just because a
+        # clarification round happened (see word_suggestion.py's identical, live-verified fix -
+        # that used to convert a genuine follow-up question into a guaranteed hard failure).
         if data["ambiguous"] and not (data["question"] and data["options"]):
             data["ambiguous"] = False
         if not data["ambiguous"]:

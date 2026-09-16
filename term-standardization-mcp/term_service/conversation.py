@@ -38,7 +38,7 @@ def _resume_or_finish_word_flow(s, result_stage):
     for review), jump back to exactly where the term flow paused instead of
     making the user re-state the term."""
     resume=s.pop("resume_term",None)
-    for name in ["word_usage_description","word_suggestion","word_registration_payload"]:
+    for name in ["word_usage_description","word_suggestion","word_registration_payload","word_clarification_history"]:
         s.pop(name,None)
     if resume:
         s["definition_suggestion"]=suggest_definition(resume["term_name"]).model_dump()
@@ -157,7 +157,7 @@ def transition(state, action, requester, conversation_id):
         registration.cancel(requester,conversation_id)
         # Domain evidence was built from the OLD definition's search results, so
         # editing the definition invalidates it too - back to square one on both.
-        for name in ["domain","domains","preparation","definition","abbreviation_suggestion","english_abbr"]:
+        for name in ["domain","domains","preparation","definition","abbreviation_suggestion","english_abbr","definition_clarification_history"]:
             s.pop(name,None)
         s["definition_suggestion"]=suggest_definition(s["term_name"]).model_dump()
         s["stage"]="awaiting_definition"
@@ -169,8 +169,12 @@ def transition(state, action, requester, conversation_id):
         if suggestion.get("ambiguous") and a.value in suggestion.get("options",[]):
             # This is an answer to the clarifying question, not a final definition -
             # re-propose with that hint instead of registering the option label
-            # itself as the term's definition.
-            s["definition_suggestion"]=suggest_definition(s["term_name"],clarification_hint=a.value).model_dump()
+            # itself as the term's definition. Accumulate the full history (not just
+            # this one answer) so a second+ round doesn't lose earlier context - see
+            # suggest_definition()'s own comment for the live-verified failure this avoids.
+            history=(s.get("definition_clarification_history") or [])+[{"question":suggestion.get("question",""),"answer":a.value}]
+            s["definition_clarification_history"]=history
+            s["definition_suggestion"]=suggest_definition(s["term_name"],clarification_history=history).model_dump()
             return s,{"next_action":"INPUT_DEFINITION"}
         # A bare acceptance ("네", "좋아요", the "네, 이 정의로 할게요" button) is
         # classified with an EMPTY value on purpose (see CLASSIFY's awaiting_definition
@@ -286,10 +290,16 @@ def transition(state, action, requester, conversation_id):
             return s,{"error":"WORD_MEANING_REQUIRED"}
         prior=s.get("word_suggestion") or {}
         if prior.get("ambiguous") and value in prior.get("options",[]):
-            # Answer to a clarifying question, not a fresh description.
-            suggestion=suggest_word(s["word_usage_description"],clarification_hint=value).model_dump()
+            # Answer to a clarifying question, not a fresh description. Accumulate the
+            # full history (not just this one answer) so a second+ round doesn't lose
+            # earlier context - see suggest_word()'s own comment for the live-verified
+            # failure this avoids (a near-identical re-ask instead of narrowing further).
+            history=(s.get("word_clarification_history") or [])+[{"question":prior.get("question",""),"answer":value}]
+            s["word_clarification_history"]=history
+            suggestion=suggest_word(s["word_usage_description"],clarification_history=history).model_dump()
         else:
             s["word_usage_description"]=value
+            s["word_clarification_history"]=[]
             suggestion=suggest_word(value).model_dump()
         s["word_suggestion"]=suggestion
         s["stage"]="awaiting_word_confirm"

@@ -1266,7 +1266,18 @@ async function submitChatMessage(raw) {
     });
 
     const closed = isCloseAction && mcpState?.stage === "awaiting_term_direct";
-    setBubbleContent(bubble, formatAnswer(closed ? "네, 알겠습니다! 필요하시면 아래 중 하나를 선택하거나 자유롭게 말씀해주세요." : answer));
+    // word_suggestion.method=="unavailable" means suggest_word() itself threw (e.g. the
+    // model returned an incomplete proposal even after a clarification round) - nothing
+    // was actually produced. Verified live: the reply LLM sometimes narrates this as if a
+    // real candidate WERE ready anyway, apparently recalling a word mentioned earlier in
+    // the conversation instead of reporting the failure - a hallucination, not just a
+    // wording slip, so (like `closed` above) this bypasses the LLM's text entirely rather
+    // than trying to prompt-engineer around it again.
+    const wordSuggestionFailed = mcpState?.stage === "awaiting_word_confirm" && mcpState?.word_suggestion?.method === "unavailable";
+    setBubbleContent(bubble, formatAnswer(
+      closed ? "네, 알겠습니다! 필요하시면 아래 중 하나를 선택하거나 자유롭게 말씀해주세요." :
+      wordSuggestionFailed ? "단어 추천을 만드는 데 실패했습니다. 어떤 개념인지 다시 한 번 설명해 주세요." :
+      answer));
     tracker.remove();
 
     // These three errors mean a terminal-stage "새 용어를/단어를 등록할래요" button

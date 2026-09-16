@@ -36,10 +36,18 @@ excerpts + reserved_abbreviations show the actual rule and every abbreviation al
 uppercase/digits/underscores only, 3-5 letters, must not collide), whether it is itself a 분류어/
 format word (a word whose own meaning already implies a data format, like 코드/명/수/일자/금액-
 true only for that kind of word, false for an ordinary content word like 지사/등기), and a
-confident one-sentence Korean definition. If clarification_hint is given, it is the user's answer
-to your previous question - incorporate it and this time you MUST propose a concrete word
-(existing_word_match or a new name), never ask again. Always fill rationale with one short
-Korean sentence. No chatbot greetings or conversation text."""
+confident one-sentence Korean definition. If clarification_history is non-empty, it is the FULL
+ordered list of every question you asked and how the user answered each one so far (not just the
+latest) - read all of it together, not just the last entry, and incorporate everything you've
+learned across every round before deciding. If you now have enough to commit, propose a concrete
+word (existing_word_match or a new name). If the concept is still genuinely ambiguous even given
+the whole history (still spans 2+ meaningfully different interpretations), you may ask again - but
+the new question must be different from every question already in clarification_history and must
+make real progress narrowing it down using everything you were already told; never repeat the same
+fork or a near-identical question, and never ask something an earlier answer already settled. Do
+not ask again just because a fully specific definition would need extra detail that doesn't change
+which concept is meant - commit to a proposal instead in that case. Always fill rationale with one
+short Korean sentence. No chatbot greetings or conversation text."""
 
 def _candidate_existing_words(usage_description: str, limit: int = 8):
     matches = search_words(usage_description, limit=limit)
@@ -50,7 +58,7 @@ def _candidate_existing_words(usage_description: str, limit: int = 8):
         matches = matches + extra
     return matches
 
-def suggest_word(usage_description: str, clarification_hint: str = "") -> WordSuggestionResult:
+def suggest_word(usage_description: str, clarification_history: list[dict] | None = None) -> WordSuggestionResult:
     if not llm_configured():
         return WordSuggestionResult(rationale="추천 모델이 설정되지 않음", method="unavailable", error_code="LLM_NOT_CONFIGURED")
     candidates = _candidate_existing_words(usage_description)
@@ -60,7 +68,11 @@ def suggest_word(usage_description: str, clarification_hint: str = "") -> WordSu
             "SELECT english_abbr FROM standard_words WHERE status='ACTIVE'").fetchall()}
         reserved |= {r["english_abbr"] for r in conn.execute(
             "SELECT english_abbr FROM word_registration_requests WHERE status<>'REJECTED'").fetchall()}
-    payload = {"usage_description": usage_description, "clarification_hint": clarification_hint,
+    # The full Q&A history (not just the latest answer) so a second+ clarification round
+    # doesn't lose earlier context - passing only the newest hint made the model re-ask a
+    # near-identical question instead of narrowing further (verified live: answering "로봇"
+    # after already having said "장난감" produced another "어떤 종류의 장난감..." question).
+    payload = {"usage_description": usage_description, "clarification_history": clarification_history or [],
         "candidate_existing_words": [{"word": c["name"], "definition": c["definition"],
             "abbreviation": c["english_abbr"], "similarity": c.get("similarity")} for c in candidates],
         "guideline_excerpts": [{"section": e.section, "content": e.content} for e in evidence],
@@ -86,8 +98,14 @@ def suggest_word(usage_description: str, clarification_hint: str = "") -> WordSu
                 is_format_word=False, definition="")
         else:
             data["match_reason"] = ""
-            if clarification_hint:
-                data["ambiguous"] = False
+            # No longer force ambiguous=False just because a clarification_hint was given -
+            # that silently turned "the model still has a genuine follow-up question" into a
+            # guaranteed hard failure (name/english_abbr/definition all empty, since the model
+            # was trying to ask something, not propose a word - the guard below then raised on
+            # every single retry, confirmed live 5/5). Multiple rounds are now allowed, same as
+            # definition_suggestion.py's term-side equivalent - propose_word's caller
+            # (conversation.py) already re-checks value against the latest stored options on
+            # every turn regardless of how many rounds have happened.
             if data["ambiguous"] and not (data["question"] and data["options"]):
                 data["ambiguous"] = False
             if data["ambiguous"]:

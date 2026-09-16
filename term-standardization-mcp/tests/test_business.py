@@ -181,7 +181,7 @@ def test_multiturn_help_does_not_become_definition(monkeypatch):
     monkeypatch.setattr(conversation,"suggest_abbreviation",
         lambda term_name,extra_words=None: AbbreviationResult(abbreviation="TEST_ABBR",rationale="테스트 고정값",method="test_stub"))
     monkeypatch.setattr(conversation,"suggest_definition",
-        lambda term_name,clarification_hint="": DefinitionSuggestionResult(ambiguous=False,definition="",rationale="",method="test_stub"))
+        lambda term_name,clarification_history=None: DefinitionSuggestionResult(ambiguous=False,definition="",rationale="",method="test_stub"))
     with db.connect() as conn:
         conn.execute("INSERT INTO domains(code,description,source) VALUES('수N7','테스트 숫자 도메인','TEST')")
     def apply(revision,intent,value="",confirmed=False):
@@ -214,7 +214,7 @@ def test_confirm_term_detects_already_pending_request(monkeypatch):
     monkeypatch.setattr(conversation,"suggest_abbreviation",
         lambda term_name,extra_words=None: AbbreviationResult(abbreviation="TEST_ABBR",rationale="테스트 고정값",method="test_stub"))
     monkeypatch.setattr(conversation,"suggest_definition",
-        lambda term_name,clarification_hint="": DefinitionSuggestionResult(ambiguous=False,definition="",rationale="",method="test_stub"))
+        lambda term_name,clarification_history=None: DefinitionSuggestionResult(ambiguous=False,definition="",rationale="",method="test_stub"))
     with db.connect() as conn:
         conn.execute("INSERT INTO domains(code,description,source) VALUES('수N7','테스트 숫자 도메인','TEST')")
     def apply(conv,revision,intent,value="",confirmed=False):
@@ -287,21 +287,23 @@ def test_suggest_definition_unavailable_when_no_api_key(monkeypatch):
 
 def test_definition_clarification_round_trip(monkeypatch):
     # confirm_term triggers a first suggest_definition call; if it comes back
-    # ambiguous, picking one of its options must trigger a SECOND call (with
-    # that pick as clarification_hint) rather than registering the short
-    # option label itself as the term's definition. Once a confident definition
-    # is accepted, THAT (not the bare name) is what search()/domain_usage() use
-    # for domain-recommendation evidence. A stub with a call counter stands in
-    # for the real (paid) LLM call, same pattern as
+    # ambiguous, picking one of its options must trigger a SECOND call (with the
+    # full clarification_history, not just the latest answer - see
+    # suggest_definition()'s own comment for why) rather than registering the
+    # short option label itself as the term's definition. Once a confident
+    # definition is accepted, THAT (not the bare name) is what search()/
+    # domain_usage() use for domain-recommendation evidence. A stub with a call
+    # log stands in for the real (paid) LLM call, same pattern as
     # test_multiturn_help_does_not_become_definition's abbreviation stub.
     calls=[]
-    def fake_suggest_definition(term_name,clarification_hint=""):
-        calls.append(clarification_hint)
-        if not clarification_hint:
+    def fake_suggest_definition(term_name,clarification_history=None):
+        calls.append(clarification_history or [])
+        if not clarification_history:
             return DefinitionSuggestionResult(ambiguous=True,question="실제 소모량인가요, 목표량인가요?",
                 options=["실제 소모량 기준","목표로 설정한 소모량 기준"],method="test_stub")
+        answer=clarification_history[-1]["answer"]
         return DefinitionSuggestionResult(ambiguous=False,
-            definition=f"{clarification_hint}으로 계산한 하루 소모 에너지량",rationale="테스트 고정값",method="test_stub")
+            definition=f"{answer}으로 계산한 하루 소모 에너지량",rationale="테스트 고정값",method="test_stub")
     monkeypatch.setattr(conversation,"suggest_definition",fake_suggest_definition)
     monkeypatch.setattr(conversation,"suggest_abbreviation",
         lambda term_name,extra_words=None: AbbreviationResult(abbreviation="TEST_ABBR",rationale="테스트 고정값",method="test_stub"))
@@ -313,19 +315,20 @@ def test_definition_clarification_round_trip(monkeypatch):
     result=apply(1,"confirm_term",confirmed=True)
     assert result["state"]["stage"]=="awaiting_definition"
     assert result["state"]["definition_suggestion"]["ambiguous"]
-    assert len(calls)==1 and calls[0]==""
+    assert len(calls)==1 and calls[0]==[]
     # Picking one of the offered options must re-propose, not register the
     # option label as the definition.
     result=apply(2,"set_definition","실제 소모량 기준")
     assert result["state"]["stage"]=="awaiting_definition"
     assert not result["state"]["definition_suggestion"]["ambiguous"]
     assert "definition" not in result["state"]
-    assert len(calls)==2 and calls[1]=="실제 소모량 기준"
+    assert len(calls)==2 and calls[1]==[{"question":"실제 소모량인가요, 목표량인가요?","answer":"실제 소모량 기준"}]
+    assert result["state"]["definition_clarification_history"]==calls[1]
     # Accepting the resulting confident suggestion moves on to domain choice,
     # now backed by search(term_name, definition) evidence, not just the name.
     result=apply(3,"set_definition",result["state"]["definition_suggestion"]["definition"])
     assert result["state"]["stage"]=="awaiting_domain_choice"
-    assert result["state"]["definition"]==calls[1]+"으로 계산한 하루 소모 에너지량"
+    assert result["state"]["definition"]=="실제 소모량 기준으로 계산한 하루 소모 에너지량"
     result=apply(4,"set_domain","수N7")
     assert result["state"]["stage"]=="awaiting_abbreviation"
 
@@ -333,7 +336,7 @@ def test_definition_suggestion_own_text_bypasses_suggestion(monkeypatch):
     # The user must always be able to just type their own definition, whether
     # or not a suggestion/question was ever offered.
     monkeypatch.setattr(conversation,"suggest_definition",
-        lambda term_name,clarification_hint="": DefinitionSuggestionResult(
+        lambda term_name,clarification_history=None: DefinitionSuggestionResult(
             ambiguous=True,question="q",options=["A","B"],method="test_stub"))
     monkeypatch.setattr(conversation,"suggest_abbreviation",
         lambda term_name,extra_words=None: AbbreviationResult(abbreviation="TEST_ABBR2",rationale="",method="test_stub"))
@@ -456,12 +459,12 @@ def test_term_waits_for_new_word_approval_and_reuses_its_abbreviation(monkeypatc
     with db.connect() as conn:
         conn.execute("INSERT INTO domains(code,description,source) VALUES('수N7','테스트 숫자 도메인','TEST') ON CONFLICT DO NOTHING")
     monkeypatch.setattr(conversation,"suggest_word",
-        lambda usage_description,clarification_hint="": type("R",(),{"model_dump":lambda self: {
+        lambda usage_description,clarification_history=None: type("R",(),{"model_dump":lambda self: {
             "existing_word_match":"","match_reason":"","ambiguous":False,"question":"","options":[],
             "name":"보행량","english_abbr":"WALKCNT","is_format_word":False,
             "definition":"하루 동안 걸은 걸음 수","rationale":"","method":"test_stub"}})())
     monkeypatch.setattr(conversation,"suggest_definition",
-        lambda term_name,clarification_hint="": DefinitionSuggestionResult(
+        lambda term_name,clarification_history=None: DefinitionSuggestionResult(
             ambiguous=False,definition="하루 동안 걸은 걸음 수를 합산한 값",rationale="",method="test_stub"))
     def apply(revision,intent,value="",confirmed=False):
         return conversation.apply("word-approval-conv","user",revision,{"intent":intent,"value":value,"confirmed":confirmed})
