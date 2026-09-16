@@ -125,3 +125,22 @@ CREATE TABLE IF NOT EXISTS conversation_state (
  state jsonb NOT NULL DEFAULT '{}', updated_at timestamptz NOT NULL DEFAULT now(),
  PRIMARY KEY(conversation_id, requester)
 );
+-- Real login/session/role support. A signup is just another approval-queue row,
+-- the same shape as registration_requests/word_registration_requests - only an
+-- ADMIN can move it out of PENDING_APPROVAL (manage.py's create-admin bootstraps
+-- the very first ADMIN, since a fresh DB has none yet to approve one).
+CREATE TABLE IF NOT EXISTS users (
+ id uuid PRIMARY KEY, username text NOT NULL UNIQUE, password_hash text NOT NULL,
+ display_name text NOT NULL, team text NOT NULL DEFAULT '',
+ role text NOT NULL DEFAULT 'MEMBER' CHECK(role IN ('ADMIN','MEMBER')),
+ status text NOT NULL DEFAULT 'PENDING_APPROVAL' CHECK(status IN ('PENDING_APPROVAL','ACTIVE','SUSPENDED','REJECTED')),
+ created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now()
+);
+-- Opaque random session tokens (secrets.token_urlsafe), not JWTs - the same
+-- "random ID row in Postgres with an expiry" shape registration_preparations/
+-- word_registration_preparations already use for confirmation flows.
+CREATE TABLE IF NOT EXISTS sessions (
+ token text PRIMARY KEY, user_id uuid NOT NULL REFERENCES users(id),
+ expires_at timestamptz NOT NULL, created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS sessions_user_id_idx ON sessions(user_id);

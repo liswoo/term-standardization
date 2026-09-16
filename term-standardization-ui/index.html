@@ -7,9 +7,36 @@
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
 <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
-<link rel="stylesheet" href="style.css?v=2" />
+<link rel="stylesheet" href="style.css?v=3" />
 </head>
-<body>
+<body class="pre-auth">
+
+<div class="auth-shell" id="auth-shell">
+  <div class="auth-loading" id="auth-loading"><p class="muted">세션 확인 중...</p></div>
+  <div class="auth-card" id="auth-card" hidden>
+    <div class="brand-mark">DG</div>
+    <h1>데이터 용어 표준화</h1>
+    <div class="auth-tabs">
+      <button type="button" class="auth-tab is-active" id="auth-tab-login">로그인</button>
+      <button type="button" class="auth-tab" id="auth-tab-signup">회원가입</button>
+    </div>
+    <form id="login-form" class="auth-form">
+      <label>아이디<input type="text" id="login-username" required autocomplete="username" /></label>
+      <label>비밀번호<input type="password" id="login-password" required autocomplete="current-password" /></label>
+      <p class="auth-error" id="login-error" hidden></p>
+      <button type="submit" class="btn btn-primary">로그인</button>
+    </form>
+    <form id="signup-form" class="auth-form" hidden>
+      <label>아이디<input type="text" id="signup-username" required autocomplete="username" /></label>
+      <label>비밀번호 (8자 이상)<input type="password" id="signup-password" required autocomplete="new-password" /></label>
+      <label>이름<input type="text" id="signup-display-name" required /></label>
+      <label>팀 (선택)<input type="text" id="signup-team" /></label>
+      <p class="auth-error" id="signup-error" hidden></p>
+      <p class="auth-notice" id="signup-notice" hidden>가입 신청이 접수되었습니다. 관리자 승인 후 로그인할 수 있습니다.</p>
+      <button type="submit" class="btn btn-primary">가입 신청</button>
+    </form>
+  </div>
+</div>
 
 <div class="app-shell">
 
@@ -57,15 +84,22 @@
         <svg viewBox="0 0 24 24"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6M15 3h6v6M10 14 21 3"/></svg>
         <span>Dify 관리자</span>
       </button>
+      <button class="nav-item" data-view="members" id="nav-members-btn" hidden>
+        <svg viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 0 0-4-4H7a4 4 0 0 0-4 4v2M12 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+        <span>회원 관리</span>
+      </button>
     </nav>
 
     <div class="sidebar-footer">
       <div class="user-chip">
-        <div class="user-avatar">우</div>
+        <div class="user-avatar" id="current-user-avatar">-</div>
         <div class="user-meta">
-          <strong>우종민</strong>
-          <span>데이터 거버넌스팀</span>
+          <strong id="current-user-name">-</strong>
+          <span id="current-user-team">-</span>
         </div>
+        <button class="chat-icon-btn" id="logout-btn" aria-label="로그아웃" title="로그아웃">
+          <svg viewBox="0 0 24 24"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/></svg>
+        </button>
       </div>
     </div>
   </aside>
@@ -285,6 +319,33 @@
         </div>
       </section>
 
+      <!-- 회원 관리 (관리자 전용) -->
+      <section class="view" id="view-members" hidden>
+        <div class="panel">
+          <div class="panel-header panel-header-row">
+            <h2>회원 관리</h2>
+            <span class="pill" id="member-pending-count-pill">0건</span>
+          </div>
+          <p class="auth-error" id="members-error" hidden></p>
+          <div class="table-wrap">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>아이디</th>
+                  <th>이름</th>
+                  <th>팀</th>
+                  <th>권한</th>
+                  <th>상태</th>
+                  <th>신청일</th>
+                  <th>처리</th>
+                </tr>
+              </thead>
+              <tbody id="members-tbody"></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
     </main>
   </div>
 
@@ -342,6 +403,6 @@
 
 <script src="runtime-config.js"></script>
 <script src="mock-data.js"></script>
-<script src="app.js?v=2"></script>
+<script src="app.js?v=3"></script>
 </body>
 </html>

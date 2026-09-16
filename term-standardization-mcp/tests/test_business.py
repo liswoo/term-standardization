@@ -2,14 +2,14 @@ import os
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 import pytest
-from term_service import db, registration, word_registration, conversation
+from term_service import db, registration, word_registration, conversation, auth
 from term_service.config import ROOT
 from term_service.naming import validate, morphology, strip_trailing_particle
 from term_service.search import search, domain_usage, validate_name
 from term_service.schemas import AbbreviationResult, DefinitionSuggestionResult, RegistrationInput
 from term_service.comparison import compare
 from term_service.word_suggestion import suggest_word
-from manage import import_guideline
+from manage import import_guideline, create_admin
 
 def insert_guideline_chunk(section,content):
     from term_service.config import EMBEDDING_MODEL
@@ -628,6 +628,162 @@ def test_term_can_split_its_missing_part_into_several_new_words(monkeypatch):
     assert term_row["english_abbr"]=="SORI_CAVE" and term_row["status"]=="ACTIVE"
     assert word_rows["소리"]["english_abbr"]=="SORI" and word_rows["소리"]["status"]=="ACTIVE"
     assert word_rows["동굴"]["english_abbr"]=="CAVE" and word_rows["동굴"]["status"]=="ACTIVE"
+
+def test_hash_password_roundtrip():
+    stored=auth.hash_password("correct horse battery staple")
+    assert auth.verify_password("correct horse battery staple",stored)
+    assert not auth.verify_password("wrong password",stored)
+
+def test_hash_password_unique_salts():
+    assert auth.hash_password("same-password")!=auth.hash_password("same-password")
+
+def test_create_admin_cli_bootstraps_active_admin():
+    result=create_admin("root-admin","hunter2-hunter2","관리자","거버넌스팀")
+    assert result=={"created":True,"username":"root-admin","role":"ADMIN"}
+    with db.connect() as conn:
+        row=conn.execute("SELECT role,status,password_hash FROM users WHERE username='root-admin'").fetchone()
+    assert row["role"]=="ADMIN" and row["status"]=="ACTIVE"
+    assert auth.verify_password("hunter2-hunter2",row["password_hash"])
+    assert create_admin("root-admin","different","다른이름")=={"created":False,"error":"USERNAME_TAKEN"}
+
+@pytest.fixture
+def api_client():
+    from starlette.testclient import TestClient
+    from term_service import admin_api  # noqa: F401 - registers /admin/auth/* routes on `mcp`
+    from term_service.tools import mcp
+    return TestClient(mcp.streamable_http_app())
+
+def test_signup_then_login_pending(api_client):
+    signup=api_client.post("/admin/auth/signup",json={
+        "username":"new-member","password":"password123","display_name":"신규회원","team":"운영팀"})
+    assert signup.status_code==200 and signup.json()=={"ok":True,"status":"PENDING_APPROVAL"}
+    login=api_client.post("/admin/auth/login",json={"username":"new-member","password":"password123"})
+    assert login.status_code==403
+    assert login.json()=={"ok":False,"error":"ACCOUNT_NOT_ACTIVE","status":"PENDING_APPROVAL"}
+
+def test_duplicate_username_signup_conflict(api_client):
+    payload={"username":"dup-user","password":"password123","display_name":"중복"}
+    assert api_client.post("/admin/auth/signup",json=payload).status_code==200
+    second=api_client.post("/admin/auth/signup",json=payload)
+    assert second.status_code==409 and second.json()["error"]=="USERNAME_TAKEN"
+
+def _create_active_admin(username="admin1",password="adminpass123",display_name="관리자"):
+    create_admin(username,password,display_name)
+
+def test_admin_approve_then_login_succeeds(api_client):
+    _create_active_admin()
+    assert api_client.post("/admin/auth/login",json={"username":"admin1","password":"adminpass123"}).status_code==200
+    api_client.post("/admin/auth/signup",json={
+        "username":"approved-user","password":"memberpass123","display_name":"멤버"})
+    members=api_client.get("/admin/auth/members").json()["users"]
+    user_id=next(u["id"] for u in members if u["username"]=="approved-user")
+    approve=api_client.post("/admin/auth/approve-user",json={"user_id":user_id})
+    assert approve.status_code==200 and approve.json()["ok"]
+    from starlette.testclient import TestClient
+    from term_service.tools import mcp
+    fresh_client=TestClient(mcp.streamable_http_app())
+    login=fresh_client.post("/admin/auth/login",json={"username":"approved-user","password":"memberpass123"})
+    assert login.status_code==200
+    assert "session_token" in login.cookies
+
+def test_login_wrong_password_rejected(api_client):
+    _create_active_admin()
+    resp=api_client.post("/admin/auth/login",json={"username":"admin1","password":"wrong-password"})
+    assert resp.status_code==401 and resp.json()["error"]=="INVALID_CREDENTIALS"
+
+def test_reject_user(api_client):
+    _create_active_admin()
+    api_client.post("/admin/auth/login",json={"username":"admin1","password":"adminpass123"})
+    api_client.post("/admin/auth/signup",json={
+        "username":"to-reject","password":"memberpass123","display_name":"반려대상"})
+    members=api_client.get("/admin/auth/members").json()["users"]
+    user_id=next(u["id"] for u in members if u["username"]=="to-reject")
+    reject=api_client.post("/admin/auth/reject-user",json={"user_id":user_id})
+    assert reject.status_code==200
+    login=api_client.post("/admin/auth/login",json={"username":"to-reject","password":"memberpass123"})
+    assert login.status_code==403 and login.json()["status"]=="REJECTED"
+
+def test_role_gating_member_forbidden(api_client):
+    _create_active_admin()
+    api_client.post("/admin/auth/login",json={"username":"admin1","password":"adminpass123"})
+    api_client.post("/admin/auth/signup",json={
+        "username":"plain-member","password":"memberpass123","display_name":"일반회원"})
+    members=api_client.get("/admin/auth/members").json()["users"]
+    user_id=next(u["id"] for u in members if u["username"]=="plain-member")
+    api_client.post("/admin/auth/approve-user",json={"user_id":user_id})
+    from starlette.testclient import TestClient
+    from term_service.tools import mcp
+    member_client=TestClient(mcp.streamable_http_app())
+    member_client.post("/admin/auth/login",json={"username":"plain-member","password":"memberpass123"})
+    resp=member_client.get("/admin/auth/members")
+    assert resp.status_code==403 and resp.json()["error"]=="ADMIN_REQUIRED"
+
+def test_logout_clears_session(api_client):
+    _create_active_admin()
+    api_client.post("/admin/auth/login",json={"username":"admin1","password":"adminpass123"})
+    assert api_client.get("/admin/auth/me").status_code==200
+    api_client.post("/admin/auth/logout")
+    assert api_client.get("/admin/auth/me").status_code==401
+
+def test_session_expiry(api_client):
+    _create_active_admin()
+    with db.connect() as conn:
+        user_id=conn.execute("SELECT id FROM users WHERE username='admin1'").fetchone()["id"]
+    token=auth.create_session(user_id)
+    with db.connect() as conn:
+        conn.execute("UPDATE sessions SET expires_at=now()-interval '1 day' WHERE token=%s",(token,))
+    api_client.cookies.set("session_token",token)
+    resp=api_client.get("/admin/auth/me")
+    assert resp.status_code==401
+
+def test_suspend_and_reactivate_user(api_client):
+    _create_active_admin()
+    _create_active_admin("admin2","adminpass456","관리자2")
+    api_client.post("/admin/auth/login",json={"username":"admin1","password":"adminpass123"})
+    members=api_client.get("/admin/auth/members").json()["users"]
+    target_id=next(u["id"] for u in members if u["username"]=="admin2")
+    suspend=api_client.post("/admin/auth/suspend-user",json={"user_id":target_id})
+    assert suspend.status_code==200
+    login_suspended=api_client.post("/admin/auth/login",json={"username":"admin2","password":"adminpass456"})
+    assert login_suspended.status_code==403 and login_suspended.json()["status"]=="SUSPENDED"
+    reactivate=api_client.post("/admin/auth/reactivate-user",json={"user_id":target_id})
+    assert reactivate.status_code==200
+    login_ok=api_client.post("/admin/auth/login",json={"username":"admin2","password":"adminpass456"})
+    assert login_ok.status_code==200
+
+def test_last_admin_cannot_be_suspended(api_client):
+    _create_active_admin()
+    api_client.post("/admin/auth/login",json={"username":"admin1","password":"adminpass123"})
+    members=api_client.get("/admin/auth/members").json()["users"]
+    self_id=next(u["id"] for u in members if u["username"]=="admin1")
+    resp=api_client.post("/admin/auth/suspend-user",json={"user_id":self_id})
+    assert resp.status_code==409 and resp.json()["error"]=="LAST_ADMIN_CANNOT_BE_SUSPENDED"
+
+def test_last_admin_cannot_be_demoted(api_client):
+    _create_active_admin()
+    api_client.post("/admin/auth/login",json={"username":"admin1","password":"adminpass123"})
+    members=api_client.get("/admin/auth/members").json()["users"]
+    self_id=next(u["id"] for u in members if u["username"]=="admin1")
+    resp=api_client.post("/admin/auth/set-role",json={"user_id":self_id,"role":"MEMBER"})
+    assert resp.status_code==409 and resp.json()["error"]=="LAST_ADMIN_CANNOT_BE_DEMOTED"
+
+def test_set_role_promotes_member_to_admin(api_client):
+    _create_active_admin()
+    api_client.post("/admin/auth/login",json={"username":"admin1","password":"adminpass123"})
+    api_client.post("/admin/auth/signup",json={
+        "username":"future-admin","password":"memberpass123","display_name":"승격예정"})
+    members=api_client.get("/admin/auth/members").json()["users"]
+    target_id=next(u["id"] for u in members if u["username"]=="future-admin")
+    api_client.post("/admin/auth/approve-user",json={"user_id":target_id})
+    promote=api_client.post("/admin/auth/set-role",json={"user_id":target_id,"role":"ADMIN"})
+    assert promote.status_code==200
+    with db.connect() as conn:
+        role=conn.execute("SELECT role FROM users WHERE id=%s",(target_id,)).fetchone()["role"]
+    assert role=="ADMIN"
+    # Now that two admins exist, demoting the original one must succeed (no longer "last").
+    self_id=next(u["id"] for u in members if u["username"]=="admin1")
+    demote=api_client.post("/admin/auth/set-role",json={"user_id":self_id,"role":"MEMBER"})
+    assert demote.status_code==200
 
 @pytest.mark.skipif(os.getenv("RUN_LLM_TESTS")!="1",reason="Explicit low-volume paid API smoke test")
 def test_real_llm_definition_comparison(catalog):

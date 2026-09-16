@@ -8,7 +8,113 @@
 // 터널을 통한 외부 접속이든 항상 "지금 이 페이지를 서빙 중인 오리진"으로 풀립니다.
 const DIFY_CHAT_API = "/v1/chat-messages";
 const DIFY_CHAT_KEY = "app-7MbTrZRjWuMz1uVc7y62E9kd";
-const CHAT_USER = "meta-system-ui";
+let CHAT_USER = null; // set to the logged-in username by showApp() below, once requireAuth() resolves
+
+// ── 로그인 / 세션 게이트 ────────────────────────────────────────
+// 로그인 전엔 대시보드/챗봇 등 실제 데이터를 전혀 렌더링·조회하지 않는다(아래
+// renderAll()/fetchCatalogFromBackend()의 무조건 호출을 showApp() 안으로 옮김).
+// body.pre-auth가 CSS로 app-shell 자체를 숨기므로, 세션 확인 중엔 로딩 문구만
+// 보이고 실패했을 때만 로그인 카드가 나타난다 - 대시보드가 잠깐이라도 보이는
+// 깜빡임이 없다.
+function showApp(user) {
+  document.body.classList.remove("pre-auth");
+  document.getElementById("current-user-avatar").textContent = (user.display_name || "-").slice(0, 1);
+  document.getElementById("current-user-name").textContent = user.display_name;
+  document.getElementById("current-user-team").textContent = user.team || "-";
+  document.getElementById("nav-members-btn").hidden = user.role !== "ADMIN";
+  CHAT_USER = user.username;
+  renderAll();
+  fetchCatalogFromBackend();
+}
+
+async function submitAuthForm(url, payload, errorEl) {
+  errorEl.hidden = true;
+  try {
+    const res = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    const data = await res.json();
+    if (!res.ok || !data.ok) {
+      const err = new Error(data.error || `HTTP ${res.status}`);
+      err.data = data;
+      throw err;
+    }
+    return data;
+  } catch (err) {
+    errorEl.textContent = AUTH_ERROR_LABELS[err.data?.error] || err.message;
+    errorEl.hidden = false;
+    throw err;
+  }
+}
+
+const AUTH_ERROR_LABELS = {
+  INVALID_CREDENTIALS: "아이디 또는 비밀번호가 올바르지 않습니다.",
+  ACCOUNT_NOT_ACTIVE: "계정이 아직 활성 상태가 아닙니다(관리자 승인 대기 중이거나 정지/반려된 계정입니다).",
+  MISSING_FIELDS: "모든 항목을 입력해주세요.",
+  PASSWORD_TOO_SHORT: "비밀번호는 8자 이상이어야 합니다.",
+  USERNAME_TAKEN: "이미 사용 중인 아이디입니다.",
+};
+
+document.getElementById("auth-tab-login").addEventListener("click", () => {
+  document.getElementById("auth-tab-login").classList.add("is-active");
+  document.getElementById("auth-tab-signup").classList.remove("is-active");
+  document.getElementById("login-form").hidden = false;
+  document.getElementById("signup-form").hidden = true;
+});
+document.getElementById("auth-tab-signup").addEventListener("click", () => {
+  document.getElementById("auth-tab-signup").classList.add("is-active");
+  document.getElementById("auth-tab-login").classList.remove("is-active");
+  document.getElementById("signup-form").hidden = false;
+  document.getElementById("login-form").hidden = true;
+});
+
+document.getElementById("login-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const errorEl = document.getElementById("login-error");
+  try {
+    const data = await submitAuthForm("/admin/auth/login", {
+      username: document.getElementById("login-username").value.trim(),
+      password: document.getElementById("login-password").value,
+    }, errorEl);
+    showApp(data.user);
+  } catch { /* error already shown by submitAuthForm */ }
+});
+
+document.getElementById("signup-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const errorEl = document.getElementById("signup-error");
+  const noticeEl = document.getElementById("signup-notice");
+  noticeEl.hidden = true;
+  try {
+    await submitAuthForm("/admin/auth/signup", {
+      username: document.getElementById("signup-username").value.trim(),
+      password: document.getElementById("signup-password").value,
+      display_name: document.getElementById("signup-display-name").value.trim(),
+      team: document.getElementById("signup-team").value.trim(),
+    }, errorEl);
+    document.getElementById("signup-form").reset();
+    noticeEl.hidden = false;
+  } catch { /* error already shown by submitAuthForm */ }
+});
+
+document.getElementById("logout-btn").addEventListener("click", async () => {
+  try { await fetch("/admin/auth/logout", { method: "POST" }); } catch { /* best-effort */ }
+  window.location.reload();
+});
+
+(async function requireAuth() {
+  try {
+    const res = await fetch("/admin/auth/me");
+    if (res.ok) {
+      const data = await res.json();
+      if (data.ok) { showApp(data.user); return; }
+    }
+  } catch { /* MCP server unreachable - fall through to login screen */ }
+  document.getElementById("auth-loading").hidden = true;
+  document.getElementById("auth-card").hidden = false;
+})();
 
 // 읽기 전용 목록조회 워크플로우(용어표준화-목록조회). 대화 상태가 필요 없는 단순 조회라
 // LLM 분류 파이프라인을 타는 Chatflow 대신 1회성 /v1/workflows/run으로 분리했습니다.
@@ -54,6 +160,7 @@ const VIEW_META = {
   domains: { title: "도메인 관리", subtitle: "표준 용어에 적용되는 데이터 도메인(형식·길이) 체계를 관리합니다" },
   history: { title: "표준화 이력", subtitle: "AI 파이프라인 실행 기록을 확인합니다" },
   settings: { title: "설정", subtitle: "백엔드 연동 정보를 확인합니다" },
+  members: { title: "회원 관리", subtitle: "가입 신청을 승인하거나 회원 상태·권한을 관리합니다" },
 };
 
 function switchView(view) {
@@ -82,6 +189,7 @@ function switchView(view) {
     }
   }
   if (view === "settings") refreshLlmStatus();
+  if (view === "members") fetchMembers();
 }
 
 document.querySelectorAll(".nav-item").forEach((btn) => {
@@ -298,7 +406,8 @@ function renderAll() {
   const pendingEl = document.getElementById("stat-pending-review");
   if (pendingEl) pendingEl.textContent = state.terms.filter((t) => t.status === "검토중").length;
 }
-renderAll();
+// renderAll()의 최초 호출은 showApp()(로그인 성공 후)에서만 일어난다 - 로그인 전엔
+// 목업 데이터조차 그리지 않는다.
 
 // ── 실제 백엔드에서 카탈로그 조회 ──────────────────────────────
 // standard_terms/registration_requests/standard_words/domains를 그대로 반영.
@@ -418,7 +527,7 @@ async function fetchCatalogFromBackend() {
     console.warn("실제 백엔드에서 카탈로그를 불러오지 못해 데모 데이터를 유지합니다:", err);
   }
 }
-fetchCatalogFromBackend();
+// 최초 호출은 showApp()(로그인 성공 후)에서만 일어난다.
 
 // 용어사전의 도메인 필터 <select>를 실제 도메인 목록(state.domains, 126건)으로
 // 채운다 - 재조회 때마다 다시 그려도 현재 선택값은 유지한다.
@@ -647,6 +756,96 @@ async function switchLlmProvider(provider) {
 Object.entries(LLM_SWITCH_BUTTONS).forEach(([key, btn]) => {
   if (btn) btn.addEventListener("click", () => switchLlmProvider(key));
 });
+
+// ── 회원 관리 (관리자 전용 화면) ──────────────────────────────────
+const MEMBER_STATUS_LABEL = {
+  PENDING_APPROVAL: { text: "승인 대기", cls: "status-pending" },
+  ACTIVE: { text: "활성", cls: "status-ok" },
+  SUSPENDED: { text: "정지", cls: "status-danger" },
+  REJECTED: { text: "반려", cls: "status-danger" },
+};
+
+async function fetchMembers() {
+  const errorEl = document.getElementById("members-error");
+  errorEl.hidden = true;
+  try {
+    const res = await fetch("/admin/auth/members");
+    const data = await res.json();
+    if (!res.ok || !data.ok) throw new Error(data.error || `HTTP ${res.status}`);
+    renderMembers(data.users);
+  } catch (err) {
+    errorEl.textContent = `회원 목록을 불러오지 못했습니다: ${err.message}`;
+    errorEl.hidden = false;
+  }
+}
+
+function memberActionButtons(m) {
+  if (m.status === "PENDING_APPROVAL") {
+    return `<button class="btn btn-primary" data-action="approve-user">승인</button>
+      <button class="btn btn-danger" data-action="reject-user">반려</button>`;
+  }
+  if (m.status === "SUSPENDED") {
+    return `<button class="btn btn-primary" data-action="reactivate-user">정지 해제</button>`;
+  }
+  if (m.status === "REJECTED") {
+    return `<button class="btn btn-primary" data-action="approve-user">재승인</button>`;
+  }
+  // ACTIVE
+  const roleAction = m.role === "ADMIN"
+    ? `<button class="btn btn-ghost" data-action="set-role" data-role="MEMBER">일반회원으로 변경</button>`
+    : `<button class="btn btn-ghost" data-action="set-role" data-role="ADMIN">관리자로 지정</button>`;
+  return `${roleAction}<button class="btn btn-danger" data-action="suspend-user">정지</button>`;
+}
+
+function renderMembers(users) {
+  const tbody = document.getElementById("members-tbody");
+  tbody.innerHTML = users.length ? users.map((m) => {
+    const status = MEMBER_STATUS_LABEL[m.status] || { text: m.status, cls: "status-pending" };
+    return `
+      <tr data-user-id="${m.id}">
+        <td><span class="mono">${escapeHtml(m.username)}</span></td>
+        <td>${escapeHtml(m.display_name)}</td>
+        <td class="muted">${escapeHtml(m.team || "-")}</td>
+        <td>${m.role === "ADMIN" ? "관리자" : "일반회원"}</td>
+        <td><span class="status-badge ${status.cls}">${status.text}</span></td>
+        <td class="muted">${(m.created_at || "").slice(0, 10)}</td>
+        <td class="table-actions">${memberActionButtons(m)}</td>
+      </tr>`;
+  }).join("") : `<tr><td colspan="7" class="empty-state">등록된 회원이 없습니다.</td></tr>`;
+  document.getElementById("member-pending-count-pill").textContent =
+    `${users.filter((m) => m.status === "PENDING_APPROVAL").length}건 대기`;
+  tbody.querySelectorAll("button[data-action]").forEach((btn) => {
+    btn.addEventListener("click", () => handleMemberAction(
+      btn.closest("tr").dataset.userId, btn.dataset.action, btn.dataset.role));
+  });
+}
+
+const MEMBER_ACTION_ERROR_LABELS = {
+  LAST_ADMIN_CANNOT_BE_SUSPENDED: "마지막 남은 관리자는 정지할 수 없습니다. 다른 회원을 먼저 관리자로 지정해주세요.",
+  LAST_ADMIN_CANNOT_BE_DEMOTED: "마지막 남은 관리자는 일반회원으로 변경할 수 없습니다. 다른 회원을 먼저 관리자로 지정해주세요.",
+  USER_NOT_FOUND_OR_NOT_ELIGIBLE: "처리할 수 없는 상태의 회원입니다. 목록을 새로고침해주세요.",
+  USER_NOT_FOUND_OR_NOT_PENDING: "이미 처리된 신청입니다. 목록을 새로고침해주세요.",
+  USER_NOT_FOUND_OR_NOT_ACTIVE: "활성 상태의 회원만 처리할 수 있습니다. 목록을 새로고침해주세요.",
+  USER_NOT_FOUND_OR_NOT_SUSPENDED: "정지 상태의 회원만 정지 해제할 수 있습니다. 목록을 새로고침해주세요.",
+};
+
+async function handleMemberAction(userId, action, role) {
+  const errorEl = document.getElementById("members-error");
+  errorEl.hidden = true;
+  try {
+    const res = await fetch(`/admin/auth/${action}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(role ? { user_id: userId, role } : { user_id: userId }),
+    });
+    const data = await res.json();
+    if (!res.ok || !data.ok) throw new Error(MEMBER_ACTION_ERROR_LABELS[data.error] || data.error || `HTTP ${res.status}`);
+    fetchMembers();
+  } catch (err) {
+    errorEl.textContent = `처리 실패: ${err.message}`;
+    errorEl.hidden = false;
+  }
+}
 
 // ── 채팅 UI 헬퍼 ────────────────────────────────────────────────
 const chatBody = document.getElementById("chat-body");

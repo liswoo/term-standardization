@@ -223,11 +223,33 @@ def import_guideline(path):
     print(json.dumps({"imported_sections":len(chunks),"sections":current_sections,
         "removed_stale_sections":[r["section"] for r in removed]},ensure_ascii=False))
 
+def create_admin(username,password,display_name,team=""):
+    """Bootstrap the very first ADMIN account - a fresh DB has no admin yet to
+    approve one through the normal signup queue, so this is CLI-only, same
+    posture as approve-word/approve-term (no admin UI action creates an admin)."""
+    from term_service import auth
+    with db.connect() as conn:
+        if conn.execute("SELECT 1 FROM users WHERE username=%s",(username,)).fetchone():
+            return {"created":False,"error":"USERNAME_TAKEN"}
+        conn.execute("""INSERT INTO users(id,username,password_hash,display_name,team,role,status)
+            VALUES(%s,%s,%s,%s,%s,'ADMIN','ACTIVE')""",
+            (str(uuid.uuid4()),username,auth.hash_password(password),display_name,team))
+    return {"created":True,"username":username,"role":"ADMIN"}
+
 if __name__=="__main__":
     parser=argparse.ArgumentParser()
-    parser.add_argument("command",choices=["init-db","import-catalog","import-standard-catalog","import-guideline",
-        "health","export-schemas","approve-word","approve-term"])
-    parser.add_argument("file",nargs="?")
+    sub=parser.add_subparsers(dest="command",required=True)
+    sub.add_parser("init-db")
+    p=sub.add_parser("import-catalog"); p.add_argument("file")
+    p=sub.add_parser("import-standard-catalog"); p.add_argument("file")
+    p=sub.add_parser("import-guideline"); p.add_argument("file",nargs="?")
+    sub.add_parser("health")
+    p=sub.add_parser("export-schemas"); p.add_argument("file",nargs="?")
+    p=sub.add_parser("approve-word"); p.add_argument("file")
+    p=sub.add_parser("approve-term"); p.add_argument("file")
+    p=sub.add_parser("create-admin")
+    p.add_argument("username"); p.add_argument("password")
+    p.add_argument("display_name"); p.add_argument("team",nargs="?",default="")
     args=parser.parse_args()
     if args.command=="init-db":
         db.initialize()
@@ -251,6 +273,11 @@ if __name__=="__main__":
         # first, which flips it to PENDING_REVIEW automatically.
         from term_service import registration
         print(json.dumps(registration.approve(args.file),ensure_ascii=False))
+    elif args.command=="create-admin":
+        result=create_admin(args.username,args.password,args.display_name,args.team)
+        print(json.dumps(result,ensure_ascii=False))
+        if not result["created"]:
+            raise SystemExit(1)
     else:
         from term_service import schemas
         output={name:cls.model_json_schema() for name,cls in vars(schemas).items() if isinstance(cls,type) and issubclass(cls,schemas.Schema) and cls is not schemas.Schema}
