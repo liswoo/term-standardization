@@ -60,6 +60,76 @@ def segment_words(term_name: str, word_lookup: dict) -> tuple[list, bool]:
             i += 1
     return matched, full and bool(matched)
 
+def unmatched_spans(term_name: str, word_lookup: dict) -> list[str]:
+    """Same greedy longest-match scan as segment_words, but collects the
+    contiguous substrings that did NOT match any known word instead of the
+    matches themselves - the actual gap text a new standard word is needed
+    for (conversation.py's confirm_term uses this to decide whether that gap
+    is itself a compound of several nouns worth splitting - see
+    split_into_nouns below - instead of always treating the whole gap as one
+    concept).
+
+    Unlike segment_words, a candidate match here must start and end on one of
+    term_name's own morpheme boundaries (from kiwi's tokenization, independent
+    of the word dictionary) - never mid-morpheme. Plain character-level
+    matching let an unrelated known word that happens to share a substring
+    (e.g. "리", a real standalone word for an administrative unit) carve a gap
+    like "소리동굴" into "소"+"리"(matched)+"동굴" - two meaningless one-off
+    fragments instead of the two real nouns "소리"+"동굴" kiwi's own
+    tokenization already recognizes as one another's boundaries - live-verified:
+    this was silently defeating the split-choice feature that reads this
+    function's output."""
+    text = normalize(term_name)
+    tokens = morphology(term_name)["morphemes"]
+    boundaries = {t["start"] for t in tokens} | {t["start"] + t["length"] for t in tokens}
+    max_len = max((len(w) for w in word_lookup), default=0)
+    i, n, gaps, current = 0, len(text), [], ""
+    while i < n:
+        found = 0
+        if i in boundaries:
+            for length in range(min(max_len, n - i), 0, -1):
+                if (i + length) in boundaries and key(text[i:i + length]) in word_lookup:
+                    found = length
+                    break
+        if found:
+            if current:
+                gaps.append(current)
+                current = ""
+            i += found
+        else:
+            current += text[i]
+            i += 1
+    if current:
+        gaps.append(current)
+    return gaps
+
+# Plain content-noun tags only - NOT XSN (a noun-FORMING SUFFIX like "-화" in "정보화" or
+# "-량" in "보행량") - a suffix is by definition a bound morpheme that never stands as its
+# own registrable concept, so including it here would offer to split e.g. "보행량" into
+# "보행"+"량" as if "량" were a coinable word in its own right (verified live: kiwi tags
+# "량" as a plain NNG here, not XSN, so the length filter below is what actually catches it).
+_NOUN_TAGS = {"NNG", "NNP", "NNB"}
+
+def split_into_nouns(text: str) -> list[str]:
+    """Whether a gap span found by unmatched_spans is itself a compound of 2+
+    recognizable nouns (e.g. "소리동굴" -> ["소리", "동굴"]) rather than one
+    atomic concept (e.g. "매출액", which kiwi keeps as a single noun) - the
+    signal confirm_term uses to offer registering each part as its own new
+    standard word instead of forcing the whole span into one. Returns [text]
+    unchanged when it doesn't cleanly split into 2+ nouns covering the whole
+    span with nothing left over, so callers can treat "not splittable" and
+    "single-noun span" the same way.
+    Every resulting piece must be 2+ characters: a lone syllable (e.g. "량" in
+    "보행량") is essentially always a bound suffix in practice even when kiwi's
+    dictionary happens to tag it NNG rather than XSN, never an independently
+    registrable standard word - live-verified with exactly this example, which
+    the tag check alone let through."""
+    tokens = morphology(text)["morphemes"]
+    nouns = [t for t in tokens if t["tag"] in _NOUN_TAGS]
+    if len(nouns) < 2 or len(nouns) != len(tokens) or any(len(t["form"]) < 2 for t in nouns):
+        return [text]
+    return [t["form"] for t in nouns]
+
 def strip_trailing_particle(text: str) -> str:
     """Drop a single trailing case/topic particle attached to a noun (e.g. '값을' -> '값').
     This is extraction cleanup for raw user phrasing ("값을 신규 용어로 등록해줘"), not

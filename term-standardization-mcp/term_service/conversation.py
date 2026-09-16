@@ -8,7 +8,7 @@ from . import db, registration, word_registration
 from .abbreviation import suggest_abbreviation, validate_abbreviation, validate_word_abbreviation
 from .definition_suggestion import suggest_definition
 from .guideline import check_guideline
-from .naming import strip_trailing_particle, segment_words, key
+from .naming import strip_trailing_particle, segment_words, unmatched_spans, split_into_nouns, key
 from .schemas import Schema, RegistrationInput, WordRegistrationInput
 from .search import validate_name, search, domain_usage, search_terms_by_meaning
 from .word_suggestion import suggest_word
@@ -17,7 +17,7 @@ class ConversationAction(Schema):
     intent: Literal["propose_term","confirm_term","set_domain","set_definition","set_abbreviation","confirm_registration",
                     "show_candidates","edit_term","edit_domain","edit_definition","cancel","restart","help","unknown",
                     "propose_word","confirm_word","set_word_abbreviation","find_term",
-                    "edit_word_definition","set_word_definition"]
+                    "edit_word_definition","set_word_definition","set_word_split_choice"]
     value: str = Field(default="",max_length=4000)
     confirmed: bool = False
 
@@ -35,12 +35,26 @@ def _resume_or_finish_word_flow(s, result_stage):
     registration whose name didn't fully decompose into known standard_words
     (see confirm_term below). resume_term marks the latter - once the word
     question is resolved (reused an existing word, or a new one was submitted
-    for review), jump back to exactly where the term flow paused instead of
-    making the user re-state the term."""
+    for review), either move on to the NEXT still-missing word (resume_term.
+    pending_word_names - see set_word_split_choice, populated when the user
+    chose to register a multi-noun gap as several separate words instead of
+    one) or, once none remain, jump back to exactly where the term flow
+    paused instead of making the user re-state the term."""
     resume=s.pop("resume_term",None)
     for name in ["word_usage_description","word_suggestion","word_registration_payload","word_clarification_history"]:
         s.pop(name,None)
     if resume:
+        pending=resume.get("pending_word_names") or []
+        if pending:
+            next_span,*rest=pending
+            s["word_usage_description"]=next_span
+            # fixed_name pins the next word's name to this exact literal span too (same
+            # reasoning as set_word_split_choice below) - it isn't just the first split
+            # word that must keep the term's own spelling intact.
+            s["word_suggestion"]=suggest_word(next_span,fixed_name=next_span).model_dump()
+            s["resume_term"]={"term_name":resume["term_name"],"current_span":next_span,"pending_word_names":rest}
+            s["stage"]="awaiting_word_confirm"
+            return s,{"next_action":"CONFIRM_WORD","next_pending_word":True}
         s["definition_suggestion"]=suggest_definition(resume["term_name"]).model_dump()
         s["stage"]="awaiting_definition"
         return s,{"next_action":"INPUT_DEFINITION","resumed_from_word_request":True}
@@ -140,9 +154,34 @@ def transition(state, action, requester, conversation_id):
         if word_lookup:
             matched,full_match=segment_words(s["term_name"],word_lookup)
             if not full_match:
-                s["resume_term"]={"term_name":s["term_name"]}
+                matched_names=[w["name"] for w in matched]
+                gaps=unmatched_spans(s["term_name"],word_lookup)
+                split_names=[n for g in gaps for n in split_into_nouns(g)]
+                # A gap span that is itself a compound of 2+ recognizable nouns (e.g.
+                # "소리동굴" -> "소리"+"동굴") can go two ways: one new atomic word for
+                # the whole span (today's only option), or each noun registered as its
+                # own new standard word and the term composed from them - a real design
+                # fork with no way to choose between them until now. Only offer the
+                # choice when a split is actually possible; a single-noun gap (e.g.
+                # "매출액") has nothing to choose between, so skip straight to the
+                # existing single-new-word flow.
+                if len(split_names)>len(gaps):
+                    s["word_split_candidates"]={"term_name":s["term_name"],"matched_words":matched_names,
+                        "split_names":split_names,"gaps":gaps}
+                    s["stage"]="awaiting_word_split_choice"
+                    return s,{"next_action":"CHOOSE_WORD_SPLIT","matched_words":matched_names,"split_names":split_names}
+                # Not splittable into multiple nouns - one new word covers the whole gap. When
+                # there's exactly one gap region (the overwhelmingly common case), its exact
+                # text is pinned as that word's name (current_span - see set_word_split_choice's
+                # comment for why: reusing a differently-named existing "synonym" here would
+                # silently change this term's own spelling out from under the requester). A term
+                # with multiple, independently non-splittable gap regions is rare and was never
+                # fully supported even before this - leave it to the unpinned free-naming
+                # fallback rather than guessing which gap the user means.
+                s["resume_term"]=({"term_name":s["term_name"],"current_span":gaps[0]} if len(gaps)==1
+                    else {"term_name":s["term_name"]})
                 s["stage"]="awaiting_word_meaning"
-                return s,{"next_action":"REQUEST_NEW_WORD","matched_words":[w["name"] for w in matched]}
+                return s,{"next_action":"REQUEST_NEW_WORD","matched_words":matched_names}
         # Definition comes before domain (see set_definition below): the domain
         # step's own comparison-group evidence is far stronger once a definition
         # exists to search with, not just the bare name. Writing a definition
@@ -237,11 +276,11 @@ def transition(state, action, requester, conversation_id):
             return s,{"next_action":"EXPLAIN_BLOCK"}
         # A Korean term and its English abbreviation are registered as one set; recommend
         # one now so the user isn't left to invent a compliant abbreviation unaided. If
-        # this term's decomposition required submitting a brand-new word earlier in this
-        # same flow (term_pending_word - see set_word_abbreviation below), that word isn't
-        # in standard_words yet, so it must be handed in explicitly or the composition
-        # falls through to the LLM and invents an unrelated abbreviation for it.
-        extra_words=[s["term_pending_word"]] if s.get("term_pending_word") else []
+        # this term's decomposition required submitting one or more brand-new words earlier
+        # in this same flow (term_pending_words - see set_word_abbreviation below), those
+        # words aren't in standard_words yet, so they must be handed in explicitly or the
+        # composition falls through to the LLM and invents unrelated abbreviations for them.
+        extra_words=s.get("term_pending_words") or []
         s["abbreviation_suggestion"]=suggest_abbreviation(s["term_name"],extra_words=extra_words).model_dump()
         s.pop("english_abbr",None)
         s["stage"]="awaiting_abbreviation"
@@ -264,7 +303,7 @@ def transition(state, action, requester, conversation_id):
             return s,{"next_action":"CANCELLED"}
         result=registration.submit(s["preparation"]["confirmation_id"],requester,conversation_id,True,
             english_abbr=s["english_abbr"],
-            depends_on_word_request_id=(s.get("term_pending_word") or {}).get("request_id"))
+            depends_on_word_request_ids=[w["request_id"] for w in s.get("term_pending_words") or []])
         s["registration"]=result
         # A failed submit() must not leave the conversation parked in
         # awaiting_confirm: preparation.ready is still true, so a repeated
@@ -272,6 +311,39 @@ def transition(state, action, requester, conversation_id):
         # exact same failure (e.g. PENDING_REQUEST_ALREADY_EXISTS) forever.
         s["stage"]="submitted" if result.get("request_id") else "registration_failed"
         return s,{"next_action":"SHOW_REGISTRATION_RESULT"}
+    if a.intent=="set_word_split_choice":
+        # confirm_term routes here only when the term's missing part is itself a
+        # compound of 2+ recognizable nouns (see split_into_nouns) - the user is
+        # choosing whether to register it as ONE new atomic word (today's only
+        # option before this) or as SEVERAL new words, one per noun, each going
+        # through the normal word sub-flow in turn before the term resumes.
+        if stage!="awaiting_word_split_choice":
+            return s,{"error":"UNEXPECTED_INTENT"}
+        candidates=s.pop("word_split_candidates",{})
+        term_name=candidates.get("term_name") or s.get("term_name")
+        if not a.confirmed:
+            gaps=candidates.get("gaps") or []
+            s["resume_term"]=({"term_name":term_name,"current_span":gaps[0]} if len(gaps)==1
+                else {"term_name":term_name})
+            s["stage"]="awaiting_word_meaning"
+            return s,{"next_action":"REQUEST_NEW_WORD","matched_words":candidates.get("matched_words",[])}
+        names=candidates.get("split_names") or []
+        if not names:
+            return s,{"error":"UNEXPECTED_INTENT"}
+        first,*rest=names
+        s["word_usage_description"]=first
+        s["word_clarification_history"]=[]
+        # fixed_name pins the new word's name to this exact split noun, and forbids
+        # reusing a differently-named existing word for it - see word_suggestion.py's
+        # SYSTEM prompt comment. A real user report: "소리" was offered "음성" as an
+        # interchangeable reuse candidate, but the two carry different nuance (소리 =
+        # sound in general, 음성 = specifically a human voice) - silently substituting
+        # 음성 here would also silently change "소리동굴"'s own spelling. The user's own
+        # call: never substitute, always coin a new word using the term's own wording.
+        s["word_suggestion"]=suggest_word(first,fixed_name=first).model_dump()
+        s["resume_term"]={"term_name":term_name,"current_span":first,"pending_word_names":rest}
+        s["stage"]="awaiting_word_confirm"
+        return s,{"next_action":"CONFIRM_WORD"}
     if a.intent=="propose_word":
         # Fires from ANY stage - a standalone "이런 개념을 단어로 추천해줘" request,
         # or the first/subsequent description at the embedded awaiting_word_meaning
@@ -289,6 +361,12 @@ def transition(state, action, requester, conversation_id):
             s["stage"]="awaiting_word_meaning"
             return s,{"error":"WORD_MEANING_REQUIRED"}
         prior=s.get("word_suggestion") or {}
+        # Pinned when this word is filling a gap inside a term's own decomposition
+        # (confirm_term/set_word_split_choice) - stays the same literal span across
+        # every clarification round for this word, even if word_usage_description
+        # itself gets overwritten below by a fresh description: the concept being
+        # described can change, but the name it's filed under must not.
+        fixed_name=(s.get("resume_term") or {}).get("current_span","")
         if prior.get("ambiguous") and value in prior.get("options",[]):
             # Answer to a clarifying question, not a fresh description. Accumulate the
             # full history (not just this one answer) so a second+ round doesn't lose
@@ -296,11 +374,11 @@ def transition(state, action, requester, conversation_id):
             # failure this avoids (a near-identical re-ask instead of narrowing further).
             history=(s.get("word_clarification_history") or [])+[{"question":prior.get("question",""),"answer":value}]
             s["word_clarification_history"]=history
-            suggestion=suggest_word(s["word_usage_description"],clarification_history=history).model_dump()
+            suggestion=suggest_word(s["word_usage_description"],clarification_history=history,fixed_name=fixed_name).model_dump()
         else:
             s["word_usage_description"]=value
             s["word_clarification_history"]=[]
-            suggestion=suggest_word(value).model_dump()
+            suggestion=suggest_word(value,fixed_name=fixed_name).model_dump()
         s["word_suggestion"]=suggestion
         s["stage"]="awaiting_word_confirm"
         return s,{"next_action":"CONFIRM_WORD"}
@@ -373,13 +451,14 @@ def transition(state, action, requester, conversation_id):
         result=word_registration.submit(prepared["confirmation_id"],requester,conversation_id,True)
         s["word_registration"]=result
         # Only meaningful for the embedded case (resume_term set - a term's decomposition
-        # was missing this word): carries the new word's own request_id/abbreviation
-        # forward through the rest of the term flow, so registration.submit() can mark
-        # the term as depending on it, and suggest_abbreviation() can reuse its
-        # abbreviation instead of inventing an unrelated one (see set_domain above).
+        # was missing this word, possibly split into several - see set_word_split_choice):
+        # accumulates each new word's own request_id/abbreviation across the whole term
+        # flow, so registration.submit() can mark the term as depending on all of them,
+        # and suggest_abbreviation() can reuse them instead of inventing unrelated ones
+        # for parts it doesn't know about yet (see set_domain above).
         if result.get("request_id") and s.get("resume_term"):
-            s["term_pending_word"]={"request_id":result["request_id"],"name":payload["word_name"],
-                "normalized_name":key(payload["word_name"]),"english_abbr":value}
+            s.setdefault("term_pending_words",[]).append({"request_id":result["request_id"],"name":payload["word_name"],
+                "normalized_name":key(payload["word_name"]),"english_abbr":value})
         return _resume_or_finish_word_flow(s,"word_submitted" if result.get("request_id") else "word_registration_failed")
     if a.intent=="find_term":
         # Search-only, read-only: fires from any idle-ish stage when the user

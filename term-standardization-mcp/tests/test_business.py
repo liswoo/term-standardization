@@ -8,6 +8,7 @@ from term_service.naming import validate, morphology, strip_trailing_particle
 from term_service.search import search, domain_usage, validate_name
 from term_service.schemas import AbbreviationResult, DefinitionSuggestionResult, RegistrationInput
 from term_service.comparison import compare
+from term_service.word_suggestion import suggest_word
 from manage import import_guideline
 
 def insert_guideline_chunk(section,content):
@@ -446,6 +447,25 @@ def test_real_word_request_flow_resumes_term_registration():
     assert "resume_term" not in result["state"]
     assert result["state"]["definition_suggestion"]
 
+@pytest.mark.skipif(os.getenv("RUN_LLM_TESTS")!="1",reason="Explicit low-volume paid API smoke test")
+def test_fixed_name_forbids_reuse_even_of_a_near_perfect_synonym():
+    # Regression for a real user report: registering "소리동굴" (both "소리" and "동굴"
+    # missing) got offered a "reuse" of the existing word "음성" for "소리" - but 음성
+    # (a human voice) and 소리 (sound in general) are not actually interchangeable, and
+    # silently substituting 음성 would also silently change the term's own spelling out
+    # from under the requester ("소리동굴" registered as if it meant "음성동굴"). The
+    # user's decision: when filling a gap inside a term's own decomposition, never
+    # substitute a differently-named word, no matter how close a "synonym" it looks -
+    # always coin a new word using the term's own literal wording. fixed_name is the
+    # deterministic (code-level, not just prose) enforcement of that - this test grounds
+    # it against the real LLM so an even more obviously-synonymous existing word (here
+    # "소리" itself, registered verbatim) still can't be reused when fixed_name is set.
+    insert_standard_word("소리","SOUN","공기의 진동으로 전달되는 청각 자극")
+    result = suggest_word("동굴에서 울리는 소리를 뜻함", fixed_name="소리")
+    assert result.existing_word_match==""
+    assert result.name=="소리"
+    assert result.method=="structured_llm_rag"
+
 def test_term_waits_for_new_word_approval_and_reuses_its_abbreviation(monkeypatch):
     # Regression for a real user report: registering "일일보행량" (일일=known word,
     # 보행량=missing) routed into the word sub-flow, submitted a brand-new word
@@ -459,9 +479,9 @@ def test_term_waits_for_new_word_approval_and_reuses_its_abbreviation(monkeypatc
     with db.connect() as conn:
         conn.execute("INSERT INTO domains(code,description,source) VALUES('수N7','테스트 숫자 도메인','TEST') ON CONFLICT DO NOTHING")
     monkeypatch.setattr(conversation,"suggest_word",
-        lambda usage_description,clarification_history=None: type("R",(),{"model_dump":lambda self: {
+        lambda usage_description,clarification_history=None,fixed_name="": type("R",(),{"model_dump":lambda self: {
             "existing_word_match":"","match_reason":"","ambiguous":False,"question":"","options":[],
-            "name":"보행량","english_abbr":"WALKCNT","is_format_word":False,
+            "name":fixed_name or "보행량","english_abbr":"WALKCNT","is_format_word":False,
             "definition":"하루 동안 걸은 걸음 수","rationale":"","method":"test_stub"}})())
     monkeypatch.setattr(conversation,"suggest_definition",
         lambda term_name,clarification_history=None: DefinitionSuggestionResult(
@@ -478,8 +498,8 @@ def test_term_waits_for_new_word_approval_and_reuses_its_abbreviation(monkeypatc
     result=apply(4,"set_word_abbreviation","WALKCNT")
     # Resumed straight back into the paused term flow, carrying the new word forward.
     assert result["state"]["stage"]=="awaiting_definition"
-    word_request_id=result["state"]["term_pending_word"]["request_id"]
-    assert result["state"]["term_pending_word"]["english_abbr"]=="WALKCNT"
+    word_request_id=result["state"]["term_pending_words"][0]["request_id"]
+    assert result["state"]["term_pending_words"][0]["english_abbr"]=="WALKCNT"
     result=apply(5,"set_definition",result["state"]["definition_suggestion"]["definition"])
     assert result["state"]["stage"]=="awaiting_domain_choice"
     result=apply(6,"set_domain","수N7")
@@ -510,6 +530,104 @@ def test_term_waits_for_new_word_approval_and_reuses_its_abbreviation(monkeypatc
         word_row=conn.execute("SELECT english_abbr,status FROM standard_words WHERE name='보행량'").fetchone()
     assert term_row["english_abbr"]=="DAILY_WALKCNT" and term_row["status"]=="ACTIVE"
     assert word_row["english_abbr"]=="WALKCNT" and word_row["status"]=="ACTIVE"
+
+def test_term_can_split_its_missing_part_into_several_new_words(monkeypatch):
+    # A real user report: registering "소리동굴" found NEITHER "소리" NOR "동굴" in the
+    # word dictionary, so confirm_term's old behavior forced the whole gap into ONE new
+    # atomic word ("소리동굴" itself) with no way to instead register "소리" and "동굴" as
+    # their own separate standard words and compose the term from them - a design fork
+    # that had never actually been decided. This is the new decision point
+    # (awaiting_word_split_choice) and the multi-word registration path it unlocks: each
+    # split noun goes through the normal word sub-flow in turn, and the term must wait
+    # for ALL of them (not just the first) to be approved before it's ready for review.
+    with db.connect() as conn:
+        conn.execute("INSERT INTO domains(code,description,source) VALUES('수N7','테스트 숫자 도메인','TEST') ON CONFLICT DO NOTHING")
+    # The word-decomposition check only runs once a word dictionary actually exists (an
+    # empty one means "cannot check", not "everything is a gap" - see confirm_term) - an
+    # unrelated word is enough to make that true without affecting "소리"/"동굴" themselves.
+    insert_standard_word("등기","RG","국가 기관이 법정 절차에 따라 등기부에 기록하는 행위")
+    word_stubs={
+        "소리":{"existing_word_match":"","match_reason":"","ambiguous":False,"question":"","options":[],
+            "name":"소리","english_abbr":"SORI","is_format_word":False,
+            "definition":"공기의 진동으로 전달되는 청각 자극","rationale":"","method":"test_stub"},
+        "동굴":{"existing_word_match":"","match_reason":"","ambiguous":False,"question":"","options":[],
+            "name":"동굴","english_abbr":"CAVE","is_format_word":False,
+            "definition":"땅속이나 암석 속에 자연적으로 생긴 깊은 굴","rationale":"","method":"test_stub"},
+    }
+    monkeypatch.setattr(conversation,"suggest_word",
+        lambda usage_description,clarification_history=None,fixed_name="": type("R",(),{
+            "model_dump":lambda self,_d=word_stubs[usage_description]: _d})())
+    monkeypatch.setattr(conversation,"suggest_definition",
+        lambda term_name,clarification_history=None: DefinitionSuggestionResult(
+            ambiguous=False,definition="소리가 나는 관광용 동굴",rationale="",method="test_stub"))
+    def apply(revision,intent,value="",confirmed=False):
+        return conversation.apply("word-split-conv","user",revision,{"intent":intent,"value":value,"confirmed":confirmed})
+    apply(0,"propose_term","소리동굴")
+    result=apply(1,"confirm_term",confirmed=True)
+    assert result["state"]["stage"]=="awaiting_word_split_choice"
+    assert result["state"]["word_split_candidates"]["split_names"]==["소리","동굴"]
+    result=apply(2,"set_word_split_choice",confirmed=True)
+    assert result["state"]["stage"]=="awaiting_word_confirm"
+    assert result["state"]["word_suggestion"]["name"]=="소리"
+    assert result["state"]["resume_term"]["pending_word_names"]==["동굴"]
+    result=apply(3,"confirm_word",confirmed=True)
+    assert result["state"]["stage"]=="awaiting_word_abbreviation"
+    result=apply(4,"set_word_abbreviation","SORI")
+    # First word done, but a second one is still missing - stays in the word sub-flow
+    # instead of resuming the term, and now proposes "동굴" specifically (not re-asking
+    # the user to describe anything - the split already named it).
+    assert result["state"]["stage"]=="awaiting_word_confirm"
+    assert result["state"]["word_suggestion"]["name"]=="동굴"
+    assert result["state"]["resume_term"]["pending_word_names"]==[]
+    result=apply(5,"confirm_word",confirmed=True)
+    assert result["state"]["stage"]=="awaiting_word_abbreviation"
+    result=apply(6,"set_word_abbreviation","CAVE")
+    # Both words done - now the term flow actually resumes.
+    assert result["state"]["stage"]=="awaiting_definition"
+    assert "resume_term" not in result["state"]
+    pending=result["state"]["term_pending_words"]
+    assert {w["name"] for w in pending}=={"소리","동굴"}
+    result=apply(7,"set_definition",result["state"]["definition_suggestion"]["definition"])
+    assert result["state"]["stage"]=="awaiting_domain_choice"
+    result=apply(8,"set_domain","수N7")
+    assert result["state"]["stage"]=="awaiting_abbreviation"
+    # Composed deterministically from BOTH new words' abbreviations, not invented by the LLM.
+    assert result["state"]["abbreviation_suggestion"]["abbreviation"]=="SORI_CAVE"
+    assert result["state"]["abbreviation_suggestion"]["method"]=="deterministic_word_dictionary"
+    result=apply(9,"set_abbreviation","SORI_CAVE")
+    assert result["state"]["stage"]=="awaiting_confirm"
+    result=apply(10,"confirm_registration",confirmed=True)
+    assert result["state"]["stage"]=="submitted"
+    term_request_id=result["state"]["registration"]["request_id"]
+    assert result["state"]["registration"]["status"]=="WAITING_FOR_WORD_APPROVAL"
+    assert registration.approve(term_request_id)["code"]=="NOT_PENDING_REVIEW"
+    word_ids={w["name"]:w["request_id"] for w in pending}
+
+    # Approving only ONE of the two dependency words must NOT release the term yet.
+    first_approval=word_registration.approve(word_ids["소리"])
+    assert first_approval["approved"]
+    assert first_approval["promoted_terms"]==[]
+    with db.connect() as conn:
+        row=conn.execute("SELECT status FROM registration_requests WHERE id=%s",(term_request_id,)).fetchone()
+    assert row["status"]=="WAITING_FOR_WORD_APPROVAL"
+
+    # Approving the SECOND (last remaining) dependency finally releases it.
+    second_approval=word_registration.approve(word_ids["동굴"])
+    assert second_approval["approved"]
+    assert term_request_id in [p["request_id"] for p in second_approval["promoted_terms"]]
+    with db.connect() as conn:
+        row=conn.execute("SELECT status FROM registration_requests WHERE id=%s",(term_request_id,)).fetchone()
+    assert row["status"]=="PENDING_REVIEW"
+
+    final=registration.approve(term_request_id)
+    assert final["approved"]
+    with db.connect() as conn:
+        term_row=conn.execute("SELECT english_abbr,status FROM standard_terms WHERE name='소리동굴'").fetchone()
+        word_rows={r["name"]:r for r in conn.execute(
+            "SELECT name,english_abbr,status FROM standard_words WHERE name IN ('소리','동굴')").fetchall()}
+    assert term_row["english_abbr"]=="SORI_CAVE" and term_row["status"]=="ACTIVE"
+    assert word_rows["소리"]["english_abbr"]=="SORI" and word_rows["소리"]["status"]=="ACTIVE"
+    assert word_rows["동굴"]["english_abbr"]=="CAVE" and word_rows["동굴"]["status"]=="ACTIVE"
 
 @pytest.mark.skipif(os.getenv("RUN_LLM_TESTS")!="1",reason="Explicit low-volume paid API smoke test")
 def test_real_llm_definition_comparison(catalog):

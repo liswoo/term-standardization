@@ -99,10 +99,11 @@ def prepare(payload: RegistrationInput):
     return {"ready":True,"confirmation_id":prep_id,"expires_at":expires.isoformat(),"payload":payload.model_dump(),
         "assessment":assessment,"requires_final_confirmation":True,"resulting_status":"PENDING_REVIEW"}
 
-def submit(confirmation_id, requester, conversation_id, confirmed, english_abbr="", depends_on_word_request_id=None):
+def submit(confirmation_id, requester, conversation_id, confirmed, english_abbr="", depends_on_word_request_ids=None):
     uuid.UUID(confirmation_id)
     if confirmed is not True:
         return {"created":False,"code":"EXPLICIT_CONFIRMATION_REQUIRED"}
+    dependency_ids=depends_on_word_request_ids or []
     with db.connect() as conn:
         prep=conn.execute("SELECT * FROM registration_preparations WHERE id=%s FOR UPDATE",(confirmation_id,)).fetchone()
         if not prep or prep["requester"]!=requester or prep["conversation_id"]!=conversation_id:
@@ -123,18 +124,24 @@ def submit(confirmation_id, requester, conversation_id, confirmed, english_abbr=
         pending=conn.execute("SELECT id FROM registration_requests WHERE normalized_name=%s AND status IN ('PENDING_REVIEW','WAITING_FOR_WORD_APPROVAL')",(key(p["term_name"]),)).fetchone()
         if pending:
             return {"created":False,"code":"PENDING_REQUEST_ALREADY_EXISTS"}
-        # A term whose required word was just submitted (not reused - see conversation.py's
-        # set_word_abbreviation/confirm_word) depends on that word being approved first:
-        # the term isn't ready for review on its own merits yet, so it must not sit in the
-        # same PENDING_REVIEW queue as one that is.
-        initial_status="WAITING_FOR_WORD_APPROVAL" if depends_on_word_request_id else "PENDING_REVIEW"
+        # A term whose required word(s) were just submitted (not reused - see conversation.py's
+        # set_word_abbreviation/confirm_word) depends on every one of them being approved
+        # first: the term isn't ready for review on its own merits yet, so it must not sit
+        # in the same PENDING_REVIEW queue as one that is. A term can now depend on several
+        # words at once (see naming.py's split_into_nouns - a multi-noun gap registered as
+        # separate words), tracked in registration_request_word_dependencies rather than a
+        # single FK column so word_registration.approve() can require ALL of them approved.
+        initial_status="WAITING_FOR_WORD_APPROVAL" if dependency_ids else "PENDING_REVIEW"
         row=conn.execute("""INSERT INTO registration_requests
-            (id,preparation_id,term_name,normalized_name,definition,domain,synonyms,english_abbr,requester,conversation_id,assessment,status,depends_on_word_request_id)
-            VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+            (id,preparation_id,term_name,normalized_name,definition,domain,synonyms,english_abbr,requester,conversation_id,assessment,status)
+            VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
             RETURNING id::text AS request_id,status,created_at,english_abbr""",
             (str(uuid.uuid4()),confirmation_id,p["term_name"],key(p["term_name"]),p["definition"],p["domain"],
              p["synonyms"],english_abbr or None,requester,conversation_id,Jsonb(prep["assessment"]),
-             initial_status,depends_on_word_request_id)).fetchone()
+             initial_status)).fetchone()
+        for word_request_id in dependency_ids:
+            conn.execute("""INSERT INTO registration_request_word_dependencies(registration_request_id,word_request_id)
+                VALUES(%s,%s)""",(row["request_id"],word_request_id))
         conn.execute("UPDATE registration_preparations SET status='SUBMITTED' WHERE id=%s",(confirmation_id,))
     row["created_at"]=row["created_at"].isoformat()
     return {"created":True,"is_official_standard":False,**row,"term_name":p["term_name"],"definition":p["definition"],"domain":p["domain"]}

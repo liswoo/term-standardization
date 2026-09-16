@@ -101,10 +101,12 @@ def cancel(requester, conversation_id):
 def approve(word_request_id):
     """Promote a PENDING_REVIEW word request into the live standard_words catalog.
 
-    Also promotes any term registration that was waiting on this exact word
-    (WAITING_FOR_WORD_APPROVAL, set by registration.submit() when a term's required
-    word didn't exist yet - see conversation.py's confirm_term/set_word_abbreviation)
-    to PENDING_REVIEW, since the dependency is now satisfied.
+    Also promotes any term registration that was waiting on this word (WAITING_FOR_WORD_
+    APPROVAL, set by registration.submit() when a term's required word(s) didn't exist yet -
+    see conversation.py's confirm_term/set_word_abbreviation) to PENDING_REVIEW, but only once
+    ALL of that term's word dependencies are approved - a term can depend on several words at
+    once now (naming.py's split_into_nouns: a multi-noun gap registered as separate words), so
+    approving just one of them must not release a term still waiting on the others.
     """
     with db.connect() as conn:
         req = conn.execute("SELECT * FROM word_registration_requests WHERE id=%s", (word_request_id,)).fetchone()
@@ -120,7 +122,13 @@ def approve(word_request_id):
              req["is_format_word"], req["domain_classification"], "CHATBOT_APPROVED", vector, EMBEDDING_MODEL))
         conn.execute("UPDATE word_registration_requests SET status='APPROVED' WHERE id=%s", (word_request_id,))
         promoted = conn.execute("""UPDATE registration_requests SET status='PENDING_REVIEW'
-            WHERE depends_on_word_request_id=%s AND status='WAITING_FOR_WORD_APPROVAL'
+            WHERE status='WAITING_FOR_WORD_APPROVAL'
+              AND id IN (SELECT registration_request_id FROM registration_request_word_dependencies
+                  WHERE word_request_id=%s)
+              AND NOT EXISTS (
+                  SELECT 1 FROM registration_request_word_dependencies d
+                  JOIN word_registration_requests w ON w.id=d.word_request_id
+                  WHERE d.registration_request_id=registration_requests.id AND w.status<>'APPROVED')
             RETURNING id::text AS request_id, term_name""", (word_request_id,)).fetchall()
     return {"approved": True, "word_name": req["word_name"],
         "promoted_terms": [dict(r) for r in promoted]}

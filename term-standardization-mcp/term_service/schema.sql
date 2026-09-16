@@ -93,6 +93,19 @@ ALTER TABLE registration_requests DROP CONSTRAINT IF EXISTS registration_request
 ALTER TABLE registration_requests ADD CONSTRAINT registration_requests_status_check
     CHECK(status IN ('PENDING_REVIEW','WAITING_FOR_WORD_APPROVAL','APPROVED','REJECTED'));
 ALTER TABLE registration_requests ADD COLUMN IF NOT EXISTS depends_on_word_request_id uuid REFERENCES word_registration_requests(id);
+-- A term can now depend on several new words at once (a multi-noun gap split into
+-- separate word registrations - see naming.py's split_into_nouns), so the single-FK
+-- column above is replaced by a many-to-many table; word_registration.approve() only
+-- releases a term once every one of its dependency rows here is APPROVED.
+CREATE TABLE IF NOT EXISTS registration_request_word_dependencies (
+ registration_request_id uuid NOT NULL REFERENCES registration_requests(id),
+ word_request_id uuid NOT NULL REFERENCES word_registration_requests(id),
+ PRIMARY KEY(registration_request_id,word_request_id)
+);
+INSERT INTO registration_request_word_dependencies(registration_request_id,word_request_id)
+    SELECT id,depends_on_word_request_id FROM registration_requests WHERE depends_on_word_request_id IS NOT NULL
+    ON CONFLICT DO NOTHING;
+ALTER TABLE registration_requests DROP COLUMN IF EXISTS depends_on_word_request_id;
 DROP INDEX IF EXISTS pending_name_unique;
 CREATE UNIQUE INDEX IF NOT EXISTS pending_name_unique ON registration_requests(normalized_name)
     WHERE status IN ('PENDING_REVIEW','WAITING_FOR_WORD_APPROVAL');

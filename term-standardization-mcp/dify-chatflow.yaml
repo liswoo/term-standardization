@@ -312,7 +312,15 @@ workflow:
           \ its rules -> help.\", 'awaiting_confirm': \"At awaiting_confirm, explicit\
           \ yes/등록해줘 -> confirm_registration true; no/cancel -> cancel.\\nNever confirm\
           \ registration in another stage. A general initial '등록해줘' is NOT final consent.\"\
-          , 'awaiting_word_meaning': 'At awaiting_word_meaning, no word_suggestion\
+          , 'awaiting_word_split_choice': 'At awaiting_word_split_choice, the term\\\
+          's still-missing part is itself a compound of 2+ separate\\nnouns (e.g.\
+          \ \"소리동굴\" = \"소리\"+\"동굴\") and the user is choosing how to register it.\
+          \ Choosing to keep\\nit as ONE new atomic word (e.g. \\'하나로 등록할래요\\', \\\
+          '하나의 단어로 할게요\\', \\'그냥 통째로\\') -> set_word_split_choice\\nconfirmed=false.\
+          \ Choosing to register each noun as its OWN new standard word instead (e.g.\
+          \ \\'나눠서\\n등록할래요\\', \\'각각 등록할래요\\', \\'따로 할게요\\') -> set_word_split_choice\
+          \ confirmed=true.\\nOnly an actual question about this choice -> help.',\
+          \ 'awaiting_word_meaning': 'At awaiting_word_meaning, no word_suggestion\
           \ exists yet - the user is describing how they use a\\nconcept/word for\
           \ the FIRST time, NOT naming a term or a word directly -> propose_word,\
           \ value = that\\nfree-text description verbatim (never shorten it to just\
@@ -332,8 +340,13 @@ workflow:
           ') -> edit_word_definition, value=\"\" (bare - this is a mode switch, not\
           \ the\\ndefinition text itself; the next turn provides that).\\n(4) A completely\
           \ different usage description (not answering an option, not a yes/no, not\
-          \ asking to\\nself-write the definition) -> propose_word instead, value\
-          \ = that new description.', 'awaiting_word_definition': 'At awaiting_word_definition,\
+          \ asking to\\nself-write the definition, and not an actual question about\
+          \ this step) -> propose_word instead, value =\\nthat new description.\\\
+          nOnly an actual question about this step (not describing a new concept)\
+          \ -> help. A question that merely\\nhappens to mention words from the current\
+          \ suggestion (e.g. asking whether registration could be done\\ndifferently)\
+          \ is still a question, not a new usage description - never feed question\
+          \ text into\\npropose_word.', 'awaiting_word_definition': 'At awaiting_word_definition,\
           \ the user is directly writing their OWN definition for the new standard\\\
           nword (its name/abbreviation are already fixed and unaffected by this step)\
           \ - any descriptive text ->\\nset_word_definition, value = that exact text\
@@ -400,7 +413,9 @@ workflow:
 
             show_candidates,edit_term,edit_domain,edit_definition,cancel,restart,help,unknown,
 
-            propose_word,confirm_word,set_word_abbreviation,find_term,edit_word_definition,set_word_definition.
+            propose_word,confirm_word,set_word_abbreviation,find_term,edit_word_definition,set_word_definition,
+
+            set_word_split_choice.
 
             Only explicit help/query/edit/cancel/restart REQUESTS take priority over
             a field answer. A short descriptive noun phrase is an answer, not a help
@@ -611,7 +626,12 @@ workflow:
           label\":f\"네, {suggested}로 할게요\",\"value\":suggested}] if suggested else\
           \ []\n    elif stage==\"awaiting_confirm\":\n        options=[{\"label\"\
           :\"네, 등록해주세요\",\"value\":\"네, 등록해주세요\"},{\"label\":\"아니요, 취소할게요\",\"value\"\
-          :\"아니요, 취소할게요\"}]\n    elif stage==\"awaiting_word_confirm\":\n        word_sug=state.get(\"\
+          :\"아니요, 취소할게요\"}]\n    elif stage==\"awaiting_word_split_choice\":\n   \
+          \     split_names=(state.get(\"word_split_candidates\") or {}).get(\"split_names\"\
+          ) or []\n        options=[{\"label\":\"하나의 단어로 등록할래요\",\"value\":\"하나의 단어로\
+          \ 등록할래요\"},\n            {\"label\":\"나눠서 각각 등록할래요\"+(f\" ({'/'.join(split_names)})\"\
+          \ if split_names else \"\"),\n                \"value\":\"나눠서 각각 등록할래요\"\
+          }]\n    elif stage==\"awaiting_word_confirm\":\n        word_sug=state.get(\"\
           word_suggestion\") or {}\n        if word_sug.get(\"ambiguous\"):\n    \
           \        options=[{\"label\":o,\"value\":o} for o in word_sug.get(\"options\"\
           ,[])]\n        elif word_sug.get(\"existing_word_match\"):\n           \
@@ -695,42 +715,59 @@ workflow:
           \    # output (resume_notice, below) instead - completely outside the reply\
           \ LLM's discretion,\n    # the same reasoning that keeps `options` out of\
           \ its prompt entirely.\n    resumed_from_word_request=bool(result.get(\"\
-          resumed_from_word_request\"))\n    resume_notice=(\"표준단어 확인이 끝나, 원래 요청하신\
-          \ 용어 등록을 이어서 진행합니다.\\n\\n\"\n        if resumed_from_word_request else \"\
-          \")\n    if stage!=\"awaiting_definition\":\n        definition_hint=\"\"\
-          \n    elif not has_definition_suggestion:\n        definition_hint=\"화면에\
-          \ 참고할 정보가 없으니, 등록하려는 새 용어 자체의 정의를 직접 작성해 달라고 요청하세요.\"\n    elif definition_suggestion_kind==\"\
-          question\":\n        definition_hint=\"용어 의미가 명확하지 않아 아래에 확인 질문과 후보가 준비되어\
-          \ 있다고 안내하고, 후보 중 선택하거나 직접 설명해 달라고 요청하세요.\"\n    else:\n        definition_hint=\"\
-          정의 초안이 아래에 준비되어 있다고 안내하고, 그대로 등록할지 다른 내용으로 직접 작성할지 물어보세요.\"\n    # Same\
-          \ \"decide the sentence in code, let the reply LLM only relay it\" pattern\n\
-          \    # as definition_hint above, for the word-request sub-flow's confirm\
-          \ step.\n    word_suggestion=state.get(\"word_suggestion\") or {}\n    has_word_suggestion=stage==\"\
-          awaiting_word_confirm\" and bool(word_suggestion)\n    # REQUEST_NEW_WORD\
-          \ (confirm_term routing into the word sub-flow because the term's\n    #\
-          \ decomposition was missing a standard word) needs a visibly different message\
-          \ from\n    # a plain retry (INPUT_WORD_MEANING) - a user reported not even\
-          \ noticing they'd been\n    # routed away from the term they asked for,\
-          \ because both cases previously shared the\n    # same generic sentence\
-          \ and a separate, easy-to-miss prose aside was the only thing\n    # that\
-          \ mentioned the term-registration connection (never reliably said - see\
-          \ the\n    # \"code decides the sentence\" lesson throughout this function).\n\
-          \    if stage==\"awaiting_word_meaning\" and result.get(\"next_action\"\
-          )==\"REQUEST_NEW_WORD\":\n        matched=\", \".join(result.get(\"matched_words\"\
-          ) or [])\n        word_hint=(\"요청하신 용어를 등록하려면 그 용어를 구성하는 표준단어가 모두 등록되어 있어야\
+          resumed_from_word_request\"))\n    # next_pending_word (set by _resume_or_finish_word_flow)\
+          \ means the just-finished word was\n    # only ONE of several the term's\
+          \ name split into (see naming.py's split_into_nouns via\n    # set_word_split_choice)\
+          \ - the term flow hasn't resumed yet, another word still needs the\n   \
+          \ # same confirm/register steps first. Must not share resumed_from_word_request's\
+          \ notice\n    # text (which specifically says the ORIGINAL term is resuming)\
+          \ - that would misleadingly\n    # imply the term step is next when it's\
+          \ really another new word.\n    next_pending_word=bool(result.get(\"next_pending_word\"\
+          ))\n    if resumed_from_word_request:\n        resume_notice=\"표준단어 확인이\
+          \ 끝나, 원래 요청하신 용어 등록을 이어서 진행합니다.\\n\\n\"\n    elif next_pending_word:\n \
+          \       resume_notice=\"이 단어 외에도, 등록하려는 용어를 구성하는 다른 표준단어가 아직 없어 이어서 확인합니다.\\\
+          n\\n\"\n    else:\n        resume_notice=\"\"\n    if stage!=\"awaiting_definition\"\
+          :\n        definition_hint=\"\"\n    elif not has_definition_suggestion:\n\
+          \        definition_hint=\"화면에 참고할 정보가 없으니, 등록하려는 새 용어 자체의 정의를 직접 작성해 달라고\
+          \ 요청하세요.\"\n    elif definition_suggestion_kind==\"question\":\n       \
+          \ definition_hint=\"용어 의미가 명확하지 않아 아래에 확인 질문과 후보가 준비되어 있다고 안내하고, 후보 중 선택하거나\
+          \ 직접 설명해 달라고 요청하세요.\"\n    else:\n        definition_hint=\"정의 초안이 아래에 준비되어\
+          \ 있다고 안내하고, 그대로 등록할지 다른 내용으로 직접 작성할지 물어보세요.\"\n    # Same \"decide the sentence\
+          \ in code, let the reply LLM only relay it\" pattern\n    # as definition_hint\
+          \ above, for the word-request sub-flow's confirm step.\n    word_suggestion=state.get(\"\
+          word_suggestion\") or {}\n    has_word_suggestion=stage==\"awaiting_word_confirm\"\
+          \ and bool(word_suggestion)\n    # REQUEST_NEW_WORD (confirm_term routing\
+          \ into the word sub-flow because the term's\n    # decomposition was missing\
+          \ a standard word) needs a visibly different message from\n    # a plain\
+          \ retry (INPUT_WORD_MEANING) - a user reported not even noticing they'd\
+          \ been\n    # routed away from the term they asked for, because both cases\
+          \ previously shared the\n    # same generic sentence and a separate, easy-to-miss\
+          \ prose aside was the only thing\n    # that mentioned the term-registration\
+          \ connection (never reliably said - see the\n    # \"code decides the sentence\"\
+          \ lesson throughout this function).\n    if stage==\"awaiting_word_split_choice\"\
+          :\n        split_candidates=state.get(\"word_split_candidates\") or {}\n\
+          \        matched=\", \".join(split_candidates.get(\"matched_words\") or\
+          \ [])\n        split=\", \".join(split_candidates.get(\"split_names\") or\
+          \ [])\n        word_hint=(\"요청하신 용어를 등록하려면 그 용어를 구성하는 표준단어가 모두 등록되어 있어야\
           \ 하는데, \"\n            + (f\"이미 등록된 부분({matched}) 외에 \" if matched else\
-          \ \"\")\n            + \"아직 등록되지 않은 부분이 있어 그 표준단어부터 등록을 진행합니다. 어떤 개념을 어떤\
-          \ 용도로 쓰고 있는지 자유롭게 설명해 달라고 요청하세요.\")\n    elif stage==\"awaiting_word_meaning\"\
-          :\n        word_hint=\"어떤 개념을 어떤 용도로 쓰고 있는지 자유롭게 설명해 달라고 요청하세요. 아직 후보 단어는\
-          \ 없습니다.\"\n    elif not has_word_suggestion:\n        word_hint=\"\"\n \
-          \   elif word_suggestion.get(\"ambiguous\"):\n        word_hint=\"이 개념의\
-          \ 의미가 명확하지 않아 아래에 확인 질문과 후보가 준비되어 있다고 안내하고, 후보 중 선택하거나 다시 설명해 달라고 요청하세요.\"\
-          \n    elif word_suggestion.get(\"existing_word_match\"):\n        word_hint=\"\
-          이 의미는 이미 등록된 표준단어로 존재한다고 안내하고, 아래 카드를 확인한 뒤 그 단어를 재사용할지 물어보세요.\"\n    elif\
-          \ word_suggestion.get(\"name\") and word_suggestion.get(\"english_abbr\"\
-          ):\n        word_hint=\"새로운 표준단어 후보가 아래에 준비되어 있다고 안내하고, 확인 후 그 단어로 등록할지\
-          \ 물어보세요.\"\n    else:\n        word_hint=\"단어 추천을 만드는 데 실패했습니다. 어떤 개념인지\
-          \ 다시 한 번 설명해 달라고 요청하세요.\"\n    # A term submitted alongside a brand-new\
+          \ \"\")\n            + f\"'{split}' 부분이 아직 하나의 표준단어로 등록되어 있지 않습니다. 이 부분을\
+          \ 하나의 새 단어로 통째로 \"\n            + \"등록할지, 아니면 각 낱말을 나눠서 각각 새 단어로 등록한 뒤 조합할지\
+          \ 선택해 달라고 요청하세요.\")\n    elif stage==\"awaiting_word_meaning\" and result.get(\"\
+          next_action\")==\"REQUEST_NEW_WORD\":\n        matched=\", \".join(result.get(\"\
+          matched_words\") or [])\n        word_hint=(\"요청하신 용어를 등록하려면 그 용어를 구성하는\
+          \ 표준단어가 모두 등록되어 있어야 하는데, \"\n            + (f\"이미 등록된 부분({matched}) 외에 \"\
+          \ if matched else \"\")\n            + \"아직 등록되지 않은 부분이 있어 그 표준단어부터 등록을\
+          \ 진행합니다. 어떤 개념을 어떤 용도로 쓰고 있는지 자유롭게 설명해 달라고 요청하세요.\")\n    elif stage==\"\
+          awaiting_word_meaning\":\n        word_hint=\"어떤 개념을 어떤 용도로 쓰고 있는지 자유롭게\
+          \ 설명해 달라고 요청하세요. 아직 후보 단어는 없습니다.\"\n    elif not has_word_suggestion:\n\
+          \        word_hint=\"\"\n    elif word_suggestion.get(\"ambiguous\"):\n\
+          \        word_hint=\"이 개념의 의미가 명확하지 않아 아래에 확인 질문과 후보가 준비되어 있다고 안내하고, 후보\
+          \ 중 선택하거나 다시 설명해 달라고 요청하세요.\"\n    elif word_suggestion.get(\"existing_word_match\"\
+          ):\n        word_hint=\"이 의미는 이미 등록된 표준단어로 존재한다고 안내하고, 아래 카드를 확인한 뒤 그 단어를\
+          \ 재사용할지 물어보세요.\"\n    elif word_suggestion.get(\"name\") and word_suggestion.get(\"\
+          english_abbr\"):\n        word_hint=\"새로운 표준단어 후보가 아래에 준비되어 있다고 안내하고, 확인\
+          \ 후 그 단어로 등록할지 물어보세요.\"\n    else:\n        word_hint=\"단어 추천을 만드는 데 실패했습니다.\
+          \ 어떤 개념인지 다시 한 번 설명해 달라고 요청하세요.\"\n    # A term submitted alongside a brand-new\
           \ (not-yet-approved) word starts life as\n    # WAITING_FOR_WORD_APPROVAL,\
           \ not the usual PENDING_REVIEW (see registration.submit()) -\n    # worth\
           \ calling out explicitly so the user doesn't think it's already in the normal\n\
@@ -756,7 +793,9 @@ workflow:
           \        assessment[\"search\"]={\"note\":\"비교 결과는 화면 표에 표시됨\"}\n    if\
           \ has_existing_match:\n        state[\"search\"]={\"note\":\"기존 용어 정보는 화면\
           \ 카드에 표시됨\"}\n    if has_definition_suggestion:\n        state[\"definition_suggestion\"\
-          ]={\"note\":\"정의 제안/질문은 화면 카드에 표시됨\"}\n    if stage==\"awaiting_abbreviation\"\
+          ]={\"note\":\"정의 제안/질문은 화면 카드에 표시됨\"}\n    if stage==\"awaiting_word_split_choice\"\
+          \ and state.get(\"word_split_candidates\"):\n        state[\"word_split_candidates\"\
+          ]={\"note\":\"선택지는 화면 버튼에 표시됨\"}\n    if stage==\"awaiting_abbreviation\"\
           \ and state.get(\"abbreviation_suggestion\"):\n        state[\"abbreviation_suggestion\"\
           ]={\"note\":\"추천 약어는 화면 카드에 표시됨\"}\n    if stage==\"pending_request_found\"\
           \ and state.get(\"pending_request\"):\n        state[\"pending_request\"\
@@ -891,6 +930,9 @@ workflow:
 
             cancelled: 처리 결과 안내. help/show_candidates에서는 현재 상태를 유지하고 요청 정보만 설명.
 
+            awaiting_word_split_choice: word_hint에 이번 턴에 안내할 문장이 정해져 있습니다 - 그대로 다듬어
+            포함하세요. 하나로 등록할지, 나눠서 각각 등록할지 두 선택지는 화면에 버튼으로 표시되니 문장에서 반복하지 마세요.
+
             awaiting_word_meaning: word_hint에 이번 턴에 안내할 문장이 정해져 있습니다 - 그 문장을 자연스럽게
             다듬어 답변에 포함하세요(의미를 바꾸지 마세요). REQUEST_NEW_WORD로 이 단계에 처음 들어온 경우, 등록하려던 용어의
             일부가 아직 등록된 표준단어와 맞지 않아 그 부분에 대해 먼저 표준단어를 확인/등록해야 한다는 사실을 한 문장으로 알리세요 -
@@ -920,9 +962,10 @@ workflow:
             용어명, awaiting_term_confirm→방금 추출한 용어가 맞는지 ''네, 맞아요'' 또는 ''아니요, 다시 입력할게요''
             중 선택, awaiting_guideline_choice→아래 후보 중 선택 또는 새 용어명, awaiting_domain_choice→도메인
             선택, awaiting_definition→정의 작성, awaiting_abbreviation→아래 약어 후보 확인 또는 직접
-            입력, awaiting_confirm→등록 여부, awaiting_word_meaning→개념 사용 용도 설명, awaiting_word_confirm→단어
-            후보 확인, awaiting_word_definition→단어의 정의 작성, awaiting_word_abbreviation→단어
-            약어 후보 확인 또는 직접 입력. 다른 단계에서나 나올 법한 질문(예: 정의 작성 요청)을 지어내지 마세요.
+            입력, awaiting_confirm→등록 여부, awaiting_word_split_choice→하나로 등록할지 나눠서 등록할지
+            선택, awaiting_word_meaning→개념 사용 용도 설명, awaiting_word_confirm→단어 후보 확인,
+            awaiting_word_definition→단어의 정의 작성, awaiting_word_abbreviation→단어 약어 후보
+            확인 또는 직접 입력. 다른 단계에서나 나올 법한 질문(예: 정의 작성 요청)을 지어내지 마세요.
 
             error가 WORD_MEANING_REQUIRED 또는 TERM_MEANING_REQUIRED이면 meaning_required_hint에
             이번 턴에 안내할 문장이 이미 정해져 있습니다 - 그 문장을 자연스럽게 다듬어 그대로 답변하세요(두 에러가 서로 비슷해 보여도
