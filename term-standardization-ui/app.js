@@ -16,12 +16,18 @@ let CHAT_USER = null; // set to the logged-in username by showApp() below, once 
 // body.pre-auth가 CSS로 app-shell 자체를 숨기므로, 세션 확인 중엔 로딩 문구만
 // 보이고 실패했을 때만 로그인 카드가 나타난다 - 대시보드가 잠깐이라도 보이는
 // 깜빡임이 없다.
+let CURRENT_USER_ROLE = null;
+
 function showApp(user) {
   document.body.classList.remove("pre-auth");
   document.getElementById("current-user-avatar").textContent = (user.display_name || "-").slice(0, 1);
   document.getElementById("current-user-name").textContent = user.display_name;
   document.getElementById("current-user-team").textContent = user.team || "-";
-  document.getElementById("nav-members-btn").hidden = user.role !== "ADMIN";
+  CURRENT_USER_ROLE = user.role;
+  const isAdmin = user.role === "ADMIN";
+  document.getElementById("current-user-admin-badge").hidden = !isAdmin;
+  document.getElementById("dify-admin-row").hidden = !isAdmin;
+  document.getElementById("settings-members-panel").hidden = !isAdmin;
   CHAT_USER = user.username;
   renderAll();
   fetchCatalogFromBackend();
@@ -55,6 +61,7 @@ const AUTH_ERROR_LABELS = {
   MISSING_FIELDS: "모든 항목을 입력해주세요.",
   PASSWORD_TOO_SHORT: "비밀번호는 8자 이상이어야 합니다.",
   USERNAME_TAKEN: "이미 사용 중인 아이디입니다.",
+  CURRENT_PASSWORD_INCORRECT: "현재 비밀번호가 올바르지 않습니다.",
 };
 
 document.getElementById("auth-tab-login").addEventListener("click", () => {
@@ -102,6 +109,23 @@ document.getElementById("signup-form").addEventListener("submit", async (e) => {
 document.getElementById("logout-btn").addEventListener("click", async () => {
   try { await fetch("/admin/auth/logout", { method: "POST" }); } catch { /* best-effort */ }
   window.location.reload();
+});
+
+document.getElementById("settings-btn").addEventListener("click", () => switchView("settings"));
+
+document.getElementById("change-password-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const errorEl = document.getElementById("change-password-error");
+  const noticeEl = document.getElementById("change-password-notice");
+  noticeEl.hidden = true;
+  try {
+    await submitAuthForm("/admin/auth/change-password", {
+      current_password: document.getElementById("current-password-input").value,
+      new_password: document.getElementById("new-password-input").value,
+    }, errorEl);
+    document.getElementById("change-password-form").reset();
+    noticeEl.hidden = false;
+  } catch { /* error already shown by submitAuthForm */ }
 });
 
 (async function requireAuth() {
@@ -160,7 +184,6 @@ const VIEW_META = {
   domains: { title: "도메인 관리", subtitle: "표준 용어에 적용되는 데이터 도메인(형식·길이) 체계를 관리합니다" },
   history: { title: "표준화 이력", subtitle: "AI 파이프라인 실행 기록을 확인합니다" },
   settings: { title: "설정", subtitle: "백엔드 연동 정보를 확인합니다" },
-  members: { title: "회원 관리", subtitle: "가입 신청을 승인하거나 회원 상태·권한을 관리합니다" },
 };
 
 function switchView(view) {
@@ -188,8 +211,10 @@ function switchView(view) {
       searchInput.placeholder = "용어 사전 또는 단어사전 화면에서 이름·정의로 검색...";
     }
   }
-  if (view === "settings") refreshLlmStatus();
-  if (view === "members") fetchMembers();
+  if (view === "settings") {
+    refreshLlmStatus();
+    if (CURRENT_USER_ROLE === "ADMIN") fetchMembers();
+  }
 }
 
 document.querySelectorAll(".nav-item").forEach((btn) => {
@@ -682,7 +707,6 @@ function openDifyStudio() {
   const url = window.RUNTIME_CONFIG?.difyStudioUrl || "http://localhost/";
   window.open(url, "_blank", "noopener");
 }
-document.getElementById("dify-studio-nav-btn").addEventListener("click", openDifyStudio);
 document.getElementById("open-dify-studio-btn").addEventListener("click", openDifyStudio);
 
 // ── LLM 모델 전환 (설정 화면) ────────────────────────────────────

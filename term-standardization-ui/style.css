@@ -22,6 +22,16 @@
 
 * { box-sizing: border-box; }
 
+/* This has bitten us three times now (.auth-form, .settings-row, .auth-card/
+   .admin-badge all set their own `display`, which - being an author-stylesheet
+   rule - beats the browser's default `[hidden]{display:none}` regardless of
+   selector specificity or source order): a class with an explicit `display`
+   silently un-hides its own element whenever JS sets `.hidden = true` (the
+   correct way to toggle visibility in this codebase - see the CSS toggle note
+   in app.js). One !important rule here closes the whole bug class for good,
+   instead of chasing it component by component. */
+[hidden] { display: none !important; }
+
 html, body {
   margin: 0;
   height: 100%;
@@ -446,7 +456,6 @@ body.pre-auth .app-shell, body.pre-auth .chat-fab, body.pre-auth .chat-panel { d
 }
 .auth-tab.is-active { background: var(--primary-soft); border-color: var(--primary); color: var(--primary-dark); }
 .auth-form { display: flex; flex-direction: column; gap: 12px; width: 100%; }
-.auth-form[hidden] { display: none; }
 .auth-form label { display: flex; flex-direction: column; gap: 4px; font-size: 12.5px; color: var(--text-muted); font-weight: 600; }
 .auth-form input { padding: 9px 12px; border: 1px solid var(--border); border-radius: 10px; font-size: 13.5px; font-family: inherit; }
 .auth-form input:focus { outline: none; border-color: var(--primary); }
@@ -457,3 +466,17 @@ body.pre-auth .app-shell, body.pre-auth .chat-fab, body.pre-auth .chat-panel { d
 .btn-danger:hover { background: #fde2e2; }
 .table-actions { display: flex; gap: 8px; flex-wrap: wrap; }
 .status-danger { background: var(--danger-soft); color: var(--danger); }
+.settings-row.align-top { align-items: flex-start; }
+.settings-form { max-width: 260px; }
+#settings-members-panel { margin-top: 18px; }
+
+/* ── 사이드바 하단: 관리자 배지 · 설정/로그아웃 버튼 ── */
+.user-chip { position: relative; }
+.user-meta { flex: 1; min-width: 0; }
+.user-meta strong, .user-meta > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.admin-badge {
+  display: inline-block; width: fit-content; margin-top: 3px;
+  background: #d97706; color: #fff; font-size: 10px; font-weight: 700;
+  padding: 1px 6px; border-radius: 6px; letter-spacing: .01em;
+}
+.user-actions { display: flex; gap: 2px; flex-shrink: 0; }

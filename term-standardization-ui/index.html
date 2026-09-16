@@ -7,7 +7,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
 <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
-<link rel="stylesheet" href="style.css?v=3" />
+<link rel="stylesheet" href="style.css?v=4" />
 </head>
 <body class="pre-auth">
 
@@ -74,20 +74,6 @@
         <svg viewBox="0 0 24 24"><path d="M12 2a10 10 0 1 0 10 10h-3a7 7 0 1 1-2-4.9L14 10h7V3l-2.6 2.6A10 10 0 0 0 12 2z"/></svg>
         <span>표준화 이력</span>
       </button>
-
-      <div class="nav-section-label">환경설정</div>
-      <button class="nav-item" data-view="settings">
-        <svg viewBox="0 0 24 24"><path d="M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8zM19 12a7 7 0 0 0-.1-1.2l2-1.6-2-3.4-2.4 1a7 7 0 0 0-2-1.2L14 2h-4l-.5 2.6a7 7 0 0 0-2 1.2l-2.4-1-2 3.4 2 1.6A7 7 0 0 0 5 12c0 .4 0 .8.1 1.2l-2 1.6 2 3.4 2.4-1a7 7 0 0 0 2 1.2L10 22h4l.5-2.6a7 7 0 0 0 2-1.2l2.4 1 2-3.4-2-1.6c.1-.4.1-.8.1-1.2z"/></svg>
-        <span>설정</span>
-      </button>
-      <button class="nav-item" id="dify-studio-nav-btn" type="button" title="새 창에서 Dify 관리자 콘솔이 열립니다 (Dify 계정 로그인 필요)">
-        <svg viewBox="0 0 24 24"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6M15 3h6v6M10 14 21 3"/></svg>
-        <span>Dify 관리자</span>
-      </button>
-      <button class="nav-item" data-view="members" id="nav-members-btn" hidden>
-        <svg viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 0 0-4-4H7a4 4 0 0 0-4 4v2M12 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg>
-        <span>회원 관리</span>
-      </button>
     </nav>
 
     <div class="sidebar-footer">
@@ -96,10 +82,16 @@
         <div class="user-meta">
           <strong id="current-user-name">-</strong>
           <span id="current-user-team">-</span>
+          <span class="admin-badge" id="current-user-admin-badge" hidden>관리자로 로그인됨</span>
         </div>
-        <button class="chat-icon-btn" id="logout-btn" aria-label="로그아웃" title="로그아웃">
-          <svg viewBox="0 0 24 24"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/></svg>
-        </button>
+        <div class="user-actions">
+          <button class="chat-icon-btn" id="settings-btn" aria-label="설정" title="설정">
+            <svg viewBox="0 0 24 24"><path d="M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8zM19 12a7 7 0 0 0-.1-1.2l2-1.6-2-3.4-2.4 1a7 7 0 0 0-2-1.2L14 2h-4l-.5 2.6a7 7 0 0 0-2 1.2l-2.4-1-2 3.4 2 1.6A7 7 0 0 0 5 12c0 .4 0 .8.1 1.2l-2 1.6 2 3.4 2.4-1a7 7 0 0 0 2 1.2L10 22h4l.5-2.6a7 7 0 0 0 2-1.2l2.4 1 2-3.4-2-1.6c.1-.4.1-.8.1-1.2z"/></svg>
+          </button>
+          <button class="chat-icon-btn" id="logout-btn" aria-label="로그아웃" title="로그아웃">
+            <svg viewBox="0 0 24 24"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/></svg>
+          </button>
+        </div>
       </div>
     </div>
   </aside>
@@ -289,7 +281,7 @@
             </div>
             <span class="status-dot" id="api-status-dot">● 확인 전</span>
           </div>
-          <div class="settings-row">
+          <div class="settings-row" id="dify-admin-row">
             <div>
               <strong>Dify 관리자 콘솔</strong>
               <p class="muted">워크플로우·API 키 등을 직접 편집하는 관리자 화면입니다. Dify 계정 로그인이 필요합니다.</p>
@@ -316,12 +308,23 @@
             </div>
             <span class="status-dot" id="llm-status-dot">● 확인 전</span>
           </div>
+          <div class="settings-row align-top">
+            <div>
+              <strong>비밀번호 변경</strong>
+              <p class="muted">본인 계정의 로그인 비밀번호를 변경합니다. 변경하면 다른 기기의 로그인 세션은 모두 해제됩니다.</p>
+            </div>
+            <form id="change-password-form" class="auth-form settings-form">
+              <label>현재 비밀번호<input type="password" id="current-password-input" required autocomplete="current-password" /></label>
+              <label>새 비밀번호 (8자 이상)<input type="password" id="new-password-input" required autocomplete="new-password" /></label>
+              <p class="auth-error" id="change-password-error" hidden></p>
+              <p class="auth-notice" id="change-password-notice" hidden>비밀번호가 변경되었습니다.</p>
+              <button type="submit" class="btn btn-primary">변경</button>
+            </form>
+          </div>
         </div>
-      </section>
 
-      <!-- 회원 관리 (관리자 전용) -->
-      <section class="view" id="view-members" hidden>
-        <div class="panel">
+        <!-- 회원 관리 (관리자 전용) -->
+        <div class="panel" id="settings-members-panel">
           <div class="panel-header panel-header-row">
             <h2>회원 관리</h2>
             <span class="pill" id="member-pending-count-pill">0건</span>
@@ -403,6 +406,6 @@
 
 <script src="runtime-config.js"></script>
 <script src="mock-data.js"></script>
-<script src="app.js?v=3"></script>
+<script src="app.js?v=4"></script>
 </body>
 </html>

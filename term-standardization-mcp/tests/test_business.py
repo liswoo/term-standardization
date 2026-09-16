@@ -785,6 +785,40 @@ def test_set_role_promotes_member_to_admin(api_client):
     demote=api_client.post("/admin/auth/set-role",json={"user_id":self_id,"role":"MEMBER"})
     assert demote.status_code==200
 
+def test_change_password_then_old_password_rejected(api_client):
+    _create_active_admin()
+    api_client.post("/admin/auth/login",json={"username":"admin1","password":"adminpass123"})
+    change=api_client.post("/admin/auth/change-password",
+        json={"current_password":"adminpass123","new_password":"newpass456"})
+    assert change.status_code==200 and change.json()["ok"]
+    from starlette.testclient import TestClient
+    from term_service.tools import mcp
+    fresh_client=TestClient(mcp.streamable_http_app())
+    assert fresh_client.post("/admin/auth/login",
+        json={"username":"admin1","password":"adminpass123"}).status_code==401
+    assert fresh_client.post("/admin/auth/login",
+        json={"username":"admin1","password":"newpass456"}).status_code==200
+
+def test_change_password_wrong_current_rejected(api_client):
+    _create_active_admin()
+    api_client.post("/admin/auth/login",json={"username":"admin1","password":"adminpass123"})
+    resp=api_client.post("/admin/auth/change-password",
+        json={"current_password":"wrong-password","new_password":"newpass456"})
+    assert resp.status_code==401 and resp.json()["error"]=="CURRENT_PASSWORD_INCORRECT"
+
+def test_change_password_revokes_other_sessions(api_client):
+    _create_active_admin()
+    api_client.post("/admin/auth/login",json={"username":"admin1","password":"adminpass123"})
+    from starlette.testclient import TestClient
+    from term_service.tools import mcp
+    other_device=TestClient(mcp.streamable_http_app())
+    other_device.post("/admin/auth/login",json={"username":"admin1","password":"adminpass123"})
+    assert other_device.get("/admin/auth/me").status_code==200
+    api_client.post("/admin/auth/change-password",
+        json={"current_password":"adminpass123","new_password":"newpass456"})
+    assert other_device.get("/admin/auth/me").status_code==401
+    assert api_client.get("/admin/auth/me").status_code==200
+
 @pytest.mark.skipif(os.getenv("RUN_LLM_TESTS")!="1",reason="Explicit low-volume paid API smoke test")
 def test_real_llm_definition_comparison(catalog):
     same=compare("하루권장칼로리","건강한 생활을 유지하기 위해 개인에게 권장하는 하루 에너지 섭취 기준량",catalog["일일권장열량"])

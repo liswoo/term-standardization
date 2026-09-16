@@ -120,6 +120,28 @@ async def auth_me(request: Request) -> JSONResponse:
         "username": user["username"], "display_name": user["display_name"],
         "team": user["team"], "role": user["role"]}})
 
+@mcp.custom_route("/admin/auth/change-password", methods=["POST"])
+async def auth_change_password(request: Request) -> JSONResponse:
+    user, error = require_auth(request)
+    if error: return error
+    body = await request.json()
+    current_password = body.get("current_password") or ""
+    new_password = body.get("new_password") or ""
+    with db.connect() as conn:
+        row = conn.execute("SELECT password_hash FROM users WHERE id=%s", (user["id"],)).fetchone()
+    if not verify_password(current_password, row["password_hash"]):
+        return JSONResponse({"ok": False, "error": "CURRENT_PASSWORD_INCORRECT"}, status_code=401)
+    if len(new_password) < 8:
+        return JSONResponse({"ok": False, "error": "PASSWORD_TOO_SHORT"}, status_code=400)
+    current_token = request.cookies.get(SESSION_COOKIE_NAME)
+    with db.connect() as conn:
+        conn.execute("UPDATE users SET password_hash=%s,updated_at=now() WHERE id=%s",
+            (hash_password(new_password), user["id"]))
+        # Log out every other session on a password change (a stolen/shared old
+        # session shouldn't survive it) - keep only the one making this request.
+        conn.execute("DELETE FROM sessions WHERE user_id=%s AND token<>%s", (user["id"], current_token))
+    return JSONResponse({"ok": True})
+
 # ── 회원 관리 (ADMIN 전용) ────────────────────────────────────────
 
 @mcp.custom_route("/admin/auth/members", methods=["GET"])
