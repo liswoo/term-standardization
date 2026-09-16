@@ -148,6 +148,13 @@ class WordSuggestionResult(WordSuggestion):
     method: str
     model: str | None = None
     error_code: str | None = None
+    # Only populated (by code, never by the model - see suggest_word()) when
+    # existing_word_match is set: the matched word's own english_name/domain_classification,
+    # so a reuse decision can be made from the full record instead of just a bare name. Not
+    # on WordSuggestion itself so the LLM's structured-output contract for the new-word case
+    # is untouched - a freshly coined word never has these assigned at this stage anyway.
+    english_name: str = ""
+    domain_classification: str = ""
 
 class RegistrationInput(Schema):
     term_name: str = Field(min_length=2, max_length=20)

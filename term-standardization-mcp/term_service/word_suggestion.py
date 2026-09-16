@@ -18,7 +18,7 @@ from .credentials import llm_client, llm_configured, current_llm_model, llm_extr
 from .guideline import search_guideline
 from .naming import key
 from .schemas import WordSuggestion, WordSuggestionResult
-from .search import search_words
+from .search import search_words, WORD_FIELDS
 
 SYSTEM = """You help identify or coin a Korean 표준단어(standard word) - the atomic building
 block standard terms are composed from (e.g. "지사"+"분류"+"코드" -> "지사분류코드") - from a
@@ -67,7 +67,10 @@ def _candidate_existing_words(usage_description: str, limit: int = 8):
     matches = search_words(usage_description, limit=limit)
     if len(matches) < limit:
         with db.connect() as conn:
-            extra = conn.execute("""SELECT name,english_abbr,definition FROM standard_words
+            # Same field set as search_words() (WORD_FIELDS) - an existing_word_match landing
+            # on one of these filler rows must carry the same full detail as a semantically
+            # retrieved one, since either can end up shown on the reuse card.
+            extra = conn.execute(f"""SELECT {WORD_FIELDS} FROM standard_words
                 WHERE status='ACTIVE' ORDER BY updated_at DESC LIMIT %s""", (limit - len(matches),)).fetchall()
         matches = matches + extra
     return matches
@@ -119,8 +122,17 @@ def suggest_word(usage_description: str, clarification_history: list[dict] | Non
             # Hallucinated a match that wasn't actually offered - treat as no match.
             data["existing_word_match"] = ""
         if data["existing_word_match"]:
-            data.update(ambiguous=False, question="", options=[], name="", english_abbr="",
-                is_format_word=False, definition="")
+            # Carry the matched word's FULL record (not just its name) so a reuse decision
+            # can actually be made from it - english_abbr/definition/is_format_word here
+            # reuse WordSuggestion's own "new word" fields (mutually exclusive with this
+            # branch, so no collision), and english_name/domain_classification live only on
+            # WordSuggestionResult. candidates already carries every field (WORD_FIELDS via
+            # search_words()) - no extra DB round-trip needed.
+            matched = next((c for c in candidates if c["name"] == data["existing_word_match"]), {})
+            data.update(ambiguous=False, question="", options=[],
+                name=matched.get("name", data["existing_word_match"]), english_abbr=matched.get("english_abbr", ""),
+                is_format_word=matched.get("is_format_word", False), definition=matched.get("definition", ""),
+                english_name=matched.get("english_name", ""), domain_classification=matched.get("domain_classification", ""))
         else:
             data["match_reason"] = ""
             # No longer force ambiguous=False just because a clarification_hint was given -

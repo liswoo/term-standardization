@@ -1011,7 +1011,12 @@ function renderWordSuggestionCard(mcpState) {
   }
   if (sug.existing_word_match) {
     return summaryCard([
-      ["기존 단어", sug.existing_word_match, true],
+      ["표준 단어명", sug.existing_word_match, true],
+      ["영문 약어", sug.english_abbr, true],
+      ["영문명", sug.english_name],
+      ["정의", sug.definition],
+      ["형식단어", sug.is_format_word ? "예" : "아니오"],
+      ["도메인분류", sug.domain_classification],
       ["재사용 사유", sug.match_reason],
     ]);
   }
@@ -1031,7 +1036,15 @@ function renderWordAbbreviationCard(mcpState) {
 
 function renderWordResultCard(mcpState) {
   if (mcpState.resolved_word) {
-    return summaryCard([["재사용한 단어", mcpState.resolved_word.name, true]], "summary-card-ok");
+    const w = mcpState.resolved_word;
+    return summaryCard([
+      ["재사용한 표준 단어명", w.name, true],
+      ["영문 약어", w.english_abbr, true],
+      ["영문명", w.english_name],
+      ["정의", w.definition],
+      ["형식단어", w.is_format_word ? "예" : "아니오"],
+      ["도메인분류", w.domain_classification],
+    ], "summary-card-ok");
   }
   const reg = mcpState.word_registration;
   if (reg && reg.request_id) {
@@ -1051,13 +1064,14 @@ function renderTermLookupTable(mcpState) {
   const matches = (mcpState.term_lookup || {}).matches || [];
   if (!matches.length) return "";
   return `<div class="table-wrap"><table class="data-table">
-    <thead><tr><th>용어명</th><th>영문 약어</th><th>도메인</th><th>정의</th><th>유사도</th></tr></thead>
+    <thead><tr><th>용어명</th><th>영문 약어</th><th>도메인</th><th>정의</th><th>동의어</th><th>유사도</th></tr></thead>
     <tbody>${matches.map((m) => `
       <tr>
         <td><strong>${escapeHtml(m.name)}</strong></td>
         <td><span class="mono">${escapeHtml(m.english_abbr || "-")}</span></td>
         <td><span class="mono">${escapeHtml(m.domain || "-")}</span></td>
         <td class="cell-def">${escapeHtml(m.definition || "")}</td>
+        <td>${escapeHtml((m.synonyms || []).join(", "))}</td>
         <td>${Math.round((m.similarity || 0) * 100)}%</td>
       </tr>`).join("")}</tbody>
   </table></div>`;

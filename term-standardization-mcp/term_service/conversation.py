@@ -393,10 +393,12 @@ def transition(state, action, requester, conversation_id):
             # Nothing to register - the meaning is already covered by an existing
             # word. Fetch its full record (not just the name) so the result the
             # user sees carries what they'd actually need to use it (abbreviation/
-            # definition/whether it's a format word) instead of a bare name.
+            # English name/definition/format-word flag/domain classification)
+            # instead of a bare name.
             with db.connect() as conn:
                 existing=conn.execute(
-                    "SELECT name,english_abbr,definition,is_format_word FROM standard_words WHERE name=%s AND status='ACTIVE'",
+                    "SELECT name,english_abbr,english_name,definition,is_format_word,domain_classification "
+                    "FROM standard_words WHERE name=%s AND status='ACTIVE'",
                     (suggestion["existing_word_match"],)).fetchone()
             s["resolved_word"]=dict(existing,reused=True) if existing else {"name":suggestion["existing_word_match"],"reused":True}
             return _resume_or_finish_word_flow(s,"word_reused")
