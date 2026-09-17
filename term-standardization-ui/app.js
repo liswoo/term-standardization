@@ -170,8 +170,8 @@ const state = {
   terms: [...MOCK_TERMS],
   words: [],
   domains: [],
-  termsPage: { limit: 50, offset: 0, total: 0, q: "", status: "", domain: "", requester: "" },
-  wordsPage: { limit: 50, offset: 0, total: 0, q: "", status: "", isFormatWord: "", requester: "" },
+  termsPage: { limit: 50, offset: 0, total: 0, q: "", status: "", domain: "" },
+  wordsPage: { limit: 50, offset: 0, total: 0, q: "", status: "", isFormatWord: "" },
   activity: [...MOCK_ACTIVITY],
   history: [],
   chatRegisteredCount: 0,
@@ -197,21 +197,6 @@ function switchView(view) {
   });
   document.getElementById("view-title").textContent = VIEW_META[view].title;
   document.getElementById("view-subtitle").textContent = VIEW_META[view].subtitle;
-  // 검색창은 용어사전/단어사전 화면 전용 - 다른 화면으로 전환된 동안 자기 검색어를
-  // 잊지 않도록 각자 상태에 보관해뒀다가, 그 화면으로 돌아오면 그대로 복원한다.
-  const searchInput = document.getElementById("global-search-input");
-  if (searchInput) {
-    if (view === "words") {
-      searchInput.value = state.wordsPage.q;
-      searchInput.placeholder = "단어명·정의로 검색...";
-    } else if (view === "terms") {
-      searchInput.value = state.termsPage.q;
-      searchInput.placeholder = "용어명·정의로 검색...";
-    } else {
-      searchInput.value = "";
-      searchInput.placeholder = "용어 사전 또는 단어사전 화면에서 이름·정의로 검색...";
-    }
-  }
   if (view === "settings") {
     refreshLlmStatus();
   }
@@ -519,9 +504,9 @@ async function fetchCatalogFromBackend() {
       body: JSON.stringify({
         inputs: {
           limit: state.termsPage.limit, offset: state.termsPage.offset, q: state.termsPage.q,
-          status: state.termsPage.status, domain: state.termsPage.domain, requester: state.termsPage.requester,
+          status: state.termsPage.status, domain: state.termsPage.domain, requester: "",
           words_limit: state.wordsPage.limit, words_offset: state.wordsPage.offset, words_q: state.wordsPage.q,
-          words_status: state.wordsPage.status, words_requester: state.wordsPage.requester,
+          words_status: state.wordsPage.status, words_requester: "",
           words_is_format_word: state.wordsPage.isFormatWord,
         },
         response_mode: "blocking", user: CHAT_USER,
@@ -584,11 +569,11 @@ function populateDomainFilterOptions() {
   select.value = current;
 }
 
-// 용어사전/단어사전 필터 컨트롤 - select는 즉시, 텍스트 입력(요청자)은 300ms
-// 디바운스로 반영하고 매번 offset을 0으로 되돌려 페이지가 꼬이지 않게 한다.
+// 용어사전/단어사전 필터 컨트롤 - select는 즉시, 통합 검색(이름·정의·요청자)은
+// 300ms 디바운스로 반영하고 매번 offset을 0으로 되돌려 페이지가 꼬이지 않게 한다.
 function bindFilterControls(page, ids, onChange) {
   const statusEl = document.getElementById(ids.status);
-  const requesterEl = document.getElementById(ids.requester);
+  const searchEl = document.getElementById(ids.search);
   const extraEl = ids.extra ? document.getElementById(ids.extra) : null;
   statusEl?.addEventListener("change", () => {
     page.status = statusEl.value;
@@ -601,41 +586,21 @@ function bindFilterControls(page, ids, onChange) {
     onChange();
   });
   let timer = null;
-  requesterEl?.addEventListener("input", () => {
+  searchEl?.addEventListener("input", () => {
     clearTimeout(timer);
     timer = setTimeout(() => {
-      page.requester = requesterEl.value.trim();
+      page.q = searchEl.value.trim();
       page.offset = 0;
       onChange();
     }, 300);
   });
 }
 bindFilterControls(state.termsPage,
-  { status: "terms-filter-status", requester: "terms-filter-requester", extra: "terms-filter-domain", extraKey: "domain" },
+  { status: "terms-filter-status", search: "terms-filter-search", extra: "terms-filter-domain", extraKey: "domain" },
   fetchCatalogFromBackend);
 bindFilterControls(state.wordsPage,
-  { status: "words-filter-status", requester: "words-filter-requester", extra: "words-filter-format", extraKey: "isFormatWord" },
+  { status: "words-filter-status", search: "words-filter-search", extra: "words-filter-format", extraKey: "isFormatWord" },
   fetchCatalogFromBackend);
-
-// 상단바 검색창은 지금 열려 있는 화면(용어사전/단어사전)에 맞는 검색어로
-// 취급한다. 타이핑마다 재조회하면 낭비니 300ms 디바운스.
-let searchDebounceTimer = null;
-document.getElementById("global-search-input")?.addEventListener("input", (e) => {
-  const value = e.target.value;
-  clearTimeout(searchDebounceTimer);
-  searchDebounceTimer = setTimeout(() => {
-    if (currentView === "words") {
-      state.wordsPage.q = value;
-      state.wordsPage.offset = 0;
-    } else if (currentView === "terms") {
-      state.termsPage.q = value;
-      state.termsPage.offset = 0;
-    } else {
-      return;
-    }
-    fetchCatalogFromBackend();
-  }, 300);
-});
 
 // ── 챗봇 패널 열기/닫기 ─────────────────────────────────────────
 const chatPanel = document.getElementById("chat-panel");

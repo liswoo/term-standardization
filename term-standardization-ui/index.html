@@ -9,7 +9,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
 <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
-<link rel="stylesheet" href="style.css?v=8" />
+<link rel="stylesheet" href="style.css?v=9" />
 </head>
 <body class="pre-auth">
 
@@ -107,10 +107,6 @@
         <p id="view-subtitle">용어 표준화 현황을 한눈에 확인하세요</p>
       </div>
       <div class="topbar-actions">
-        <div class="search-box">
-          <svg viewBox="0 0 24 24"><path d="M21 21l-4.35-4.35M18 11a7 7 0 1 1-14 0 7 7 0 0 1 14 0z"/></svg>
-          <input type="text" id="global-search-input" placeholder="용어 사전 또는 단어사전 화면에서 이름·정의로 검색..." />
-        </div>
         <button class="btn btn-primary" id="open-register-btn">
           <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
           신규 용어 등록
@@ -179,7 +175,7 @@
             <select id="terms-filter-domain" class="filter-select">
               <option value="">도메인: 전체</option>
             </select>
-            <input type="text" id="terms-filter-requester" class="filter-input" placeholder="요청자로 검색..." />
+            <input type="text" id="terms-filter-search" class="filter-input" placeholder="용어명·정의·요청자로 검색..." />
           </div>
           <div class="table-wrap">
             <table class="data-table">
@@ -221,7 +217,7 @@
               <option value="true">형식단어만</option>
               <option value="false">일반단어만</option>
             </select>
-            <input type="text" id="words-filter-requester" class="filter-input" placeholder="요청자로 검색..." />
+            <input type="text" id="words-filter-search" class="filter-input" placeholder="단어명·정의·요청자로 검색..." />
           </div>
           <div class="table-wrap">
             <table class="data-table">
@@ -393,6 +389,6 @@
 
 <script src="runtime-config.js"></script>
 <script src="mock-data.js"></script>
-<script src="app.js?v=6"></script>
+<script src="app.js?v=7"></script>
 </body>
 </html>

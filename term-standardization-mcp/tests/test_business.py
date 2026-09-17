@@ -9,6 +9,7 @@ from term_service.search import search, domain_usage, validate_name
 from term_service.schemas import AbbreviationResult, DefinitionSuggestionResult, RegistrationInput
 from term_service.comparison import compare
 from term_service.word_suggestion import suggest_word
+from term_service.tools import list_terms, list_standard_words
 from manage import import_guideline, create_admin
 
 def insert_guideline_chunk(section,content):
@@ -31,6 +32,32 @@ def insert_standard_word(name,english_abbr,definition=""):
             ON CONFLICT(normalized_name) DO UPDATE SET english_abbr=excluded.english_abbr,definition=excluded.definition,
             embedding=excluded.embedding,embedding_model=excluded.embedding_model""",
             (str(uuid.uuid4()),name,key(name),english_abbr,definition,vector,EMBEDDING_MODEL))
+
+def insert_pending_term(term_name,definition="테스트 정의",domain="수N7",requester="tester",status="PENDING_REVIEW"):
+    from term_service.naming import key
+    from psycopg.types.json import Jsonb
+    with db.connect() as conn:
+        prep_id=str(uuid.uuid4())
+        conn.execute("""INSERT INTO registration_preparations(id,payload,assessment,requester,conversation_id,catalog_fingerprint,expires_at)
+            VALUES(%s,%s,%s,%s,%s,%s,now()+interval '30 minutes')""",
+            (prep_id,Jsonb({}),Jsonb({}),requester,"test-conv","TEST_FIXTURE_NOT_PRODUCTION"))
+        conn.execute("""INSERT INTO registration_requests
+            (id,preparation_id,term_name,normalized_name,definition,domain,synonyms,requester,conversation_id,assessment,status)
+            VALUES(%s,%s,%s,%s,%s,%s,'{}',%s,%s,%s,%s)""",
+            (str(uuid.uuid4()),prep_id,term_name,key(term_name),definition,domain,requester,"test-conv",Jsonb({}),status))
+
+def insert_pending_word(word_name,definition="테스트 정의",requester="tester",status="PENDING_REVIEW"):
+    from term_service.naming import key
+    from psycopg.types.json import Jsonb
+    with db.connect() as conn:
+        prep_id=str(uuid.uuid4())
+        conn.execute("""INSERT INTO word_registration_preparations(id,payload,assessment,requester,conversation_id,catalog_fingerprint,expires_at)
+            VALUES(%s,%s,%s,%s,%s,%s,now()+interval '30 minutes')""",
+            (prep_id,Jsonb({}),Jsonb({}),requester,"test-conv","TEST_FIXTURE_NOT_PRODUCTION"))
+        conn.execute("""INSERT INTO word_registration_requests
+            (id,preparation_id,word_name,normalized_name,definition,english_abbr,requester,conversation_id,assessment,status)
+            VALUES(%s,%s,%s,%s,%s,'',%s,%s,%s,%s)""",
+            (str(uuid.uuid4()),prep_id,word_name,key(word_name),definition,requester,"test-conv",Jsonb({}),status))
 
 @pytest.mark.parametrize("name",["일일권장칼로리","체질량지수(BMI)","나이","국가"])
 def test_valid_names(name):
@@ -818,6 +845,30 @@ def test_change_password_revokes_other_sessions(api_client):
         json={"current_password":"adminpass123","new_password":"newpass456"})
     assert other_device.get("/admin/auth/me").status_code==401
     assert api_client.get("/admin/auth/me").status_code==200
+
+def test_list_terms_query_matches_requester_too():
+    insert_pending_term("신규약속어",requester="김철수")
+    result=list_terms(q="김철수")
+    assert any(t["term_name"]=="신규약속어" for t in result["terms"])
+
+def test_list_terms_query_still_matches_name_and_definition():
+    insert_pending_term("신규약속어",definition="특별한 정의문",requester="박영희")
+    by_name=list_terms(q="신규약속어")
+    assert any(t["term_name"]=="신규약속어" for t in by_name["terms"])
+    by_def=list_terms(q="특별한 정의문")
+    assert any(t["term_name"]=="신규약속어" for t in by_def["terms"])
+
+def test_list_terms_query_does_not_hide_approved_rows(catalog):
+    # Regression: a requester filter used to force show_approved=False, which
+    # meant merging requester-search into `q` would have silently hidden the
+    # whole approved catalog whenever the search box had any text in it.
+    result=list_terms(q="일일섭취칼로리")
+    assert any(t["term_name"]=="일일섭취칼로리" and t["status"]=="APPROVED" for t in result["terms"])
+
+def test_list_standard_words_query_matches_requester_too():
+    insert_pending_word("신규단어",requester="이민수")
+    result=list_standard_words(q="이민수")
+    assert any(w["name"]=="신규단어" for w in result["words"])
 
 @pytest.mark.skipif(os.getenv("RUN_LLM_TESTS")!="1",reason="Explicit low-volume paid API smoke test")
 def test_real_llm_definition_comparison(catalog):
