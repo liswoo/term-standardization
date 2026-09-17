@@ -19,6 +19,7 @@ docker compose up -d --wait
 # an empty database unless this also reseeds it every time, not just once.
 .venv/bin/python manage.py import-catalog data/scenario_catalog.json
 .venv/bin/python manage.py import-guideline data/standard_guide.md
+.venv/bin/python manage.py seed-mockops
 
 if [[ -n "$EXISTING_PID" ]]; then
   kill "$EXISTING_PID" || true

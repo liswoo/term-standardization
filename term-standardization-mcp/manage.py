@@ -236,6 +236,30 @@ def create_admin(username,password,display_name,team=""):
             (str(uuid.uuid4()),username,auth.hash_password(password),display_name,team))
     return {"created":True,"username":username,"role":"ADMIN"}
 
+_MOCKOPS_SURNAMES=["김","이","박","최","정","강","조","윤","장","임"]
+_MOCKOPS_GIVEN=["민준","서연","도윤","지우","하은","시우","수아","지호","예은","현우"]
+
+def seed_mockops():
+    """Idempotent (seed-only-if-empty) synthetic operational data for the domain
+    application's '개인정보여부' feature to point at - see term_service/mock_operations.py.
+    Every value here is obviously fake (sequential resident numbers, example.test
+    emails) - this is not a real customer database and must never look like one."""
+    with db.connect() as conn:
+        if conn.execute("SELECT 1 FROM mockops_customers LIMIT 1").fetchone():
+            return {"seeded":0,"reason":"ALREADY_SEEDED"}
+        rows=[]
+        for i in range(30):
+            name=_MOCKOPS_SURNAMES[i%len(_MOCKOPS_SURNAMES)]+_MOCKOPS_GIVEN[i//len(_MOCKOPS_SURNAMES)%len(_MOCKOPS_GIVEN)]
+            resident_number=f"90{i%12+1:02d}{i%28+1:02d}-{1000000+i:07d}"
+            phone=f"010-0000-{i:04d}"
+            email=f"user{i}@example-synthetic.test"
+            address=f"서울시 가상구 테스트동 {i+1}번지"
+            rows.append((str(uuid.uuid4()),name,resident_number,phone,email,address))
+        for row in rows:
+            conn.execute("""INSERT INTO mockops_customers(id,name,resident_number,phone,email,address)
+                VALUES(%s,%s,%s,%s,%s,%s)""",row)
+    return {"seeded":len(rows)}
+
 if __name__=="__main__":
     parser=argparse.ArgumentParser()
     sub=parser.add_subparsers(dest="command",required=True)
@@ -247,6 +271,9 @@ if __name__=="__main__":
     p=sub.add_parser("export-schemas"); p.add_argument("file",nargs="?")
     p=sub.add_parser("approve-word"); p.add_argument("file")
     p=sub.add_parser("approve-term"); p.add_argument("file")
+    p=sub.add_parser("approve-domain"); p.add_argument("request_id")
+    p=sub.add_parser("reject-domain"); p.add_argument("request_id")
+    sub.add_parser("seed-mockops")
     p=sub.add_parser("create-admin")
     p.add_argument("username"); p.add_argument("password")
     p.add_argument("display_name"); p.add_argument("team",nargs="?",default="")
@@ -273,6 +300,14 @@ if __name__=="__main__":
         # first, which flips it to PENDING_REVIEW automatically.
         from term_service import registration
         print(json.dumps(registration.approve(args.file),ensure_ascii=False))
+    elif args.command=="approve-domain":
+        from term_service import domain_registration
+        print(json.dumps(domain_registration.approve(args.request_id),ensure_ascii=False))
+    elif args.command=="reject-domain":
+        from term_service import domain_registration
+        print(json.dumps(domain_registration.reject(args.request_id),ensure_ascii=False))
+    elif args.command=="seed-mockops":
+        print(json.dumps(seed_mockops(),ensure_ascii=False))
     elif args.command=="create-admin":
         result=create_admin(args.username,args.password,args.display_name,args.team)
         print(json.dumps(result,ensure_ascii=False))

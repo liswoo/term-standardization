@@ -72,11 +72,13 @@ def list_data_domains() -> dict:
     term_count is a true aggregate over the full active standard_terms table (a LEFT JOIN so a
     domain with zero terms still gets 0, not omitted) - never approximate this by counting
     whatever page of terms happens to be loaded client-side, which undercounts badly once the
-    catalog is paginated (real data has 13,000+ terms across 126 domains, not a handful)."""
+    catalog is paginated (real data has 13,000+ terms across 126 domains, not a handful).
+    is_personal_info flags whether the frontend should offer a (synthetic) sample-data lookup
+    for this domain - see term_service/mock_operations.py."""
     with db.connect() as conn:
-        return {"domains":conn.execute("""SELECT d.code,d.description,d.source,COUNT(t.id) AS term_count
+        return {"domains":conn.execute("""SELECT d.code,d.description,d.source,d.is_personal_info,COUNT(t.id) AS term_count
             FROM domains d LEFT JOIN standard_terms t ON t.domain=d.code AND t.status='ACTIVE'
-            WHERE d.status='ACTIVE' GROUP BY d.code,d.description,d.source ORDER BY d.code""").fetchall()}
+            WHERE d.status='ACTIVE' GROUP BY d.code,d.description,d.source,d.is_personal_info ORDER BY d.code""").fetchall()}
 
 @tool
 def list_terms(limit: int = 50, offset: int = 0, q: str = "", status: str = "", domain: str = "",

@@ -180,3 +180,29 @@ class WordRegistrationInput(Schema):
     domain_classification: str = Field(default="", max_length=100)
     requester: str = Field(min_length=1, max_length=200)
     conversation_id: str = Field(min_length=1, max_length=200)
+
+class DomainRequestInput(Schema):
+    """Direct-form (non-chatbot) domain application - see term_service/domain_registration.py."""
+    code: str = Field(min_length=1, max_length=50)
+    domain_group: str = Field(min_length=1, max_length=100)
+    physical_name: str = Field(default="", max_length=200)
+    data_type: str = Field(min_length=1, max_length=50)
+    data_length: int | None = Field(default=None, ge=0, le=100000)
+    decimal_length: int | None = Field(default=None, ge=0, le=100)
+    min_value: str = Field(default="", max_length=200)
+    max_value: str = Field(default="", max_length=200)
+    display_format: str = Field(default="", max_length=100)
+    source_classification: str = Field(default="", max_length=100)
+    valid_values: str = Field(default="", max_length=2000)
+    default_value: str = Field(default="", max_length=200)
+    description: str = Field(default="", max_length=2000)
+    is_personal_info: bool = False
+    personal_info_type: str = Field(default="", max_length=100)
+    protection_level: str = Field(default="", max_length=100)
+    is_encrypted: bool = False
+    encryption_method: str = Field(default="", max_length=100)
+    mapping_table: str = Field(default="", max_length=100)
+    mapping_column: str = Field(default="", max_length=100)
+    request_reason: str = Field(default="", max_length=2000)
+    requester: str = Field(min_length=1, max_length=200)
+    conversation_id: str = Field(min_length=1, max_length=200)

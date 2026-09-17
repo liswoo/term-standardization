@@ -144,3 +144,72 @@ CREATE TABLE IF NOT EXISTS sessions (
  expires_at timestamptz NOT NULL, created_at timestamptz NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS sessions_user_id_idx ON sessions(user_id);
+
+-- 도메인 신청(버튼 기반 직접 입력 폼, AI 챗봇 아님) - registration_preparations/
+-- word_registration_preparations와 동일한 2단계 확인 패턴이지만, 대화가 아니라
+-- 폼 제출 한 번으로 prepare+submit이 같은 요청 안에서 끝나므로 conversation_id는
+-- "direct-form" 고정값만 씀.
+CREATE TABLE IF NOT EXISTS domain_preparations (
+ id uuid PRIMARY KEY, payload jsonb NOT NULL, assessment jsonb NOT NULL,
+ requester text NOT NULL, conversation_id text NOT NULL, catalog_fingerprint text NOT NULL,
+ status text NOT NULL DEFAULT 'AWAITING_CONFIRMATION' CHECK(status IN ('AWAITING_CONFIRMATION','SUBMITTED','CANCELLED')),
+ expires_at timestamptz NOT NULL, created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS domain_requests (
+ id uuid PRIMARY KEY, preparation_id uuid NOT NULL UNIQUE REFERENCES domain_preparations(id),
+ code text NOT NULL, domain_group text NOT NULL, physical_name text NOT NULL DEFAULT '',
+ data_type text NOT NULL, data_length int, decimal_length int,
+ min_value text, max_value text, display_format text, source_classification text,
+ valid_values text, default_value text, description text NOT NULL DEFAULT '',
+ is_personal_info boolean NOT NULL DEFAULT false, personal_info_type text,
+ protection_level text, is_encrypted boolean NOT NULL DEFAULT false, encryption_method text,
+ mapping_table text, mapping_column text,
+ request_reason text NOT NULL DEFAULT '',
+ status text NOT NULL DEFAULT 'PENDING_REVIEW' CHECK(status IN ('PENDING_REVIEW','APPROVED','REJECTED')),
+ requester text NOT NULL, conversation_id text NOT NULL, assessment jsonb NOT NULL,
+ created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS pending_domain_code_unique ON domain_requests(code) WHERE status='PENDING_REVIEW';
+
+-- 승인 시 domain_requests의 상세 필드를 domains로 승격시키는 대상 컬럼들. 정부
+-- 카탈로그 임포트로 채워지는 기존 컬럼들과 마찬가지로 전부 nullable - 신청 시점에
+-- 다 채워지길 강제하지 않음. source_classification(신청서의 "출처구분")은 기존
+-- domains.source(내부 출처 문자열 - 'GOV_COMMON_STANDARD_2025_11' 등)와 이름은
+-- 비슷하지만 다른 개념.
+ALTER TABLE domains ADD COLUMN IF NOT EXISTS physical_name text;
+ALTER TABLE domains ADD COLUMN IF NOT EXISTS min_value text;
+ALTER TABLE domains ADD COLUMN IF NOT EXISTS max_value text;
+ALTER TABLE domains ADD COLUMN IF NOT EXISTS source_classification text;
+ALTER TABLE domains ADD COLUMN IF NOT EXISTS valid_values text;
+ALTER TABLE domains ADD COLUMN IF NOT EXISTS default_value text;
+ALTER TABLE domains ADD COLUMN IF NOT EXISTS is_personal_info boolean NOT NULL DEFAULT false;
+ALTER TABLE domains ADD COLUMN IF NOT EXISTS personal_info_type text;
+ALTER TABLE domains ADD COLUMN IF NOT EXISTS protection_level text;
+ALTER TABLE domains ADD COLUMN IF NOT EXISTS is_encrypted boolean NOT NULL DEFAULT false;
+ALTER TABLE domains ADD COLUMN IF NOT EXISTS encryption_method text;
+
+-- 표준 데이터 조회 통합 화면(용어/단어/도메인을 하나의 피드로 합쳐 최신순 정렬)에서
+-- 다른 두 테이블처럼 정렬 기준으로 쓰기 위함. 카탈로그 임포트로 채워진 기존 행은
+-- 이 컬럼이 없었으므로 DEFAULT now()로 채워짐(배포 시점에 일괄 today로 찍히는
+-- 1회성 부작용 - 버그 아님).
+ALTER TABLE domains ADD COLUMN IF NOT EXISTS created_at timestamptz NOT NULL DEFAULT now();
+
+-- 가상 운영 데이터 - 실제 개인정보 아님, 전부 합성값(SYNTHETIC_MOCKOPS_NOT_REAL).
+-- "개인정보여부" 체크박스가 실제로 뭔가를 가리키게 하려면 메타데이터 카탈로그
+-- 바깥에 그 "실제 데이터"에 해당하는 대상이 있어야 하므로 존재한다. manage.py
+-- seed-mockops로 채워짐.
+CREATE TABLE IF NOT EXISTS mockops_customers (
+ id uuid PRIMARY KEY, name text NOT NULL, resident_number text NOT NULL,
+ phone text NOT NULL, email text NOT NULL, address text NOT NULL,
+ source text NOT NULL DEFAULT 'SYNTHETIC_MOCKOPS_NOT_REAL', created_at timestamptz NOT NULL DEFAULT now()
+);
+
+-- 도메인 하나가 여러 운영 테이블/컬럼에 쓰일 수 있어(예: 주민등록번호가 여러 테이블에
+-- 있을 수 있음) 다대다로 둔다. table_name/column_name은 term_service/mock_operations.py의
+-- ALLOWLISTED_MOCKOPS_TABLES로 반드시 재검증됨 - SQL identifier를 동적으로 조립하는
+-- 코드라 여기 값이 임의 문자열이면 안 됨.
+CREATE TABLE IF NOT EXISTS domain_data_mappings (
+ id uuid PRIMARY KEY, domain_code text NOT NULL REFERENCES domains(code),
+ table_name text NOT NULL, column_name text NOT NULL, created_at timestamptz NOT NULL DEFAULT now(),
+ UNIQUE(domain_code, table_name, column_name)
+);

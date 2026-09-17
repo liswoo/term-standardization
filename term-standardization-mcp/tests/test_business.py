@@ -10,7 +10,9 @@ from term_service.schemas import AbbreviationResult, DefinitionSuggestionResult,
 from term_service.comparison import compare
 from term_service.word_suggestion import suggest_word
 from term_service.tools import list_terms, list_standard_words
-from manage import import_guideline, create_admin
+from term_service import domain_registration, mock_operations
+from term_service.schemas import DomainRequestInput
+from manage import import_guideline, create_admin, seed_mockops
 
 def insert_guideline_chunk(section,content):
     from term_service.config import EMBEDDING_MODEL
@@ -58,6 +60,20 @@ def insert_pending_word(word_name,definition="테스트 정의",requester="teste
             (id,preparation_id,word_name,normalized_name,definition,english_abbr,requester,conversation_id,assessment,status)
             VALUES(%s,%s,%s,%s,%s,'',%s,%s,%s,%s)""",
             (str(uuid.uuid4()),prep_id,word_name,key(word_name),definition,requester,"test-conv",Jsonb({}),status))
+
+def insert_pending_domain_request(code,domain_group="테스트그룹",data_type="문자",requester="tester",status="PENDING_REVIEW",
+                                   mapping_table=None,mapping_column=None):
+    from psycopg.types.json import Jsonb
+    with db.connect() as conn:
+        prep_id=str(uuid.uuid4())
+        conn.execute("""INSERT INTO domain_preparations(id,payload,assessment,requester,conversation_id,catalog_fingerprint,expires_at)
+            VALUES(%s,%s,%s,%s,%s,%s,now()+interval '30 minutes')""",
+            (prep_id,Jsonb({}),Jsonb({}),requester,"direct-form","TEST_FIXTURE_NOT_PRODUCTION"))
+        conn.execute("""INSERT INTO domain_requests
+            (id,preparation_id,code,domain_group,data_type,mapping_table,mapping_column,requester,conversation_id,assessment,status,is_personal_info)
+            VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+            (str(uuid.uuid4()),prep_id,code,domain_group,data_type,mapping_table,mapping_column,requester,"direct-form",
+             Jsonb({}),status,bool(mapping_table)))
 
 @pytest.mark.parametrize("name",["일일권장칼로리","체질량지수(BMI)","나이","국가"])
 def test_valid_names(name):
@@ -869,6 +885,114 @@ def test_list_standard_words_query_matches_requester_too():
     insert_pending_word("신규단어",requester="이민수")
     result=list_standard_words(q="이민수")
     assert any(w["name"]=="신규단어" for w in result["words"])
+
+# ── 도메인 신청 (버튼 기반 직접 입력 폼) ──────────────────────────────
+
+def _domain_payload(code,**overrides):
+    fields=dict(code=code,domain_group="테스트그룹",physical_name="",data_type="문자",data_length=None,
+        decimal_length=None,min_value="",max_value="",display_format="",source_classification="",
+        valid_values="",default_value="",description="",is_personal_info=False,personal_info_type="",
+        protection_level="",is_encrypted=False,encryption_method="",mapping_table="",mapping_column="",
+        request_reason="",requester="tester",conversation_id="direct-form")
+    fields.update(overrides)
+    return DomainRequestInput(**fields)
+
+def test_domain_prepare_rejects_existing_live_code(catalog):
+    result=domain_registration.prepare(_domain_payload("수N7"))
+    assert result=={"ready":False,"code":"CODE_ALREADY_EXISTS","existing_domain":{"code":"수N7","description":"테스트 숫자 도메인"}}
+
+def test_domain_prepare_rejects_pending_duplicate():
+    insert_pending_domain_request("신규도메인1")
+    result=domain_registration.prepare(_domain_payload("신규도메인1"))
+    assert result=={"ready":False,"code":"PENDING_REQUEST_ALREADY_EXISTS"}
+
+def test_domain_submit_creates_pending_review():
+    prep=domain_registration.prepare(_domain_payload("신규도메인2"))
+    assert prep["ready"]
+    result=domain_registration.submit(prep["confirmation_id"],"tester","direct-form",confirmed=True)
+    assert result["created"] and result["status"]=="PENDING_REVIEW" and result["code"]=="신규도메인2"
+
+def test_domain_submit_idempotent_replay():
+    prep=domain_registration.prepare(_domain_payload("신규도메인3"))
+    first=domain_registration.submit(prep["confirmation_id"],"tester","direct-form",confirmed=True)
+    second=domain_registration.submit(prep["confirmation_id"],"tester","direct-form",confirmed=True)
+    assert second=={"created":False,"idempotent_replay":True,"request_id":first["request_id"],
+        "status":"PENDING_REVIEW","created_at":second["created_at"]}
+
+def test_approve_domain_promotes_full_field_set():
+    insert_pending_domain_request("신규도메인4",mapping_table="mockops_customers",mapping_column="resident_number")
+    with db.connect() as conn:
+        request_id=conn.execute("SELECT id::text AS id FROM domain_requests WHERE code='신규도메인4'").fetchone()["id"]
+    result=domain_registration.approve(request_id)
+    assert result=={"approved":True,"code":"신규도메인4"}
+    with db.connect() as conn:
+        row=conn.execute("SELECT domain_group,is_personal_info,status FROM domains WHERE code='신규도메인4'").fetchone()
+        mapping=conn.execute("SELECT table_name,column_name FROM domain_data_mappings WHERE domain_code='신규도메인4'").fetchone()
+    assert row=={"domain_group":"테스트그룹","is_personal_info":True,"status":"ACTIVE"}
+    assert mapping=={"table_name":"mockops_customers","column_name":"resident_number"}
+
+def test_approve_domain_refuses_non_pending():
+    insert_pending_domain_request("신규도메인5",status="APPROVED")
+    with db.connect() as conn:
+        request_id=conn.execute("SELECT id::text AS id FROM domain_requests WHERE code='신규도메인5'").fetchone()["id"]
+    assert domain_registration.approve(request_id)=={"approved":False,"code":"NOT_PENDING_REVIEW","status":"APPROVED"}
+
+def test_reject_domain():
+    insert_pending_domain_request("신규도메인6")
+    with db.connect() as conn:
+        request_id=conn.execute("SELECT id::text AS id FROM domain_requests WHERE code='신규도메인6'").fetchone()["id"]
+    assert domain_registration.reject(request_id)=={"rejected":True,"request_id":request_id,"code":"신규도메인6"}
+    assert domain_registration.reject(request_id)=={"rejected":False,"code":"REQUEST_NOT_FOUND_OR_NOT_PENDING"}
+
+def test_sample_rows_rejects_unlisted_table_or_column():
+    assert mock_operations.sample_rows("pg_user","usename")=={"ok":False,"error":"UNKNOWN_TABLE_OR_COLUMN"}
+    assert mock_operations.sample_rows("mockops_customers","id")=={"ok":False,"error":"UNKNOWN_TABLE_OR_COLUMN"}
+
+def test_sample_rows_returns_seeded_synthetic_data():
+    seed_mockops()
+    result=mock_operations.sample_rows("mockops_customers","resident_number",limit=3)
+    assert result["ok"] and len(result["sample"])==3
+
+def test_domain_request_requires_auth(api_client):
+    resp=api_client.post("/admin/domain-requests",json={"code":"신규도메인7"})
+    assert resp.status_code==401
+
+def test_domain_request_success_then_visible_in_own_list(api_client):
+    _create_active_admin()
+    api_client.post("/admin/auth/login",json={"username":"admin1","password":"adminpass123"})
+    resp=api_client.post("/admin/domain-requests",json={
+        "code":"신규도메인8","domain_group":"금액","data_type":"NUMBER"})
+    assert resp.status_code==200 and resp.json()["status"]=="PENDING_REVIEW"
+    listing=api_client.get("/admin/domain-requests")
+    assert any(r["code"]=="신규도메인8" for r in listing.json()["requests"])
+
+def test_domain_request_duplicate_code_rejected_via_api(api_client):
+    _create_active_admin()
+    api_client.post("/admin/auth/login",json={"username":"admin1","password":"adminpass123"})
+    payload={"code":"신규도메인9","domain_group":"금액","data_type":"NUMBER"}
+    assert api_client.post("/admin/domain-requests",json=payload).status_code==200
+    second=api_client.post("/admin/domain-requests",json=payload)
+    assert second.status_code==409 and second.json()["code"]=="PENDING_REQUEST_ALREADY_EXISTS"
+
+def test_domain_request_list_scoped_to_owner(api_client):
+    from starlette.testclient import TestClient
+    from term_service.tools import mcp
+    _create_active_admin("admin-a","adminpass123","관리자A")
+    _create_active_admin("admin-b","adminpass123","관리자B")
+    api_client.post("/admin/auth/login",json={"username":"admin-a","password":"adminpass123"})
+    api_client.post("/admin/domain-requests",json={"code":"신규도메인10","domain_group":"금액","data_type":"NUMBER"})
+    other=TestClient(mcp.streamable_http_app())
+    other.post("/admin/auth/login",json={"username":"admin-b","password":"adminpass123"})
+    other.post("/admin/domain-requests",json={"code":"신규도메인11","domain_group":"금액","data_type":"NUMBER"})
+    listing_a=api_client.get("/admin/domain-requests").json()["requests"]
+    assert any(r["code"]=="신규도메인10" for r in listing_a)
+    assert not any(r["code"]=="신규도메인11" for r in listing_a)
+
+def test_domain_request_invalid_fields_rejected(api_client):
+    _create_active_admin()
+    api_client.post("/admin/auth/login",json={"username":"admin1","password":"adminpass123"})
+    resp=api_client.post("/admin/domain-requests",json={"domain_group":"금액"})
+    assert resp.status_code==400 and resp.json()["error"]=="INVALID_FIELDS"
 
 @pytest.mark.skipif(os.getenv("RUN_LLM_TESTS")!="1",reason="Explicit low-volume paid API smoke test")
 def test_real_llm_definition_comparison(catalog):

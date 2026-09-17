@@ -224,4 +224,96 @@ async def auth_set_role(request: Request) -> JSONResponse:
         if target["role"] == "ADMIN" and role == "MEMBER" and active_admin_count(conn, excluding=user_id) == 0:
             return JSONResponse({"ok": False, "error": "LAST_ADMIN_CANNOT_BE_DEMOTED"}, status_code=409)
         conn.execute("UPDATE users SET role=%s,updated_at=now() WHERE id=%s", (role, user_id))
+        return JSONResponse({"ok": True})
+
+# ── 도메인 신청 (버튼 기반 직접 폼, 챗봇 아님) ────────────────────────────
+# registration.py/word_registration.py의 prepare()/submit() 2단계를 그대로
+# 쓰지만, 대화 여러 턴에 걸쳐 딴 데 갔다 올 사용자가 없는 단일 폼 제출이라
+# 한 요청 안에서 이어서 호출한다(domain_registration.py 자체는 그 두 함수를
+# 그대로 유지 - 나중에 정말 다단계가 필요해지면 이 라우트만 바꾸면 됨).
+_DOMAIN_REQUEST_ERROR_STATUS = {
+    "CODE_ALREADY_EXISTS": 409, "PENDING_REQUEST_ALREADY_EXISTS": 409,
+    "CATALOG_CHANGED_RETRY": 409, "CATALOG_CHANGED_REVALIDATE": 409,
+    "DOMAIN_CODE_ALREADY_EXISTS": 409,
+}
+
+@mcp.custom_route("/admin/domain-requests", methods=["POST"])
+async def create_domain_request(request: Request) -> JSONResponse:
+    from pydantic import ValidationError
+    from . import domain_registration
+    from .schemas import DomainRequestInput
+    user, error = require_auth(request)
+    if error: return error
+    body = await request.json()
+    try:
+        payload = DomainRequestInput(**{**body, "requester": user["username"], "conversation_id": "direct-form"})
+    except ValidationError as exc:
+        return JSONResponse({"ok": False, "error": "INVALID_FIELDS", "detail": exc.errors()}, status_code=400)
+    prep = domain_registration.prepare(payload)
+    if not prep["ready"]:
+        # domain_registration.py uses "code" as its failure-identifier key (matching
+        # registration.py/word_registration.py's convention), but every other route in
+        # this file uses "error" for the frontend's submitAuthForm()/AUTH_ERROR_LABELS
+        # lookup - translate here rather than making the frontend understand two keys.
+        return JSONResponse({"ok": False, "error": prep["code"], **prep},
+            status_code=_DOMAIN_REQUEST_ERROR_STATUS.get(prep["code"], 400))
+    result = domain_registration.submit(prep["confirmation_id"], user["username"], "direct-form", confirmed=True)
+    if not result["created"]:
+        return JSONResponse({"ok": False, "error": result.get("code"), **result},
+            status_code=_DOMAIN_REQUEST_ERROR_STATUS.get(result.get("code"), 409))
+    return JSONResponse({"ok": True, **result})
+
+@mcp.custom_route("/admin/domain-requests", methods=["GET"])
+async def list_own_domain_requests(request: Request) -> JSONResponse:
+    user, error = require_auth(request)
+    if error: return error
+    with db.connect() as conn:
+        rows = conn.execute("""SELECT id::text AS request_id,code,domain_group,data_type,status,created_at
+            FROM domain_requests WHERE requester=%s ORDER BY created_at DESC""", (user["username"],)).fetchall()
+    for r in rows: r["created_at"] = r["created_at"].isoformat()
+    return JSONResponse({"ok": True, "requests": rows})
+
+@mcp.custom_route("/admin/domain-requests/options", methods=["GET"])
+async def domain_request_options(request: Request) -> JSONResponse:
+    _, error = require_auth(request)
+    if error: return error
+    with db.connect() as conn:
+        groups = [r["domain_group"] for r in conn.execute(
+            "SELECT DISTINCT domain_group FROM domains WHERE domain_group<>'' ORDER BY domain_group").fetchall()]
+        types = [r["data_type"] for r in conn.execute(
+            "SELECT DISTINCT data_type FROM domains WHERE data_type IS NOT NULL AND data_type<>'' ORDER BY data_type").fetchall()]
+    return JSONResponse({"ok": True, "domain_groups": groups, "data_types": types})
+
+@mcp.custom_route("/admin/mock-tables", methods=["GET"])
+async def list_mock_tables(request: Request) -> JSONResponse:
+    _, error = require_auth(request)
+    if error: return error
+    from .mock_operations import ALLOWLISTED_MOCKOPS_TABLES
+    return JSONResponse({"ok": True, "tables": ALLOWLISTED_MOCKOPS_TABLES})
+
+@mcp.custom_route("/admin/domains/{code}/sample-data", methods=["GET"])
+async def domain_sample_data(request: Request) -> JSONResponse:
+    _, error = require_auth(request)
+    if error: return error
+    from .mock_operations import sample_data_for_domain
+    return JSONResponse({"ok": True, "results": sample_data_for_domain(request.path_params["code"])})
     return JSONResponse({"ok": True})
+
+# ── 표준 데이터 조회 (용어/단어/도메인 통합 화면) ──────────────────────────
+@mcp.custom_route("/admin/standard-data", methods=["GET"])
+async def list_standard_data_catalog(request: Request) -> JSONResponse:
+    _, error = require_auth(request)
+    if error: return error
+    from . import unified_catalog
+    qp = request.query_params
+    kinds = [k for k in qp.get("kinds", "").split(",") if k]
+    try:
+        limit = int(qp.get("limit", "50"))
+        offset = int(qp.get("offset", "0"))
+    except ValueError:
+        return JSONResponse({"ok": False, "error": "INVALID_FIELDS"}, status_code=400)
+    result = unified_catalog.list_standard_data(kinds, qp.get("q", ""), qp.get("status", ""), limit, offset)
+    for r in result["items"]:
+        if r.get("created_at"):
+            r["created_at"] = r["created_at"].isoformat()
+    return JSONResponse({"ok": True, **result})

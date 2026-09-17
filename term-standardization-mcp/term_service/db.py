@@ -27,3 +27,7 @@ def catalog_fingerprint(conn):
 def word_catalog_fingerprint(conn):
     rows = conn.execute("SELECT id,updated_at FROM standard_words ORDER BY id").fetchall()
     return hashlib.sha256(str(rows).encode()).hexdigest()
+
+def domain_catalog_fingerprint(conn):
+    rows = conn.execute("SELECT code,description,status FROM domains ORDER BY code").fetchall()
+    return hashlib.sha256(str(rows).encode()).hexdigest()

@@ -423,6 +423,28 @@
             <p><strong>회귀 테스트 추가</strong>: 검색어가 요청자도 매칭하는지, 승인된 행이 검색어 입력 시에도 계속 보이는지(바로 이 버그의 회귀 방지).</p>
           </div>
         </div>
+
+        <div class="changelog-entry">
+          <div class="changelog-date">2026-09-17</div>
+          <div class="changelog-title">도메인 신청(버튼 기반 직접 입력 폼) + 가상 운영 데이터/개인정보 매핑 추가 <span class="pill pill-added">added</span></div>
+          <div class="changelog-body">
+            <p>레거시 메타관리시스템(국민건강보험 "b-well") 화면 8장을 분석해서, 그동안 <code>manage.py import-standard-catalog</code>로만 채워지던 읽기 전용 <code>domains</code>에 처음으로 신청 경로를 추가. 단어/용어 신청과 달리 <strong>AI 챗봇 대화가 아니라 사용자가 폼에 직접 입력해서 제출</strong>하는 기존 현업 업무방식 그대로 구현.</p>
+            <p><code>domain_registration.py</code>가 <code>word_registration.py</code>와 같은 <code>prepare()</code>/<code>submit()</code>/<code>approve()</code>/<code>reject()</code> 2단계 확인 패턴을 그대로 씀(임베딩·의미비교 없음, 코드 유일성만 확인). 대화 여러 턴이 아니라 폼 제출 한 번이라 <code>POST /admin/domain-requests</code> 하나가 prepare→submit을 같은 요청 안에서 이어서 호출 — MCP 챗봇 도구가 아니라 로그인/회원관리와 같은 <code>/admin/*</code> REST 라우트(Dify를 아예 안 거침). 승인은 용어/단어와 동일하게 <code>manage.py approve-domain</code> CLI 전용.</p>
+            <p><strong>개인정보여부를 실질적으로 동작하게 만듦</strong>: 체크박스 하나로 끝나면 의미가 없다는 지적에 따라, <code>mockops_customers</code>(합성 고객 데이터, <code>SYNTHETIC_MOCKOPS_NOT_REAL</code>, <code>manage.py seed-mockops</code>로 시딩)와 <code>domain_data_mappings</code>(도메인 ↔ 운영 테이블/컬럼 매핑)를 추가. <code>mock_operations.py</code>의 <code>ALLOWLISTED_MOCKOPS_TABLES</code> 화이트리스트를 통과한 table_name/column_name만 SQL에 f-string으로 들어감(파라미터 바인딩이 안 되는 identifier라 이 검사가 SQL 인젝션을 막는 유일한 방어선). 개인정보로 지정된 도메인은 "도메인 관리" 화면에 배지가 붙고 "샘플 데이터 보기"로 그 값을 바로 확인 가능.</p>
+            <p><strong>버그 발견 및 수정</strong>: <code>domain_registration.py</code>는 <code>registration.py</code>/<code>word_registration.py</code>의 관례대로 실패 코드를 <code>"code"</code> 필드에 담는데, REST 레이어(<code>admin_api.py</code>)의 다른 모든 라우트는 프론트의 <code>submitAuthForm</code>/<code>AUTH_ERROR_LABELS</code>가 읽는 <code>"error"</code> 필드를 씀 — 그대로 스프레드해서 반환했더니 브라우저에서 실제로 "이미 존재하는 도메인"이 안내문구 대신 "HTTP 409"로만 표시됨(실기기 테스트로 발견). REST 라우트에서 <code>"error": prep["code"]</code>를 명시적으로 채워 번역하도록 수정.</p>
+            <p><strong>범위 밖(의도적으로 안 함)</strong>: 결재선(다단계 승인), 신청구분 변경/삭제, 일괄 신청, 개인정보 자동탐지/마스킹, 사진 속 "표준분류"(우리 시스템엔 부서/업무영역 분류 개념 자체가 없음).</p>
+          </div>
+        </div>
+
+        <div class="changelog-entry">
+          <div class="changelog-date">2026-09-17</div>
+          <div class="changelog-title">용어사전/단어사전/도메인관리를 "표준 데이터 조회" 한 화면으로 통합 <span class="pill pill-added">added</span> <span class="pill pill-fixed">fixed</span></div>
+          <div class="changelog-body">
+            <p>기존 3개 브라우징 화면(<code>data-view="terms"/"words"/"domains"</code>)을 <code>data-view="catalog"</code> 하나로 병합. 새 <code>unified_catalog.py</code>의 <code>list_standard_data()</code>가 <code>standard_terms</code>/<code>registration_requests</code>/<code>standard_words</code>/<code>word_registration_requests</code>/<code>domains</code>/<code>domain_requests</code> 6개를 kind 태그와 함께 조건부 <code>UNION ALL</code>로 합쳐 하나의 정렬/검색/페이지 피드로 반환 — <code>GET /admin/standard-data</code>(<code>admin_api.py</code>)로 노출, 대시보드는 기존 목록조회 워크플로우(<code>fetchCatalogFromBackend</code>)를 그대로 유지(건드리지 않음). <code>domains</code>에 <code>created_at</code> 컬럼 추가(그동안 없어서 통합 정렬 기준으로 못 씀 — 기존 행은 배포 시점에 <code>now()</code>로 일괄 채워지는 1회성 부작용).</p>
+            <p><strong>버그 발견 및 수정</strong>: 6개 브랜치 중 맨 처음 작성 때는 <code>TERM 승인</code> 브랜치에만 <code>AS kind, AS logical_name, ...</code> 별칭을 붙이고 나머지 5개는 안 붙였음 — Postgres의 <code>UNION ALL</code>은 실제로 실행에 포함된 첫 번째 브랜치의 컬럼명을 전체 결과에 그대로 적용하는데, 상태 필터를 "검토중"으로 걸면 승인 브랜치가 통째로 빠지면서 별칭 없는 대기 브랜치(<code>registration_requests</code>의 <code>term_name</code> 등)가 첫 번째가 되어 <code>kind</code>/<code>logical_name</code>/<code>content</code> 등이 전부 사라짐 — 브라우저에서 "구분" 배지가 문자 그대로 "undefined"로 찍히고 이름·내용 칸이 빈칸으로 나오는 것으로 발견. 6개 브랜치 전부에 동일한 컬럼 별칭을 명시해서 어느 브랜치가 먼저 오든 컬럼명이 고정되도록 수정, 브라우저에서 상태 필터·검색·구분 체크박스 조합을 다시 확인해 재현 안 됨을 확인.</p>
+            <p><strong>프론트 정리</strong>: <code>renderTermsTable</code>/<code>renderWordsTable</code>/<code>renderDomainGrid</code>와 그 전용 페이지네이션(<code>changeTermsPage</code>/<code>changeWordsPage</code>)을 삭제. <code>renderTermsTable</code>이 같이 갱신하던 대시보드 카드(<code>stat-total-terms</code>)만 <code>renderAll()</code>로 옮김 — 두 함수 모두 대상 엘리먼트에 null 가드가 없어서, 이 이관 없이 HTML 섹션만 지웠다면 <code>renderAll()</code>이 매번 던지는 TypeError로 대시보드까지 깨졌을 것. 개인정보 도메인의 "샘플 데이터 보기"(<code>showDomainSampleData</code>)는 통합 표의 <code>&lt;td&gt;</code> 안에 <code>&lt;ul class="domain-sample-list" hidden&gt;</code>를 형제로 두는 것만으로 코드 변경 없이 그대로 재사용.</p>
+          </div>
+        </div>
       </div>
 
     </div>

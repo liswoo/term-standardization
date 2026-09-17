@@ -63,6 +63,12 @@ const AUTH_ERROR_LABELS = {
   PASSWORD_TOO_SHORT: "비밀번호는 8자 이상이어야 합니다.",
   USERNAME_TAKEN: "이미 사용 중인 아이디입니다.",
   CURRENT_PASSWORD_INCORRECT: "현재 비밀번호가 올바르지 않습니다.",
+  CODE_ALREADY_EXISTS: "이미 존재하는 도메인명입니다.",
+  PENDING_REQUEST_ALREADY_EXISTS: "이미 같은 도메인명으로 검토 대기 중인 신청이 있습니다.",
+  CATALOG_CHANGED_RETRY: "처리 중 도메인 목록이 변경되었습니다. 다시 시도해주세요.",
+  CATALOG_CHANGED_REVALIDATE: "처리 중 도메인 목록이 변경되었습니다. 다시 시도해주세요.",
+  DOMAIN_CODE_ALREADY_EXISTS: "이미 존재하는 도메인명입니다.",
+  INVALID_FIELDS: "입력 항목을 다시 확인해주세요.",
 };
 
 document.getElementById("auth-tab-login").addEventListener("click", () => {
@@ -145,7 +151,7 @@ document.getElementById("change-password-form").addEventListener("submit", async
 // LLM 분류 파이프라인을 타는 Chatflow 대신 1회성 /v1/workflows/run으로 분리했습니다.
 const LIST_TERMS_API = "/v1/workflows/run";
 const LIST_TERMS_KEY = "app-U0pwaq4eXx9buXrPLtrqoEF0";
-const STATUS_LABELS = { APPROVED: "승인", PENDING_REVIEW: "검토중", REJECTED: "반려", ACTIVE: "사용중" };
+const STATUS_LABELS = { APPROVED: "승인", PENDING_REVIEW: "검토중", REJECTED: "반려", ACTIVE: "사용중", WAITING_FOR_WORD_APPROVAL: "단어 승인 대기" };
 
 // 워크플로우 그래프의 실제 노드 순서(빌드 스크립트 build_chatflow.py 기준).
 // 사용자에게는 내부 단계를 그대로 노출하지 않고 이해하기 쉬운 라벨로 보여줍니다.
@@ -172,6 +178,7 @@ const state = {
   domains: [],
   termsPage: { limit: 50, offset: 0, total: 0, q: "", status: "", domain: "" },
   wordsPage: { limit: 50, offset: 0, total: 0, q: "", status: "", isFormatWord: "" },
+  catalogPage: { limit: 50, offset: 0, total: 0, q: "", status: "", kinds: ["TERM", "WORD", "DOMAIN"] },
   activity: [...MOCK_ACTIVITY],
   history: [],
   chatRegisteredCount: 0,
@@ -180,9 +187,8 @@ const state = {
 // ── 네비게이션 ──────────────────────────────────────────────────
 const VIEW_META = {
   dashboard: { title: "대시보드", subtitle: "용어 표준화 현황을 한눈에 확인하세요" },
-  terms: { title: "용어 사전", subtitle: "등록된 표준 용어를 검색하고 관리합니다" },
-  words: { title: "단어 사전", subtitle: "용어를 구성하는 표준단어(標準單語)를 검색하고 관리합니다" },
-  domains: { title: "도메인 관리", subtitle: "표준 용어에 적용되는 데이터 도메인(형식·길이) 체계를 관리합니다" },
+  catalog: { title: "표준 데이터 조회", subtitle: "용어·단어·도메인을 한 화면에서 검색합니다" },
+  "domain-request": { title: "도메인 신청", subtitle: "신규 데이터 도메인을 직접 입력해서 신청하고 진행 상태를 확인합니다" },
   history: { title: "표준화 이력", subtitle: "AI 파이프라인 실행 기록을 확인합니다" },
   settings: { title: "설정", subtitle: "백엔드 연동 정보를 확인합니다" },
 };
@@ -199,6 +205,12 @@ function switchView(view) {
   document.getElementById("view-subtitle").textContent = VIEW_META[view].subtitle;
   if (view === "settings") {
     refreshLlmStatus();
+  }
+  if (view === "domain-request") {
+    populateDomainRequestOptions();
+  }
+  if (view === "catalog") {
+    fetchUnifiedCatalog();
   }
 }
 
@@ -229,55 +241,7 @@ function domainColor(code) {
   return DOMAIN_PALETTE[hash % DOMAIN_PALETTE.length];
 }
 
-function renderTermsTable() {
-  const tbody = document.getElementById("terms-tbody");
-  tbody.innerHTML = state.terms
-    .map(
-      (t) => `
-    <tr class="${t.isNew ? "row-new" : ""}">
-      <td><strong>${t.name}</strong></td>
-      <td><span class="mono">${t.enAbbr || "-"}</span></td>
-      <td class="cell-def">${t.def}</td>
-      <td><span class="domain-tag" style="--tag-color:${domainColor(t.domain)}">${t.domain}</span></td>
-      <td>${t.synonyms.length ? t.synonyms.join(", ") : "-"}</td>
-      <td><span class="status-badge status-${t.status === "승인" ? "ok" : "pending"}">${t.status}</span></td>
-      <td class="muted">${t.requester || "-"}</td>
-      <td class="muted">${t.date}</td>
-    </tr>`
-    )
-    .join("");
-  // total은 실제 백엔드 total_count(전체 카탈로그 건수) - 화면에 그려진 현재
-  // 페이지 행 수(state.terms.length)와는 다르다. 백엔드 조회 전(목업 데이터
-  // 표시 중)에는 total이 아직 0이라 페이지 길이로 대체한다.
-  const total = state.termsPage.total || state.terms.length;
-  document.getElementById("term-count-pill").textContent = `${total.toLocaleString()}건`;
-  document.getElementById("stat-total-terms").textContent = total.toLocaleString();
-}
-
-function renderWordsTable() {
-  const tbody = document.getElementById("words-tbody");
-  if (!tbody) return;
-  tbody.innerHTML = state.words
-    .map(
-      (w) => `
-    <tr>
-      <td><strong>${w.name}</strong></td>
-      <td><span class="mono">${w.enAbbr || "-"}</span></td>
-      <td>${w.enName || "-"}</td>
-      <td class="cell-def">${w.def || "-"}</td>
-      <td>${w.isFormatWord ? "예" : "-"}</td>
-      <td>${w.domainClassification || "-"}</td>
-      <td><span class="status-badge status-${w.status === "ACTIVE" ? "ok" : "pending"}">${STATUS_LABELS[w.status] || w.status}</span></td>
-      <td class="muted">${w.requester || "-"}</td>
-    </tr>`
-    )
-    .join("");
-  const total = state.wordsPage.total || state.words.length;
-  const pill = document.getElementById("word-count-pill");
-  if (pill) pill.textContent = `${total.toLocaleString()}건`;
-}
-
-// terms/words 공통 페이지네이션 렌더링 - 이전/다음 버튼과 "n건 중 a-b" 라벨.
+// terms/words/catalog 공통 페이지네이션 렌더링 - 이전/다음 버튼과 "n건 중 a-b" 라벨.
 function renderPagination(containerId, page, onPrev, onNext) {
   const el = document.getElementById(containerId);
   if (!el) return;
@@ -291,37 +255,30 @@ function renderPagination(containerId, page, onPrev, onNext) {
   document.getElementById(`${containerId}-next`).addEventListener("click", onNext);
 }
 
-function changeTermsPage(delta) {
-  state.termsPage.offset = Math.max(0, state.termsPage.offset + delta * state.termsPage.limit);
-  fetchCatalogFromBackend();
-}
-function changeWordsPage(delta) {
-  state.wordsPage.offset = Math.max(0, state.wordsPage.offset + delta * state.wordsPage.limit);
-  fetchCatalogFromBackend();
-}
-
-// "도메인 관리" 화면 전용 - list_data_domains가 돌려주는 실제 활성 도메인
-// 전체(126건)와, 각 도메인의 진짜 전체 term_count를 그대로 카드로 그린다.
-function renderDomainGrid() {
-  const grid = document.getElementById("domain-grid");
-  grid.innerHTML = state.domains
-    .map(
-      (d) => `
-    <div class="domain-card">
-      <div class="domain-card-top">
-        <span class="domain-dot" style="background:${domainColor(d.code)}"></span>
-        <h3>${escapeHtml(d.code)}</h3>
-      </div>
-      <p class="muted">${escapeHtml(d.description || "-")}</p>
-      <div class="domain-card-footer">
-        <strong>${(d.term_count || 0).toLocaleString()}</strong>
-        <span>건 사용 중</span>
-      </div>
-    </div>`
-    )
-    .join("");
-  const pill = document.getElementById("domain-count-pill");
-  if (pill) pill.textContent = `${state.domains.length.toLocaleString()}건`;
+// 개인정보로 지정된 도메인의 (가상) 운영 데이터 샘플을 보여준다 - 매핑이 없으면
+// 빈 배열이 오므로 그 경우 안내 문구만 표시한다.
+async function showDomainSampleData(btn) {
+  const code = btn.dataset.domainCode;
+  const list = btn.nextElementSibling;
+  btn.disabled = true;
+  try {
+    const res = await fetch(`/admin/domains/${encodeURIComponent(code)}/sample-data`);
+    const data = await res.json();
+    if (!data.ok) throw new Error(data.error || "조회 실패");
+    if (!data.results.length) {
+      list.innerHTML = `<li class="muted">매핑된 운영 데이터가 없습니다.</li>`;
+    } else {
+      list.innerHTML = data.results
+        .map((r) => `<li><strong>${escapeHtml(r.table_name)}.${escapeHtml(r.column_name)}</strong>: ${r.sample.map(escapeHtml).join(", ") || "-"}</li>`)
+        .join("");
+    }
+    list.hidden = false;
+  } catch (err) {
+    list.innerHTML = `<li class="muted">샘플 데이터를 불러오지 못했습니다: ${escapeHtml(err.message)}</li>`;
+    list.hidden = false;
+  } finally {
+    btn.disabled = false;
+  }
 }
 
 // 대시보드는 요약용 작은 패널이라 126개 도메인을 다 나열하면 UX가 나빠진다 -
@@ -360,7 +317,7 @@ function renderDomainBars() {
       <button class="btn-ghost domain-bars-more" id="domain-bars-view-all">전체 도메인 보기 (${state.domains.length}건)</button>`;
   }
   wrap.innerHTML = html || `<p class="muted">아직 도메인별 용어 데이터가 없습니다.</p>`;
-  document.getElementById("domain-bars-view-all")?.addEventListener("click", () => switchView("domains"));
+  document.getElementById("domain-bars-view-all")?.addEventListener("click", () => switchView("catalog"));
 }
 
 function renderActivity() {
@@ -402,14 +359,14 @@ function renderHistory() {
 }
 
 function renderAll() {
-  renderTermsTable();
-  renderWordsTable();
-  renderDomainGrid();
   renderDomainBars();
   renderActivity();
   renderHistory();
-  renderPagination("terms-pagination", state.termsPage, () => changeTermsPage(-1), () => changeTermsPage(1));
-  renderPagination("words-pagination", state.wordsPage, () => changeWordsPage(-1), () => changeWordsPage(1));
+  // total은 실제 백엔드 total_count(전체 카탈로그 건수) - 화면에 그려진 현재
+  // 페이지 행 수(state.terms.length)와는 다르다. 백엔드 조회 전(목업 데이터
+  // 표시 중)에는 total이 아직 0이라 페이지 길이로 대체한다.
+  document.getElementById("stat-total-terms").textContent =
+    (state.termsPage.total || state.terms.length).toLocaleString();
   // "관리 도메인" 통계는 실제 전체 활성 도메인 수(state.domains, 백엔드 응답 전엔 0).
   const domainCountEl = document.getElementById("stat-domain-count");
   if (domainCountEl) domainCountEl.textContent = state.domains.length.toLocaleString();
@@ -539,6 +496,61 @@ async function fetchCatalogFromBackend() {
 }
 // 최초 호출은 showApp()(로그인 성공 후)에서만 일어난다.
 
+// ── 표준 데이터 조회 (용어/단어/도메인 통합 화면) ──────────────────────
+// /admin/standard-data(term_service/unified_catalog.py)를 통해 세 타입을 kind로
+// 태그된 하나의 정렬/페이지 피드로 받는다. fetchCatalogFromBackend()와는 별개 경로 -
+// 대시보드는 계속 그 워크플로를 그대로 쓴다.
+const KIND_LABELS = { TERM: "용어", WORD: "단어", DOMAIN: "도메인" };
+const KIND_COLORS = { TERM: "#2563eb", WORD: "#059669", DOMAIN: "#d97706" };
+
+let catalogFetchToken = 0;
+async function fetchUnifiedCatalog() {
+  const myToken = ++catalogFetchToken;
+  const p = state.catalogPage;
+  const params = new URLSearchParams({
+    kinds: p.kinds.join(","), q: p.q, status: p.status,
+    limit: p.limit, offset: p.offset,
+  });
+  try {
+    const res = await fetch(`/admin/standard-data?${params}`);
+    const data = await res.json();
+    if (myToken !== catalogFetchToken) return;
+    if (!data.ok) throw new Error(data.error || `HTTP ${res.status}`);
+    state.catalogPage.total = data.total_count;
+    renderCatalogTable(data.items);
+    renderPagination("catalog-pagination", state.catalogPage, () => changeCatalogPage(-1), () => changeCatalogPage(1));
+  } catch (err) {
+    console.warn("표준 데이터 조회 실패:", err);
+  }
+}
+
+function changeCatalogPage(delta) {
+  state.catalogPage.offset = Math.max(0, state.catalogPage.offset + delta * state.catalogPage.limit);
+  fetchUnifiedCatalog();
+}
+
+function renderCatalogTable(items) {
+  const tbody = document.getElementById("catalog-tbody");
+  if (!tbody) return;
+  tbody.innerHTML = items.length ? items.map((r) => `
+    <tr>
+      <td><span class="kind-badge" style="--kind-color:${KIND_COLORS[r.kind]}">${KIND_LABELS[r.kind] || r.kind}</span></td>
+      <td><strong>${escapeHtml(r.logical_name)}</strong></td>
+      <td><span class="mono">${escapeHtml(r.physical_name || "-")}</span></td>
+      <td class="cell-def">${escapeHtml(r.content || "-")}</td>
+      <td>${r.domain ? `<span class="domain-tag" style="--tag-color:${domainColor(r.domain)}">${escapeHtml(r.domain)}</span>` : "-"}</td>
+      <td><span class="status-badge status-${r.status === "APPROVED" ? "ok" : "pending"}">${STATUS_LABELS[r.status] || r.status}</span></td>
+      <td class="muted">${escapeHtml(r.requester || "-")}</td>
+      <td class="muted">${(r.created_at || "").slice(0, 10)}</td>
+      <td>${r.kind === "DOMAIN" && r.status === "APPROVED" && r.is_personal_info
+        ? `<button type="button" class="btn-ghost domain-sample-btn" data-domain-code="${escapeHtml(r.id)}">샘플 데이터 보기</button><ul class="domain-sample-list" hidden></ul>`
+        : ""}</td>
+    </tr>`).join("") : `<tr><td colspan="9" class="empty-state">조회된 데이터가 없습니다.</td></tr>`;
+  const pill = document.getElementById("catalog-count-pill");
+  if (pill) pill.textContent = `${(state.catalogPage.total || items.length).toLocaleString()}건`;
+  tbody.querySelectorAll(".domain-sample-btn").forEach((btn) => btn.addEventListener("click", () => showDomainSampleData(btn)));
+}
+
 // 용어사전의 도메인 필터 <select>를 실제 도메인 목록(state.domains, 126건)으로
 // 채운다 - 재조회 때마다 다시 그려도 현재 선택값은 유지한다.
 //
@@ -595,12 +607,18 @@ function bindFilterControls(page, ids, onChange) {
     }, 300);
   });
 }
-bindFilterControls(state.termsPage,
-  { status: "terms-filter-status", search: "terms-filter-search", extra: "terms-filter-domain", extraKey: "domain" },
-  fetchCatalogFromBackend);
-bindFilterControls(state.wordsPage,
-  { status: "words-filter-status", search: "words-filter-search", extra: "words-filter-format", extraKey: "isFormatWord" },
-  fetchCatalogFromBackend);
+["term", "word", "domain"].forEach((k) => {
+  document.getElementById(`catalog-kind-${k}`).addEventListener("change", () => {
+    state.catalogPage.kinds = ["term", "word", "domain"]
+      .filter((x) => document.getElementById(`catalog-kind-${x}`).checked)
+      .map((x) => x.toUpperCase());
+    state.catalogPage.offset = 0;
+    fetchUnifiedCatalog();
+  });
+});
+bindFilterControls(state.catalogPage,
+  { status: "catalog-filter-status", search: "catalog-filter-search" },
+  fetchUnifiedCatalog);
 
 // ── 챗봇 패널 열기/닫기 ─────────────────────────────────────────
 const chatPanel = document.getElementById("chat-panel");
@@ -756,6 +774,95 @@ Object.entries(LLM_SWITCH_BUTTONS).forEach(([key, btn]) => {
 
 // 회원 관리 화면은 members.html로 분리되었다(관리자 전용, 새 창) - 그 파일이
 // 자신의 인증/렌더링 로직을 독립적으로 갖고 있다.
+
+// ── 도메인 신청 (버튼 기반 직접 입력 폼, AI 챗봇 아님) ──────────────
+// 용어/단어 신청과 달리 대화가 아니라 폼 제출 한 번으로 끝나므로, 별도의
+// prepare/confirm 두 턴을 프론트에서 흉내낼 필요가 없다 - /admin/domain-requests
+// POST 한 번이 서버 쪽에서 이어서 처리한다.
+// 신청 목록 자체는 여기서 따로 안 보여준다 - "도메인 관리" 화면이 용어/단어
+// 사전처럼 검토 대기 신청까지 병합해서 보여주는 걸로 대체될 예정(중복 방지).
+let domainRequestOptionsLoaded = false;
+async function populateDomainRequestOptions() {
+  if (domainRequestOptionsLoaded) return;
+  domainRequestOptionsLoaded = true;
+  try {
+    const res = await fetch("/admin/domain-requests/options");
+    const data = await res.json();
+    if (data.ok) {
+      document.getElementById("dr-domain-group-options").innerHTML =
+        data.domain_groups.map((g) => `<option value="${escapeHtml(g)}"></option>`).join("");
+      document.getElementById("dr-data-type-options").innerHTML =
+        data.data_types.map((t) => `<option value="${escapeHtml(t)}"></option>`).join("");
+    }
+  } catch { /* datalist는 없어도 입력 자체는 가능하므로 조용히 무시 */ }
+  try {
+    const res = await fetch("/admin/mock-tables");
+    const data = await res.json();
+    if (data.ok) {
+      window.MOCKOPS_TABLES = data.tables;
+      const tableSelect = document.getElementById("dr-mapping-table");
+      tableSelect.innerHTML = `<option value="">선택 안 함</option>` +
+        Object.keys(data.tables).map((t) => `<option value="${escapeHtml(t)}">${escapeHtml(t)}</option>`).join("");
+    }
+  } catch { /* 매핑은 선택 사항이므로 조용히 무시 */ }
+}
+
+function updateMappingColumnOptions() {
+  const table = document.getElementById("dr-mapping-table").value;
+  const columnSelect = document.getElementById("dr-mapping-column");
+  const columns = (window.MOCKOPS_TABLES && window.MOCKOPS_TABLES[table]) || [];
+  columnSelect.innerHTML = `<option value="">선택 안 함</option>` +
+    columns.map((c) => `<option value="${escapeHtml(c)}">${escapeHtml(c)}</option>`).join("");
+}
+document.getElementById("dr-mapping-table").addEventListener("change", updateMappingColumnOptions);
+
+function toggleDrField(checkboxId, ...fieldIds) {
+  const checked = document.getElementById(checkboxId).checked;
+  fieldIds.forEach((id) => { document.getElementById(id).disabled = !checked; });
+}
+document.getElementById("dr-is-personal-info").addEventListener("change", () =>
+  toggleDrField("dr-is-personal-info", "dr-personal-info-type", "dr-protection-level", "dr-mapping-table", "dr-mapping-column"));
+document.getElementById("dr-is-encrypted").addEventListener("change", () =>
+  toggleDrField("dr-is-encrypted", "dr-encryption-method"));
+
+document.getElementById("domain-request-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const errorEl = document.getElementById("domain-request-error");
+  const noticeEl = document.getElementById("domain-request-notice");
+  noticeEl.hidden = true;
+  const numOrNull = (id) => { const v = document.getElementById(id).value; return v === "" ? null : Number(v); };
+  const payload = {
+    code: document.getElementById("dr-code").value.trim(),
+    domain_group: document.getElementById("dr-domain-group").value.trim(),
+    physical_name: document.getElementById("dr-physical-name").value.trim(),
+    data_type: document.getElementById("dr-data-type").value.trim(),
+    data_length: numOrNull("dr-data-length"),
+    decimal_length: numOrNull("dr-decimal-length"),
+    min_value: document.getElementById("dr-min-value").value.trim(),
+    max_value: document.getElementById("dr-max-value").value.trim(),
+    display_format: document.getElementById("dr-display-format").value.trim(),
+    source_classification: document.getElementById("dr-source-classification").value.trim(),
+    valid_values: document.getElementById("dr-valid-values").value.trim(),
+    default_value: document.getElementById("dr-default-value").value.trim(),
+    description: document.getElementById("dr-description").value.trim(),
+    request_reason: document.getElementById("dr-request-reason").value.trim(),
+    is_personal_info: document.getElementById("dr-is-personal-info").checked,
+    personal_info_type: document.getElementById("dr-personal-info-type").value.trim(),
+    protection_level: document.getElementById("dr-protection-level").value.trim(),
+    is_encrypted: document.getElementById("dr-is-encrypted").checked,
+    encryption_method: document.getElementById("dr-encryption-method").value.trim(),
+    mapping_table: document.getElementById("dr-mapping-table").value,
+    mapping_column: document.getElementById("dr-mapping-column").value,
+  };
+  try {
+    await submitAuthForm("/admin/domain-requests", payload, errorEl);
+    document.getElementById("domain-request-form").reset();
+    updateMappingColumnOptions();
+    toggleDrField("dr-is-personal-info", "dr-personal-info-type", "dr-protection-level", "dr-mapping-table", "dr-mapping-column");
+    toggleDrField("dr-is-encrypted", "dr-encryption-method");
+    noticeEl.hidden = false;
+  } catch { /* 에러는 submitAuthForm이 이미 표시함 */ }
+});
 
 // ── 채팅 UI 헬퍼 ────────────────────────────────────────────────
 const chatBody = document.getElementById("chat-body");

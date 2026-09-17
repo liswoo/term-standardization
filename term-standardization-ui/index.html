@@ -9,7 +9,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
 <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
-<link rel="stylesheet" href="style.css?v=9" />
+<link rel="stylesheet" href="style.css?v=11" />
 </head>
 <body class="pre-auth">
 
@@ -60,17 +60,13 @@
       </button>
 
       <div class="nav-section-label">메타데이터 관리</div>
-      <button class="nav-item" data-view="terms">
+      <button class="nav-item" data-view="catalog">
         <svg viewBox="0 0 24 24"><path d="M4 4h16v3H4zM4 10.5h16v3H4zM4 17h10v3H4z"/></svg>
-        <span>용어 사전</span>
+        <span>표준 데이터 조회</span>
       </button>
-      <button class="nav-item" data-view="words">
-        <svg viewBox="0 0 24 24"><path d="M4 19.5V4.5A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1 0-5H20"/></svg>
-        <span>단어사전</span>
-      </button>
-      <button class="nav-item" data-view="domains">
-        <svg viewBox="0 0 24 24"><path d="M12 2 2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg>
-        <span>도메인 관리</span>
+      <button class="nav-item" data-view="domain-request">
+        <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
+        <span>도메인 신청</span>
       </button>
       <button class="nav-item" data-view="history">
         <svg viewBox="0 0 24 24"><path d="M12 2a10 10 0 1 0 10 10h-3a7 7 0 1 1-2-4.9L14 10h7V3l-2.6 2.6A10 10 0 0 0 12 2z"/></svg>
@@ -158,94 +154,90 @@
         </div>
       </section>
 
-      <!-- 용어 사전 -->
-      <section class="view" id="view-terms" hidden>
+      <!-- 표준 데이터 조회 (용어/단어/도메인 통합) -->
+      <section class="view" id="view-catalog" hidden>
         <div class="panel">
           <div class="panel-header panel-header-row">
-            <h2>표준 용어 사전</h2>
-            <span class="pill" id="term-count-pill">0건</span>
+            <h2>표준 데이터 조회</h2>
+            <span class="pill" id="catalog-count-pill">0건</span>
           </div>
           <div class="filter-row">
-            <select id="terms-filter-status" class="filter-select">
+            <label class="checkbox-label"><input type="checkbox" id="catalog-kind-term" checked />용어</label>
+            <label class="checkbox-label"><input type="checkbox" id="catalog-kind-word" checked />단어</label>
+            <label class="checkbox-label"><input type="checkbox" id="catalog-kind-domain" checked />도메인</label>
+            <select id="catalog-filter-status" class="filter-select">
               <option value="">상태: 전체</option>
               <option value="APPROVED">승인</option>
               <option value="PENDING_REVIEW">검토중</option>
               <option value="REJECTED">반려</option>
             </select>
-            <select id="terms-filter-domain" class="filter-select">
-              <option value="">도메인: 전체</option>
-            </select>
-            <input type="text" id="terms-filter-search" class="filter-input" placeholder="용어명·정의·요청자로 검색..." />
+            <input type="text" id="catalog-filter-search" class="filter-input" placeholder="이름·내용·요청자로 검색..." />
           </div>
           <div class="table-wrap">
             <table class="data-table">
               <thead>
                 <tr>
-                  <th>표준 용어명</th>
-                  <th>영문 약어</th>
-                  <th>정의</th>
+                  <th>구분</th>
+                  <th>이름</th>
+                  <th>물리명</th>
+                  <th>내용</th>
                   <th>도메인</th>
-                  <th>동의어</th>
                   <th>상태</th>
                   <th>요청자</th>
                   <th>등록일</th>
+                  <th></th>
                 </tr>
               </thead>
-              <tbody id="terms-tbody"></tbody>
+              <tbody id="catalog-tbody"></tbody>
             </table>
           </div>
-          <div class="pagination-row" id="terms-pagination"></div>
+          <div class="pagination-row" id="catalog-pagination"></div>
         </div>
       </section>
 
-      <!-- 단어 사전 -->
-      <section class="view" id="view-words" hidden>
+      <!-- 도메인 신청 (버튼 기반 직접 입력 폼, 챗봇 아님) -->
+      <section class="view" id="view-domain-request" hidden>
         <div class="panel">
-          <div class="panel-header panel-header-row">
-            <h2>표준 단어 사전</h2>
-            <span class="pill" id="word-count-pill">0건</span>
+          <div class="panel-header">
+            <h2>도메인 신청</h2>
+            <p class="muted">신규 데이터 도메인 표준을 직접 입력해서 신청합니다. 제출 후 검토 대기 상태가 되며, 관리자 승인 후 도메인 관리 화면에 반영됩니다.</p>
           </div>
-          <div class="filter-row">
-            <select id="words-filter-status" class="filter-select">
-              <option value="">상태: 전체</option>
-              <option value="APPROVED">승인</option>
-              <option value="PENDING_REVIEW">검토중</option>
-              <option value="REJECTED">반려</option>
-            </select>
-            <select id="words-filter-format" class="filter-select">
-              <option value="">형식단어: 전체</option>
-              <option value="true">형식단어만</option>
-              <option value="false">일반단어만</option>
-            </select>
-            <input type="text" id="words-filter-search" class="filter-input" placeholder="단어명·정의·요청자로 검색..." />
-          </div>
-          <div class="table-wrap">
-            <table class="data-table">
-              <thead>
-                <tr>
-                  <th>표준 단어명</th>
-                  <th>영문 약어</th>
-                  <th>영문명</th>
-                  <th>정의</th>
-                  <th>형식단어</th>
-                  <th>도메인분류</th>
-                  <th>상태</th>
-                  <th>요청자</th>
-                </tr>
-              </thead>
-              <tbody id="words-tbody"></tbody>
-            </table>
-          </div>
-          <div class="pagination-row" id="words-pagination"></div>
-        </div>
-      </section>
+          <form id="domain-request-form" class="auth-form domain-request-form">
+            <label>도메인명(코드)<input type="text" id="dr-code" required maxlength="50" /></label>
+            <label>도메인그룹<input type="text" id="dr-domain-group" list="dr-domain-group-options" required maxlength="100" /></label>
+            <datalist id="dr-domain-group-options"></datalist>
+            <label>물리명<input type="text" id="dr-physical-name" maxlength="200" /></label>
+            <label>데이터유형<input type="text" id="dr-data-type" list="dr-data-type-options" required maxlength="50" /></label>
+            <datalist id="dr-data-type-options"></datalist>
+            <label>길이<input type="number" id="dr-data-length" min="0" /></label>
+            <label>소수점<input type="number" id="dr-decimal-length" min="0" /></label>
+            <label>최소값<input type="text" id="dr-min-value" maxlength="200" /></label>
+            <label>최대값<input type="text" id="dr-max-value" maxlength="200" /></label>
+            <label>데이터형식<input type="text" id="dr-display-format" maxlength="100" /></label>
+            <label>출처구분<input type="text" id="dr-source-classification" maxlength="100" /></label>
+            <label>유효값목록<input type="text" id="dr-valid-values" placeholder="값1,값2,값3" maxlength="2000" /></label>
+            <label>기본값<input type="text" id="dr-default-value" maxlength="200" /></label>
+            <label>설명<textarea id="dr-description" maxlength="2000"></textarea></label>
+            <label>신청사유<textarea id="dr-request-reason" maxlength="2000"></textarea></label>
 
-      <!-- 도메인 관리 -->
-      <section class="view" id="view-domains" hidden>
-        <div class="panel-header panel-header-row">
-          <span class="pill" id="domain-count-pill">0건</span>
+            <h3>개인정보여부</h3>
+            <p class="muted">체크하면 이 도메인이 실제(가상) 운영 데이터의 어느 테이블/컬럼에 해당하는지 매핑할 수 있습니다.</p>
+            <label class="checkbox-label"><input type="checkbox" id="dr-is-personal-info" />개인정보임</label>
+            <label>개인정보구분<input type="text" id="dr-personal-info-type" disabled maxlength="100" /></label>
+            <label>정보보호등급<input type="text" id="dr-protection-level" disabled maxlength="100" /></label>
+            <label>매핑 테이블<select id="dr-mapping-table" disabled><option value="">선택 안 함</option></select></label>
+            <label>매핑 컬럼<select id="dr-mapping-column" disabled><option value="">선택 안 함</option></select></label>
+
+            <h3>암호화여부</h3>
+            <p class="muted">저장 시 암호화가 적용되는 도메인인지 표시합니다.</p>
+            <label class="checkbox-label"><input type="checkbox" id="dr-is-encrypted" />암호화됨</label>
+            <label>암호화방식<input type="text" id="dr-encryption-method" disabled maxlength="100" /></label>
+
+            <p class="auth-error" id="domain-request-error" hidden></p>
+            <p class="auth-notice" id="domain-request-notice" hidden>도메인 신청이 접수되었습니다. 관리자 승인 후 도메인 관리 화면에 반영됩니다.</p>
+            <button type="submit" class="btn btn-primary">신청</button>
+          </form>
         </div>
-        <div class="domain-grid" id="domain-grid"></div>
       </section>
 
       <!-- 표준화 이력 -->
@@ -389,6 +381,6 @@
 
 <script src="runtime-config.js"></script>
 <script src="mock-data.js"></script>
-<script src="app.js?v=7"></script>
+<script src="app.js?v=9"></script>
 </body>
 </html>
