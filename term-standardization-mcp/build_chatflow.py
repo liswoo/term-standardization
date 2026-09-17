@@ -104,7 +104,8 @@ Example: '잠깐, 기존 용어 정의 다시 보여줘' -> show_candidates, NOT
 # everything downstream (CLASSIFY_MONOLITHIC's join, and the runtime
 # "stage_rules" code node's repr()) only ever sees plain strings.
 _STAGE_RULES_RAW={
-"awaiting_term_direct":
+"awaiting_term_direct": {
+"default":
 """At awaiting_term_direct, three different requests are possible - tell them apart by whether the
 message already names a candidate and by which word ("용어" vs "단어") it uses:
 (1) The message already NAMES a candidate term/word it wants registered -> propose_term. Extract just
@@ -144,6 +145,55 @@ value="BMI". "정보라는 이름으로 새 용어를 등록하고 싶어" -> pr
 "용어를 등록할래요" (아무 설명도 없이 이 문구만, "등록") -> propose_term value="" (find_term 아님 - 이름을 물어야 함).
 "단어를 등록할래요" (아무 설명도 없이 이 문구만, "등록") -> propose_word value="".
 "오늘 날씨 어때?" -> unknown.""",
+# Same semantics as "default" above, restructured as an ordered checklist instead of prose
+# with embedded caveats. Measured live: the local model reliably mishandled the two most
+# common inputs at this stage - a bare candidate name typed with no surrounding sentence
+# (e.g. just "접수결과" after being asked for a term name - misfired into a TERM_REQUIRED
+# loop instead of propose_term) and the exact "용어를 추천해주세요" button trigger
+# (misfired into propose_term instead of find_term). STEP 0 turns the three known
+# button-generated trigger phrases into an exact string lookup (no verb-semantics reasoning
+# required), and STEP 1 leads with "a message that IS or NAMES a candidate" - covering the
+# bare-noun case explicitly - before the model has to weigh the 단어/용어 distinction at
+# all. Do not let this drift out of sync with "default"'s semantics if that one changes.
+"local":
+"""At awaiting_term_direct, decide using these steps IN ORDER. Use the FIRST step whose condition
+matches and stop there - do not keep weighing later steps once one matches.
+
+STEP 0 (check this first): the message is ONLY one of these three exact phrases, with nothing else
+added before or after:
+"용어를 등록할래요" -> propose_term value=""
+"단어를 등록할래요" -> propose_word value=""
+"용어를 추천해주세요" -> find_term value=""
+If the message matches one of these three exactly, use it and stop.
+
+STEP 1: the message already IS or NAMES a candidate term/word - either just the name by itself with
+nothing else (e.g. "접수결과", "BMI", "값"), or a full sentence that names one and asks to register it
+(e.g. "발송이력이라는 용어를 등록하고 싶어", "BMI 등록하고 싶어") -> propose_term.
+- If the message is only the name itself, value = that exact text (keep a trailing case/topic particle
+  like 을/를/이/가/은/는 if attached - a separate step strips it).
+- If wrapped in a sentence, extract just the name: "라는"/"이라는" ("called ___") is not part of the name -
+  keep only the text before it (e.g. "정보라는" -> value="정보").
+- A short, plain, or common-looking noun (e.g. "값", "수", "접수결과") is still a fully valid value -
+  never leave value empty or refuse to extract it just because it looks short or generic.
+
+STEP 2: the message literally contains the word "단어" or "표준단어", AND has no candidate name of its
+own - only a description of a meaning/use case -> propose_word, value = the full description text
+verbatim (not a short noun).
+
+STEP 3: none of the above, but the message describes a meaning/concept/use case and is asking to find
+or recommend something for it (whether or not it says "용어", as long as it does NOT say "단어"/"표준단어")
+-> find_term, value = the full description text verbatim.
+
+STEP 4: none of the above matches at all - small talk, an unrelated topic, or a pure question with no
+name and no concept description -> unknown.
+
+Examples: "접수결과" -> propose_term value="접수결과" (STEP 1, bare name). "값을 신규 용어로 등록해줘" ->
+propose_term value="값을" (STEP 1). "정보라는 이름으로 새 용어를 등록하고 싶어" -> propose_term value="정보"
+(STEP 1). "우리 팀에서 이런 개념을 쓰는데 공식 표준단어로 추천해줘" -> propose_word value=그 설명 전체 (STEP 2,
+"표준단어"라는 글자가 있고 후보 이름이 없음). "행정상 신청을 배척하는 처분을 내린 건수에 해당하는 용어를 추천해줘" ->
+find_term value=그 설명 전체 (STEP 3, "단어"라는 글자가 없음). "이 개념을 나타내는 이름이 이미 있을까?" ->
+find_term (STEP 3, 단어/용어 언급 자체가 없어도 기본은 find_term). "오늘 날씨 어때?" -> unknown (STEP 4).""",
+},
 "awaiting_term_confirm":
 """At awaiting_term_confirm, explicit yes -> confirm_term confirmed=true; no -> confirm_term false;
 different term text -> propose_term. Preserve a confirmation step even for confident extraction.""",
