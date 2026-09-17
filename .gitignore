@@ -2,3 +2,8 @@
 /.runtime/
 .claude/
 /tools/*.exe
+
+# poc-start.sh/.ps1이 실행할 때마다 덮어쓰는 호스트별 임시 설정(Cloudflare 터널 URL 등).
+# 커밋되면 다른 머신/다음 실행에서 죽은 터널 URL이 그대로 남아 "Dify 관리자 콘솔" 버튼이
+# 깨진다 - 2026-09-17에 실제로 이 문제가 발생해서 여기 추가함.
+/term-standardization-ui/runtime-config.js
