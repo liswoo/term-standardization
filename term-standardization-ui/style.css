@@ -470,7 +470,10 @@ body.pre-auth .app-shell, body.pre-auth .chat-fab, body.pre-auth .chat-panel { d
 .user-chip { position: relative; }
 .user-meta { flex: 1; min-width: 0; }
 .user-meta strong, .user-meta > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.admin-badge {
+/* .user-meta span (위)의 color:#8593ab보다 명시성이 낮으면 배지 글자색이 묻힌다
+   (실제로 발생: 주황 배경 위에 회색 텍스트) - .user-meta .admin-badge로 명시성을 올려
+   항상 이 색이 이긴다. */
+.user-meta .admin-badge {
   display: inline-block; width: fit-content; margin-top: 3px;
   background: #d97706; color: #fff; font-size: 10px; font-weight: 700;
   padding: 1px 6px; border-radius: 6px; letter-spacing: .01em;

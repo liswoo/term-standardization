@@ -27,7 +27,8 @@ function showApp(user) {
   const isAdmin = user.role === "ADMIN";
   document.getElementById("current-user-admin-badge").hidden = !isAdmin;
   document.getElementById("dify-admin-row").hidden = !isAdmin;
-  document.getElementById("settings-members-panel").hidden = !isAdmin;
+  document.getElementById("members-row").hidden = !isAdmin;
+  document.getElementById("llm-model-row").hidden = !isAdmin;
   CHAT_USER = user.username;
   renderAll();
   fetchCatalogFromBackend();
@@ -213,7 +214,6 @@ function switchView(view) {
   }
   if (view === "settings") {
     refreshLlmStatus();
-    if (CURRENT_USER_ROLE === "ADMIN") fetchMembers();
   }
 }
 
@@ -709,6 +709,14 @@ function openDifyStudio() {
 }
 document.getElementById("open-dify-studio-btn").addEventListener("click", openDifyStudio);
 
+// ── 회원 관리 바로가기 (새 창) ────────────────────────────────────
+// 회원 관리는 별도 화면(members.html)에서 처리한다 - 같은 로그인 세션 쿠키를
+// 공유하므로 별도 인증 없이 그대로 열리지만, 관리자가 아니면 members.html
+// 자체가 접근을 막는다(showApp()에서 이 버튼 자체도 관리자가 아니면 숨김).
+document.getElementById("open-members-btn").addEventListener("click", () => {
+  window.open("members.html", "datave-members", "noopener,width=1040,height=760");
+});
+
 // ── LLM 모델 전환 (설정 화면) ────────────────────────────────────
 // MCP 서버(term_service/admin_api.py)의 /admin/* 라우트를 Caddy가 이 오리진의
 // 상대경로로 그대로 프록시합니다(tools/Caddyfile) - 위 /v1/* 프록시와 같은 이유.
@@ -781,95 +789,8 @@ Object.entries(LLM_SWITCH_BUTTONS).forEach(([key, btn]) => {
   if (btn) btn.addEventListener("click", () => switchLlmProvider(key));
 });
 
-// ── 회원 관리 (관리자 전용 화면) ──────────────────────────────────
-const MEMBER_STATUS_LABEL = {
-  PENDING_APPROVAL: { text: "승인 대기", cls: "status-pending" },
-  ACTIVE: { text: "활성", cls: "status-ok" },
-  SUSPENDED: { text: "정지", cls: "status-danger" },
-  REJECTED: { text: "반려", cls: "status-danger" },
-};
-
-async function fetchMembers() {
-  const errorEl = document.getElementById("members-error");
-  errorEl.hidden = true;
-  try {
-    const res = await fetch("/admin/auth/members");
-    const data = await res.json();
-    if (!res.ok || !data.ok) throw new Error(data.error || `HTTP ${res.status}`);
-    renderMembers(data.users);
-  } catch (err) {
-    errorEl.textContent = `회원 목록을 불러오지 못했습니다: ${err.message}`;
-    errorEl.hidden = false;
-  }
-}
-
-function memberActionButtons(m) {
-  if (m.status === "PENDING_APPROVAL") {
-    return `<button class="btn btn-primary" data-action="approve-user">승인</button>
-      <button class="btn btn-danger" data-action="reject-user">반려</button>`;
-  }
-  if (m.status === "SUSPENDED") {
-    return `<button class="btn btn-primary" data-action="reactivate-user">정지 해제</button>`;
-  }
-  if (m.status === "REJECTED") {
-    return `<button class="btn btn-primary" data-action="approve-user">재승인</button>`;
-  }
-  // ACTIVE
-  const roleAction = m.role === "ADMIN"
-    ? `<button class="btn btn-ghost" data-action="set-role" data-role="MEMBER">일반회원으로 변경</button>`
-    : `<button class="btn btn-ghost" data-action="set-role" data-role="ADMIN">관리자로 지정</button>`;
-  return `${roleAction}<button class="btn btn-danger" data-action="suspend-user">정지</button>`;
-}
-
-function renderMembers(users) {
-  const tbody = document.getElementById("members-tbody");
-  tbody.innerHTML = users.length ? users.map((m) => {
-    const status = MEMBER_STATUS_LABEL[m.status] || { text: m.status, cls: "status-pending" };
-    return `
-      <tr data-user-id="${m.id}">
-        <td><span class="mono">${escapeHtml(m.username)}</span></td>
-        <td>${escapeHtml(m.display_name)}</td>
-        <td class="muted">${escapeHtml(m.team || "-")}</td>
-        <td>${m.role === "ADMIN" ? "관리자" : "일반회원"}</td>
-        <td><span class="status-badge ${status.cls}">${status.text}</span></td>
-        <td class="muted">${(m.created_at || "").slice(0, 10)}</td>
-        <td class="table-actions">${memberActionButtons(m)}</td>
-      </tr>`;
-  }).join("") : `<tr><td colspan="7" class="empty-state">등록된 회원이 없습니다.</td></tr>`;
-  document.getElementById("member-pending-count-pill").textContent =
-    `${users.filter((m) => m.status === "PENDING_APPROVAL").length}건 대기`;
-  tbody.querySelectorAll("button[data-action]").forEach((btn) => {
-    btn.addEventListener("click", () => handleMemberAction(
-      btn.closest("tr").dataset.userId, btn.dataset.action, btn.dataset.role));
-  });
-}
-
-const MEMBER_ACTION_ERROR_LABELS = {
-  LAST_ADMIN_CANNOT_BE_SUSPENDED: "마지막 남은 관리자는 정지할 수 없습니다. 다른 회원을 먼저 관리자로 지정해주세요.",
-  LAST_ADMIN_CANNOT_BE_DEMOTED: "마지막 남은 관리자는 일반회원으로 변경할 수 없습니다. 다른 회원을 먼저 관리자로 지정해주세요.",
-  USER_NOT_FOUND_OR_NOT_ELIGIBLE: "처리할 수 없는 상태의 회원입니다. 목록을 새로고침해주세요.",
-  USER_NOT_FOUND_OR_NOT_PENDING: "이미 처리된 신청입니다. 목록을 새로고침해주세요.",
-  USER_NOT_FOUND_OR_NOT_ACTIVE: "활성 상태의 회원만 처리할 수 있습니다. 목록을 새로고침해주세요.",
-  USER_NOT_FOUND_OR_NOT_SUSPENDED: "정지 상태의 회원만 정지 해제할 수 있습니다. 목록을 새로고침해주세요.",
-};
-
-async function handleMemberAction(userId, action, role) {
-  const errorEl = document.getElementById("members-error");
-  errorEl.hidden = true;
-  try {
-    const res = await fetch(`/admin/auth/${action}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(role ? { user_id: userId, role } : { user_id: userId }),
-    });
-    const data = await res.json();
-    if (!res.ok || !data.ok) throw new Error(MEMBER_ACTION_ERROR_LABELS[data.error] || data.error || `HTTP ${res.status}`);
-    fetchMembers();
-  } catch (err) {
-    errorEl.textContent = `처리 실패: ${err.message}`;
-    errorEl.hidden = false;
-  }
-}
+// 회원 관리 화면은 members.html로 분리되었다(관리자 전용, 새 창) - 그 파일이
+// 자신의 인증/렌더링 로직을 독립적으로 갖고 있다.
 
 // ── 채팅 UI 헬퍼 ────────────────────────────────────────────────
 const chatBody = document.getElementById("chat-body");

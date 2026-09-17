@@ -9,7 +9,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
 <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
-<link rel="stylesheet" href="style.css?v=5" />
+<link rel="stylesheet" href="style.css?v=6" />
 </head>
 <body class="pre-auth">
 
@@ -84,7 +84,7 @@
         <div class="user-meta">
           <strong id="current-user-name">-</strong>
           <span id="current-user-team">-</span>
-          <span class="admin-badge" id="current-user-admin-badge" hidden>관리자로 로그인됨</span>
+          <span class="admin-badge" id="current-user-admin-badge" hidden>관리자</span>
         </div>
         <div class="user-actions">
           <button class="chat-icon-btn" id="settings-btn" aria-label="설정" title="설정">
@@ -293,7 +293,17 @@
               열기
             </button>
           </div>
-          <div class="settings-row">
+          <div class="settings-row" id="members-row">
+            <div>
+              <strong>회원 관리</strong>
+              <p class="muted">가입 승인/반려, 권한 변경, 정지 등을 새 창에서 관리합니다.</p>
+            </div>
+            <button class="btn btn-primary" id="open-members-btn" type="button">
+              <svg viewBox="0 0 24 24"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6M15 3h6v6M10 14 21 3"/></svg>
+              열기
+            </button>
+          </div>
+          <div class="settings-row" id="llm-model-row">
             <div>
               <strong>LLM 모델</strong>
               <p class="muted">가이드라인 판정·정의 제안 등 업무 로직과 챗봇 의도분류·응답 생성에 쓸 모델입니다. 전환 시 챗플로우를 재배포하므로 10~20초 걸립니다.</p>
@@ -322,31 +332,6 @@
               <p class="auth-notice" id="change-password-notice" hidden>비밀번호가 변경되었습니다.</p>
               <button type="submit" class="btn btn-primary">변경</button>
             </form>
-          </div>
-        </div>
-
-        <!-- 회원 관리 (관리자 전용) -->
-        <div class="panel" id="settings-members-panel">
-          <div class="panel-header panel-header-row">
-            <h2>회원 관리</h2>
-            <span class="pill" id="member-pending-count-pill">0건</span>
-          </div>
-          <p class="auth-error" id="members-error" hidden></p>
-          <div class="table-wrap">
-            <table class="data-table">
-              <thead>
-                <tr>
-                  <th>아이디</th>
-                  <th>이름</th>
-                  <th>팀</th>
-                  <th>권한</th>
-                  <th>상태</th>
-                  <th>신청일</th>
-                  <th>처리</th>
-                </tr>
-              </thead>
-              <tbody id="members-tbody"></tbody>
-            </table>
           </div>
         </div>
       </section>
@@ -408,6 +393,6 @@
 
 <script src="runtime-config.js"></script>
 <script src="mock-data.js"></script>
-<script src="app.js?v=4"></script>
+<script src="app.js?v=6"></script>
 </body>
 </html>

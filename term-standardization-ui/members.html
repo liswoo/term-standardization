@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>회원 관리 · DATAVE</title>
+<link rel="icon" type="image/svg+xml" href="img/favicon.svg" />
+<link rel="alternate icon" href="img/favicon.ico" />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="style.css?v=5" />
+<style>
+  /* 이 페이지는 사이드바 없이 독립된 창으로 뜨므로 앱 셸 대신 단순 세로 레이아웃만 필요합니다. */
+  body { min-height: 100vh; }
+  .members-shell { display: flex; flex-direction: column; min-height: 100vh; }
+  .members-header {
+    display: flex; align-items: center; gap: 10px;
+    padding: 16px 24px; background: #0f1a30; color: #fff;
+  }
+  .members-header img { width: 28px; height: 28px; }
+  .members-header h1 { margin: 0; font-size: 15px; font-weight: 700; flex: 1; }
+  .members-header .btn-ghost { background: transparent; border-color: #2c3e5c; color: #cbd5e1; }
+  .members-header .btn-ghost:hover { border-color: #55C3B5; color: #fff; }
+</style>
+</head>
+<body>
+
+<div class="members-shell">
+  <header class="members-header">
+    <img src="img/datave-symbol-dark.svg" alt="DATAVE" />
+    <h1>회원 관리</h1>
+    <button class="btn btn-ghost" id="close-members-btn" type="button">닫기</button>
+  </header>
+
+  <div class="content">
+    <div class="panel" id="members-denied" hidden>
+      <p class="muted" id="members-denied-message">권한을 확인하는 중입니다...</p>
+    </div>
+
+    <div class="panel" id="members-panel" hidden>
+      <div class="panel-header panel-header-row">
+        <h2>전체 회원</h2>
+        <span class="pill" id="member-pending-count-pill">0건</span>
+      </div>
+      <p class="auth-error" id="members-error" hidden></p>
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>아이디</th>
+              <th>이름</th>
+              <th>팀</th>
+              <th>권한</th>
+              <th>상태</th>
+              <th>신청일</th>
+              <th>처리</th>
+            </tr>
+          </thead>
+          <tbody id="members-tbody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+function escapeHtml(str) {
+  const div = document.createElement("div");
+  div.textContent = str;
+  return div.innerHTML;
+}
+
+const MEMBER_STATUS_LABEL = {
+  PENDING_APPROVAL: { text: "승인 대기", cls: "status-pending" },
+  ACTIVE: { text: "활성", cls: "status-ok" },
+  SUSPENDED: { text: "정지", cls: "status-danger" },
+  REJECTED: { text: "반려", cls: "status-danger" },
+};
+
+async function fetchMembers() {
+  const errorEl = document.getElementById("members-error");
+  errorEl.hidden = true;
+  try {
+    const res = await fetch("/admin/auth/members");
+    const data = await res.json();
+    if (!res.ok || !data.ok) throw new Error(data.error || `HTTP ${res.status}`);
+    renderMembers(data.users);
+  } catch (err) {
+    errorEl.textContent = `회원 목록을 불러오지 못했습니다: ${err.message}`;
+    errorEl.hidden = false;
+  }
+}
+
+function memberActionButtons(m) {
+  if (m.status === "PENDING_APPROVAL") {
+    return `<button class="btn btn-primary" data-action="approve-user">승인</button>
+      <button class="btn btn-danger" data-action="reject-user">반려</button>`;
+  }
+  if (m.status === "SUSPENDED") {
+    return `<button class="btn btn-primary" data-action="reactivate-user">정지 해제</button>`;
+  }
+  if (m.status === "REJECTED") {
+    return `<button class="btn btn-primary" data-action="approve-user">재승인</button>`;
+  }
+  // ACTIVE
+  const roleAction = m.role === "ADMIN"
+    ? `<button class="btn btn-ghost" data-action="set-role" data-role="MEMBER">일반회원으로 변경</button>`
+    : `<button class="btn btn-ghost" data-action="set-role" data-role="ADMIN">관리자로 지정</button>`;
+  return `${roleAction}<button class="btn btn-danger" data-action="suspend-user">정지</button>`;
+}
+
+function renderMembers(users) {
+  const tbody = document.getElementById("members-tbody");
+  tbody.innerHTML = users.length ? users.map((m) => {
+    const status = MEMBER_STATUS_LABEL[m.status] || { text: m.status, cls: "status-pending" };
+    return `
+      <tr data-user-id="${m.id}">
+        <td><span class="mono">${escapeHtml(m.username)}</span></td>
+        <td>${escapeHtml(m.display_name)}</td>
+        <td class="muted">${escapeHtml(m.team || "-")}</td>
+        <td>${m.role === "ADMIN" ? "관리자" : "일반회원"}</td>
+        <td><span class="status-badge ${status.cls}">${status.text}</span></td>
+        <td class="muted">${(m.created_at || "").slice(0, 10)}</td>
+        <td class="table-actions">${memberActionButtons(m)}</td>
+      </tr>`;
+  }).join("") : `<tr><td colspan="7" class="empty-state">등록된 회원이 없습니다.</td></tr>`;
+  document.getElementById("member-pending-count-pill").textContent =
+    `${users.filter((m) => m.status === "PENDING_APPROVAL").length}건 대기`;
+  tbody.querySelectorAll("button[data-action]").forEach((btn) => {
+    btn.addEventListener("click", () => handleMemberAction(
+      btn.closest("tr").dataset.userId, btn.dataset.action, btn.dataset.role));
+  });
+}
+
+const MEMBER_ACTION_ERROR_LABELS = {
+  LAST_ADMIN_CANNOT_BE_SUSPENDED: "마지막 남은 관리자는 정지할 수 없습니다. 다른 회원을 먼저 관리자로 지정해주세요.",
+  LAST_ADMIN_CANNOT_BE_DEMOTED: "마지막 남은 관리자는 일반회원으로 변경할 수 없습니다. 다른 회원을 먼저 관리자로 지정해주세요.",
+  USER_NOT_FOUND_OR_NOT_ELIGIBLE: "처리할 수 없는 상태의 회원입니다. 목록을 새로고침해주세요.",
+  USER_NOT_FOUND_OR_NOT_PENDING: "이미 처리된 신청입니다. 목록을 새로고침해주세요.",
+  USER_NOT_FOUND_OR_NOT_ACTIVE: "활성 상태의 회원만 처리할 수 있습니다. 목록을 새로고침해주세요.",
+  USER_NOT_FOUND_OR_NOT_SUSPENDED: "정지 상태의 회원만 정지 해제할 수 있습니다. 목록을 새로고침해주세요.",
+};
+
+async function handleMemberAction(userId, action, role) {
+  const errorEl = document.getElementById("members-error");
+  errorEl.hidden = true;
+  try {
+    const res = await fetch(`/admin/auth/${action}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(role ? { user_id: userId, role } : { user_id: userId }),
+    });
+    const data = await res.json();
+    if (!res.ok || !data.ok) throw new Error(MEMBER_ACTION_ERROR_LABELS[data.error] || data.error || `HTTP ${res.status}`);
+    fetchMembers();
+  } catch (err) {
+    errorEl.textContent = `처리 실패: ${err.message}`;
+    errorEl.hidden = false;
+  }
+}
+
+// 이 창은 메인 앱과 같은 오리진의 세션 쿠키를 그대로 공유하므로 별도 로그인
+// 절차 없이 /admin/auth/me로 바로 권한을 확인한다. 관리자가 아니면(비로그인
+// 포함) 회원 목록 대신 안내 문구만 보여주고 API 호출 자체를 하지 않는다.
+(async function requireAdmin() {
+  const deniedEl = document.getElementById("members-denied");
+  const deniedMessageEl = document.getElementById("members-denied-message");
+  try {
+    const res = await fetch("/admin/auth/me");
+    const data = res.ok ? await res.json() : null;
+    if (data?.ok && data.user.role === "ADMIN") {
+      document.getElementById("members-panel").hidden = false;
+      fetchMembers();
+      return;
+    }
+    deniedMessageEl.textContent = data?.ok
+      ? "관리자 권한이 필요합니다."
+      : "로그인이 필요합니다. 메인 화면에서 먼저 로그인해주세요.";
+  } catch {
+    deniedMessageEl.textContent = "서버에 연결할 수 없습니다.";
+  }
+  deniedEl.hidden = false;
+})();
+
+document.getElementById("close-members-btn").addEventListener("click", () => window.close());
+</script>
+</body>
+</html>
