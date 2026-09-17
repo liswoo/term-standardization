@@ -82,6 +82,14 @@ def suggest_word(usage_description: str, clarification_history: list[dict] | Non
     candidates = _candidate_existing_words(usage_description)
     evidence = search_guideline("표준단어 및 영문 약어 작성 규칙: " + usage_description, top_k=3)
     with db.connect() as conn:
+        # Collision set (`reserved` below) must cover every assigned abbreviation - real
+        # catalog is 3,000+ words, and sending that whole set to the LLM blew past a local
+        # model's context (measured: 16,742 tokens vs. a 16,384-token local budget,
+        # BadRequestError - see abbreviation.py's identical fix and CLAUDE.md's "로컬 모델
+        # 테스트" section for the general pattern). What the prompt actually sees is capped
+        # to the semantically-closest candidates already fetched above (already small,
+        # limit=8) instead - _dedupe_collision() below still checks the FULL `reserved` set
+        # regardless of what the model saw, so correctness never depends on this cap.
         reserved = {r["english_abbr"] for r in conn.execute(
             "SELECT english_abbr FROM standard_words WHERE status='ACTIVE'").fetchall()}
         reserved |= {r["english_abbr"] for r in conn.execute(
@@ -95,7 +103,7 @@ def suggest_word(usage_description: str, clarification_history: list[dict] | Non
         "candidate_existing_words": [{"word": c["name"], "definition": c["definition"],
             "abbreviation": c["english_abbr"], "similarity": c.get("similarity")} for c in candidates],
         "guideline_excerpts": [{"section": e.section, "content": e.content} for e in evidence],
-        "reserved_abbreviations": sorted(reserved)}
+        "reserved_abbreviations": sorted({c["english_abbr"] for c in candidates if c.get("english_abbr")})}
     model = current_llm_model()
     try:
         client = llm_client(max_retries=1)
