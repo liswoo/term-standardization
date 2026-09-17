@@ -1,10 +1,10 @@
 # CLAUDE.md — 용어표준화 AI 에이전트
 
-이 문서는 새 세션(에이전트든 사람이든)이 이 저장소에 처음 들어왔을 때 가장 먼저 읽는 문서입니다. **"무엇을 만들었는가"보다 "왜 이렇게 만들었는가"와 "다음에 뭘 조심해야 하는가"에 집중**합니다. 파일별 세부 계약은 [term-standardization-mcp/DESIGN.md](term-standardization-mcp/DESIGN.md), 설치는 [SETUP.md](SETUP.md), Dify 자동화 내부 구조는 [term-standardization-mcp/AUTOMATION.md](term-standardization-mcp/AUTOMATION.md)를 보세요. 이 문서는 그 셋을 대체하지 않고 연결합니다.
+이 문서는 새 세션(에이전트든 사람이든)이 이 저장소에 처음 들어왔을 때 가장 먼저 읽는 문서입니다. **"무엇을 만들었는가"보다 "왜 이렇게 만들었는가"와 "다음에 뭘 조심해야 하는가"에 집중**합니다. "무엇이 있는가"(아키텍처 다이어그램, 모듈/MCP 도구 29개 전체 레퍼런스, 시간순 변경 이력)는 [docs/index.html](docs/index.html)을 보세요 — 브라우저로 `docs/index.html`을 열면 됩니다. 설치는 [SETUP.md](SETUP.md), Dify 자동화 내부 구조는 [term-standardization-mcp/AUTOMATION.md](term-standardization-mcp/AUTOMATION.md)를 보세요. 이 문서는 그것들을 대체하지 않고 연결합니다.
 
 ## 지금 상태: PoC → Product 전환 중
 
-2026-09-08~11 사이 세션들에서 등록 대화 흐름의 핵심 기능(가이드라인 RAG 검사, 영문약어 추천, 정의 추천, 도메인 추천, UI 표/카드화)이 갖춰졌고, 2026-09-14 세션에서 **실제 정부 공공데이터 표준(data.go.kr)을 처음으로 DB에 적재**하고, 그 규모(용어 13,168건·단어 3,281건·도메인 126건)에서만 드러나는 스케일 버그 여러 개를 찾아 고쳤고, **표준단어 계층과 "의미 우선" 신규 단어 요청 플로우**를 새로 만들었습니다. **아직 PoC입니다** — 아래 "제품화 전 반드시 메워야 할 공백" 절을 먼저 읽으세요. `standard_terms`/`standard_words`/`domains`에는 이제 실제 정부 표준 데이터(`source='GOV_COMMON_STANDARD_2025_11'`)와 데모용 가상 데이터(`SYNTHETIC_SCENARIO_V1_NOT_OFFICIAL`, `data/scenario_catalog.json`)가 **공존**합니다 — `manage.py import-standard-catalog`가 전자를, `start.sh`의 자동 시딩이 후자를 채웁니다. 가이드라인 문서(`data/standard_guide.md`)는 여전히 전부 가상입니다.
+2026-09-08~11 사이 세션들에서 등록 대화 흐름의 핵심 기능(가이드라인 RAG 검사, 영문약어 추천, 정의 추천, 도메인 추천, UI 표/카드화)이 갖춰졌고, 2026-09-14 세션에서 **실제 정부 공공데이터 표준(data.go.kr)을 처음으로 DB에 적재**하고, 그 규모(용어 13,168건·단어 3,281건·도메인 126건)에서만 드러나는 스케일 버그 여러 개를 찾아 고쳤고, **표준단어 계층과 "의미 우선" 신규 단어 요청 플로우**를 새로 만들었습니다. 2026-09-16~17 세션에서는 **실제 로그인/세션/역할**(아래 절)과 **DATAVE 브랜드 적용**, **SaaS형 고정 레이아웃**(사이드바/상단바 고정, 표 본문만 스크롤), **용어사전·단어사전 검색창 통합**(이름·정의·요청자를 검색창 하나로)이 추가됐습니다. **아직 PoC입니다** — 아래 "제품화 전 반드시 메워야 할 공백" 절을 먼저 읽으세요. `standard_terms`/`standard_words`/`domains`에는 이제 실제 정부 표준 데이터(`source='GOV_COMMON_STANDARD_2025_11'`)와 데모용 가상 데이터(`SYNTHETIC_SCENARIO_V1_NOT_OFFICIAL`, `data/scenario_catalog.json`)가 **공존**합니다 — `manage.py import-standard-catalog`가 전자를, `start.sh`의 자동 시딩이 후자를 채웁니다. 가이드라인 문서(`data/standard_guide.md`)는 여전히 전부 가상입니다.
 
 ## 시스템 구성
 
@@ -19,7 +19,7 @@ projects/
 
 - **dify 폴더는 "엔진"**, term-standardization은 "그 위에 얹은 우리 업무 로직 + 자동화 + 프론트"입니다. Dify 안의 앱/지식베이스/API 키/모델 자격증명은 설치본마다 새로 만들어지는 Dify 자체 DB 데이터라 설치본 간 이전이 안 됩니다 — `setup_dify.py`가 이 과정 전체를 자동화합니다(AUTOMATION.md).
 - MCP 서버가 29개 도구를 노출하고, Dify Chatflow(`용어표준화-대화형`)가 사용자 메시지를 해석해 그 도구들을 호출합니다. **업무 판단과 저장의 기준은 항상 MCP**이고, Dify의 LLM 노드는 의도 해석과 답변 문장 생성만 담당합니다.
-- 프론트엔드(`term-standardization-ui`)는 "용어표준화-대화형"(챗플로우) 외에 **"용어표준화-목록조회"**(단순 워크플로우, `build_list_terms_workflow.py`)도 씁니다 — 대시보드/용어사전/단어사전/도메인관리 화면이 대화 상태 없이 한 번에 조회하는 읽기 전용 API로, `limit`/`offset`/`q` 입력을 받아 페이지네이션+검색을 지원합니다. 챗플로우와는 **별개의 Dify 앱**이라 배포도 별개입니다(`scripts/publish_list_terms_workflow.py` 한 번이면 끝 — 챗플로우 같은 3단계 아님).
+- 프론트엔드(`term-standardization-ui`)는 "용어표준화-대화형"(챗플로우) 외에 **"용어표준화-목록조회"**(단순 워크플로우, `build_list_terms_workflow.py`)도 씁니다 — 대시보드/용어사전/단어사전/도메인관리 화면이 대화 상태 없이 한 번에 조회하는 읽기 전용 API로, `limit`/`offset`/`q` 입력을 받아 페이지네이션+검색을 지원합니다. 챗플로우와는 **별개의 Dify 앱**이라 배포도 별개입니다(`scripts/publish_list_terms_workflow.py` 한 번이면 끝 — 챗플로우 같은 3단계 아님). `q`는 이름/정의뿐 아니라 (검토 대기 요청에 한해) **요청자까지 OR로 매칭**합니다(2026-09-17) — 화면에는 검색창이 탭마다 하나뿐이고, 예전처럼 요청자 필터가 별도 텍스트박스가 아닙니다. `requester` 파라미터 자체는 API 하위호환용으로 남아있지만 프론트는 더 이상 안 씁니다.
 
 ## 대화 상태머신 (`term_service/conversation.py`)
 
@@ -32,7 +32,8 @@ propose_term → awaiting_term_confirm → confirm_term
   → (EXACT_MATCH/SYNONYM_MATCH) → existing_term_found  [종료]
   → (검토 대기 중복) → pending_request_found  [종료]
   → (형태소/가이드라인 위반) → awaiting_guideline_choice → propose_term로 재시도
-  → (이름이 표준단어로 완전분해 안 됨) → awaiting_word_meaning [신규 단어 요청 서브플로우, 아래 절 참고] → 완료 후 아래로 복귀
+  → (이름이 표준단어로 완전분해 안 됨) → awaiting_word_split_choice (하나로/여러 단어로 쪼갤지 선택, 2026-09-16 추가)
+      → awaiting_word_meaning [신규 단어 요청 서브플로우, 아래 절 참고] (단어별로 반복) → 전부 완료 후 아래로 복귀
   → awaiting_definition (정의 제안/명확화 질문)
       → set_definition → awaiting_domain_choice (이제 이름+정의로 검색한 근거로 도메인 추천)
           → set_domain → registration.prepare() 호출 시점
@@ -48,12 +49,12 @@ propose_term → awaiting_term_confirm → confirm_term
 
 ## 표준단어 계층 + "의미 우선" 신규 단어 요청 플로우 (2026-09-14)
 
-**표준용어는 표준단어의 조합**입니다(예: "API명" = "API" + "명" → 약어 `API_NM`). 실제 정부 표준 500건 표본을 분해해보면 **99.8%가 `standard_words` 사전만으로 완전분해**됩니다 — 나머지 0.2%가 "사전에 없는 개념"이 섞인, 진짜 신규 단어가 필요한 경우입니다. `confirm_term`이 이름 확인 직후(가이드라인 검사 다음) `naming.segment_words()`로 이 완전분해를 체크하고, 실패하면 `awaiting_word_meaning`으로 분기해 **신규 단어 요청 서브플로우**를 먼저 통과시킨 뒤 원래 용어 등록으로 복귀합니다(`state["resume_term"]`에 원래 진행 상황을 저장해두는 방식 — 상태머신 구조 자체는 안 바꾸고 필드 하나로 "돌아갈 지점"만 표시).
+**표준용어는 표준단어의 조합**입니다(예: "API명" = "API" + "명" → 약어 `API_NM`). 실제 정부 표준 500건 표본을 분해해보면 **99.8%가 `standard_words` 사전만으로 완전분해**됩니다 — 나머지 0.2%가 "사전에 없는 개념"이 섞인, 진짜 신규 단어가 필요한 경우입니다. `confirm_term`이 이름 확인 직후(가이드라인 검사 다음) `naming.segment_words()`로 이 완전분해를 체크하고, 실패하면 **`awaiting_word_split_choice`**로 분기해 사용자에게 "빠진 부분을 단어 하나로 등록할지, 여러 단어로 쪼갤지"부터 물은 뒤(2026-09-16 추가, `naming.unmatched_spans()`/`split_into_nouns()` — 예: "소리동굴"의 빠진 부분을 "소리동굴" 하나로 할지 "소리"+"동굴" 둘로 할지), 각 단어마다 **신규 단어 요청 서브플로우**(`awaiting_word_meaning`)를 순서대로 통과시킨 뒤 원래 용어 등록으로 복귀합니다(`state["resume_term"]`에 원래 진행 상황을 저장). 용어 하나가 **여러 단어 승인을 동시에 기다릴 수 있어서**, 예전의 단일 FK(`registration_requests.depends_on_word_request_id`)는 다대다 테이블 `registration_request_word_dependencies`로 바뀌었습니다 — `word_registration.approve()`는 그 용어의 의존 단어가 **전부** APPROVED여야 용어를 `WAITING_FOR_WORD_APPROVAL`에서 풀어줍니다.
 
 **단어 등록은 이름이 아니라 의미가 입력입니다.** "이 개념을 이런 용도로 쓰고 있다"는 자유 설명(`propose_word`)을 받아서:
 1. `search_words()`(단어 임베딩 기반 코사인 검색, `standard_terms`와 같은 메커니즘)로 의미가 비슷한 기존 단어를 찾고
 2. `word_suggestion.suggest_word()`가 구조화 출력으로 **"기존 단어와 일치하는가"를 다른 무엇보다 먼저 판단**하도록 강제(`existing_word_match` 필드를 `ambiguous`/`name`보다 먼저 선언 — 아래 "작은 모델" 패턴과 동일한 트릭)한 뒤, 일치하면 재사용을 권하고, 애매하면 되묻고, 없으면 새 단어(이름+영문약어+정의)를 제안합니다.
-3. 신규 단어는 용어와 완전히 대칭인 자체 심사 테이블(`word_registration_preparations`/`word_registration_requests`)에 `PENDING_REVIEW`로 쌓입니다 — 승인 워크플로우가 용어 쪽에도 없으니(아래 미해결 이슈 1번) 단어도 즉시 사용됩니다.
+3. 신규 단어는 용어와 완전히 대칭인 자체 심사 테이블(`word_registration_preparations`/`word_registration_requests`)에 `PENDING_REVIEW`로 쌓입니다 — 관리자가 CLI로 승인하기 전까지는(아래 미해결 이슈 1번) 사실상 즉시 쓰이는 것과 다름없이 대화가 진행됩니다.
 
 **진입점이 두 개입니다**: (a) 위에서 설명한 **임베디드 진입**(용어 등록 중 자동 분기), (b) **독립 진입** — 사용자가 처음부터 "이런 개념을 단어로 추천해줘"라고 요청하면 `propose_word`가 `resume_term` 없이 같은 서브플로우를 타고, 끝나면 `word_reused`/`word_submitted`로 종료합니다(용어 등록으로 복귀하지 않음).
 
@@ -65,11 +66,12 @@ propose_term → awaiting_term_confirm → confirm_term
 
 `term_service/auth.py`(해싱·세션) + `admin_api.py`의 `/admin/auth/*` 라우트(신규 파일 아님, 기존 LLM 전환 API와 같은 파일)로 실제 인증을 구현했습니다. 새 설치에서 반드시 `manage.py create-admin`으로 최초 관리자를 만들어야 로그인 화면을 통과할 수 있습니다(SETUP.md 7단계) — 안 하면 아무도 못 들어갑니다.
 
-- **비밀번호**: `hashlib.pbkdf2_hmac`(표준 라이브러리, 새 의존성 없음) + 랜덤 salt. `bcrypt`/`argon2` 같은 별도 패키지를 일부러 안 씀 — 이 프로젝트가 이미 `hashlib.sha256`을 카탈로그 fingerprint에 쓰는 것과 통일.
+- **비밀번호**: `hashlib.pbkdf2_hmac`(표준 라이브러리, 새 의존성 없음) + 랜덤 salt. `bcrypt`/`argon2` 같은 별도 패키지를 일부러 안 씀 — 이 프로젝트가 이미 `hashlib.sha256`을 카탈로그 fingerprint에 쓰는 것과 통일. 본인 비밀번호 변경 기능 있음(`/admin/auth/change-password`, 변경 시 다른 세션 전부 로그아웃).
 - **세션**: JWT가 아니라 `sessions` 테이블(랜덤 토큰 + 만료시각) — `registration_preparations`가 이미 쓰는 "Postgres에 랜덤 ID 행 + 만료시각" 패턴 재사용. **httpOnly, SameSite=Lax 쿠키**로 전달(localStorage 토큰 아님) — `/admin/*`이 Caddy로 같은 오리진에 프록시되므로 프론트 코드에서 매 요청마다 헤더를 붙일 필요가 없고, `SameSite=Lax`가 모든 변경 라우트(POST)의 CSRF를 이미 막아서 별도 CSRF 토큰도 없습니다.
-- **역할**: `users.role IN ('ADMIN','MEMBER')`. 신규 가입은 항상 `MEMBER`+`PENDING_APPROVAL`로 시작 — 승인은 관리자가 프론트의 "회원 관리" 화면에서 처리(`registration_requests`/`word_registration_requests`와 동일한 승인 큐 패턴을 회원가입에도 그대로 적용한 것). **마지막 남은 활성 관리자를 정지/강등하는 건 서버가 거부**합니다(`auth.active_admin_count()`) — 스스로 잠기는 걸 방지.
+- **역할**: `users.role IN ('ADMIN','MEMBER')`. 신규 가입은 항상 `MEMBER`+`PENDING_APPROVAL`로 시작 — 승인은 관리자가 처리(`registration_requests`/`word_registration_requests`와 동일한 승인 큐 패턴을 회원가입에도 그대로 적용한 것). **마지막 남은 활성 관리자를 정지/강등하는 건 서버가 거부**합니다(`auth.active_admin_count()`) — 스스로 잠기는 걸 방지.
+- **관리자 전용 UI (2026-09-17 회원관리를 별도 창으로 분리)**: 설정 화면엔 이제 "회원 관리"/"Dify 관리자 콘솔"/"LLM 모델 전환" 세 가지가 전부 관리자에게만 보이고, 회원 관리는 버튼을 누르면 같은 세션 쿠키를 공유하는 독립 창(`term-standardization-ui/members.html`)에서 처리합니다(자체적으로 `/admin/auth/me`로 관리자 여부를 다시 확인함 — 비관리자가 URL을 직접 열어도 안내 문구만 뜨고 API는 호출 안 됨).
 - **`requester` 실화**: `term-standardization-ui/app.js`의 `CHAT_USER`가 이제 로그인한 실제 아이디입니다(예전엔 `"meta-system-ui"` 고정값) — 챗봇으로 신청한 용어/단어의 "요청자" 칸에 실제 로그인 아이디가 찍힙니다. 로그인 전 데이터(전부 `meta-system-ui`)는 소급 반영 안 됨.
-- **범위 밖(의도적으로 안 함)**: 위 known-issue #2에 적었듯, 이 로그인은 **우리 프론트엔드 UI 자체**만 지킵니다 — Dify Chatflow/워크플로우 API를 프론트가 하드코딩된 키로 직접 호출하는 구조는 그대로라, 그 키를 아는 사람은 로그인 없이도 Dify에 직접 요청해 임의의 `requester` 값을 만들 수 있습니다. 진짜로 막으려면 Dify 호출 자체를 백엔드가 세션 검증 후 대신 호출하는 프록시로 바꿔야 합니다. 비밀번호 재설정/이메일 인증, 레이트리밋, 본인 비밀번호 변경 기능도 없습니다.
+- **범위 밖(의도적으로 안 함)**: 위 known-issue #2에 적었듯, 이 로그인은 **우리 프론트엔드 UI 자체**만 지킵니다 — Dify Chatflow/워크플로우 API를 프론트가 하드코딩된 키로 직접 호출하는 구조는 그대로라, 그 키를 아는 사람은 로그인 없이도 Dify에 직접 요청해 임의의 `requester` 값을 만들 수 있습니다. 진짜로 막으려면 Dify 호출 자체를 백엔드가 세션 검증 후 대신 호출하는 프록시로 바꿔야 합니다. 비밀번호 재설정/이메일 인증, 레이트리밋은 여전히 없습니다.
 
 ## 두 개의 독립된 벡터/RAG 시스템 — 절대 섞지 마세요
 
@@ -149,7 +151,7 @@ curl -sN -X POST http://localhost:8090/v1/chat-messages \
 
 ## 로컬 개발 시 브라우저 캐시 주의
 
-`tools/Caddyfile`이 정적 프론트엔드에 `Cache-Control: no-cache` 헤더를 보내도록 되어 있습니다(원래 없었음, 커밋 `9b93c60`) — 이게 없으면 `style.css`/`app.js`를 고쳐도 브라우저가 예전 버전을 계속 보여줘서 "수정했는데 반영이 안 된다"처럼 보입니다. `index.html`의 `?v=2` 쿼리스트링도 같은 이유로 붙어 있습니다. 프론트엔드 리소스를 더 추가하면 캐시 버스팅 여부를 같이 고려하세요.
+`tools/Caddyfile`이 정적 프론트엔드에 `Cache-Control: no-cache` 헤더를 보내도록 되어 있습니다(원래 없었음, 커밋 `9b93c60`) — 이게 없으면 `style.css`/`app.js`를 고쳐도 브라우저가 예전 버전을 계속 보여줘서 "수정했는데 반영이 안 된다"처럼 보입니다. `index.html`의 `style.css?v=N`/`app.js?v=N` 쿼리스트링도 같은 이유로 붙어 있습니다 — **CSS/JS를 고칠 때마다 그 번호를 올리세요**(안 올려도 no-cache 덕분에 대부분 반영되지만, 과거 이 프로젝트에서 브라우저가 그래도 캐싱한 사례가 있어 이중 안전장치로 유지). `members.html`도 같은 `style.css`를 쓰므로 버전을 같이 올려야 합니다.
 
 ## 테스트 컨벤션
 
@@ -157,7 +159,7 @@ curl -sN -X POST http://localhost:8090/v1/chat-messages \
 .venv/bin/python -m pytest -q                    # 기본: 유료 LLM 호출 0건 (스텁/결정론적 경로만)
 RUN_LLM_TESTS=1 .venv/bin/python -m pytest -q    # 실제 OpenAI 호출 포함 (저비용이지만 유료)
 ```
-`tests/test_business.py`에 테스트 함수 33개(파라미터화 포함, `RUN_LLM_TESTS=1`로 46개 케이스 통과). 실LLM 테스트는 `@pytest.mark.skipif(os.getenv("RUN_LLM_TESTS")!="1", ...)`로 게이팅되어 기본 실행에서 항상 스킵됩니다. 대화 흐름 테스트는 `conversation.suggest_definition`/`suggest_abbreviation`을 몽키패치해서 결정론적으로 검증하고, 실제 LLM 판단력 자체(예: 애매함 감지가 실제로 트리거되는지)는 `RUN_LLM_TESTS=1` 쪽에서만 검증합니다. **LLM 프롬프트 자체의 동작(Dify chatflow의 `STAGE_RULES`/`RENDER`)은 Python 유닛테스트로 검증 불가능** — 위 curl 방법이 유일한 검증 수단입니다.
+`tests/test_business.py`에 테스트 71개(파라미터화 포함) — 기본 실행에서 65 passed / 6 skipped, `RUN_LLM_TESTS=1`이면 스킵된 6개도 마저 통과. 실LLM 테스트는 `@pytest.mark.skipif(os.getenv("RUN_LLM_TESTS")!="1", ...)`로 게이팅되어 기본 실행에서 항상 스킵됩니다. 대화 흐름 테스트는 `conversation.suggest_definition`/`suggest_abbreviation`을 몽키패치해서 결정론적으로 검증하고, 실제 LLM 판단력 자체(예: 애매함 감지가 실제로 트리거되는지)는 `RUN_LLM_TESTS=1` 쪽에서만 검증합니다. **LLM 프롬프트 자체의 동작(Dify chatflow의 `STAGE_RULES`/`RENDER`)은 Python 유닛테스트로 검증 불가능** — 위 curl 방법이 유일한 검증 수단입니다.
 
 `insert_standard_word(name, english_abbr, definition)` 헬퍼(`insert_guideline_chunk`와 동일한 패턴)로 테스트 DB에 최소 단어사전을 직접 심을 수 있습니다 — `standard_words`가 비어 있으면 `confirm_term`의 단어분해 체크 자체가 통째로 스킵되므로(아래), 그 분기를 테스트하려면 반드시 이 헬퍼로 최소 1개 이상 단어를 넣어야 합니다.
 
@@ -181,15 +183,13 @@ RUN_LLM_TESTS=1 .venv/bin/python -m pytest -q    # 실제 OpenAI 호출 포함 (
 
 우선순위 순서는 아니고, 각자 다른 이유로 "PoC에서는 넘어갔지만 제품화하려면 반드시 다뤄야 하는" 항목들입니다.
 
-1. **관리자 승인/반려 플로우가 아예 없음 — 용어뿐 아니라 이제 단어도.** `registration_requests.status`/`word_registration_requests.status`는 `PENDING_REVIEW`/`APPROVED`/`REJECTED` 세 값을 스키마에 정의해뒀지만, **PENDING_REVIEW에서 벗어나는 코드 경로가 둘 다 전혀 없습니다.** 신청은 계속 쌓이기만 하고 표준사전(`standard_terms`/`standard_words`)으로 승격되지도, 반려되지도 않습니다. 이게 PoC와 제품의 가장 큰 간극입니다 — 승인 워크플로우(누가, 어떤 권한으로, 승인 시 정식 테이블 INSERT + 임베딩/지식베이스 재동기화까지)를 설계해야 하고, 용어와 단어 두 큐를 같이 다뤄야 합니다.
+1. **용어/단어 승인이 CLI 전용 — 관리자 UI가 없음.** `manage.py approve-word`/`approve-term`(→ `word_registration.approve()`/`registration.approve()`)이 실제로 `PENDING_REVIEW`를 `standard_terms`/`standard_words`로 승격시키는 유일한 경로입니다 — "승인 자체가 아예 없다"는 게 아니라 **관리자가 터미널 없이는 승인/반려를 못 한다**는 게 진짜 갭입니다. 이제 로그인/역할(아래 절)과 "회원 관리" 관리자 UI가 이미 있으니, 같은 화면에 용어/단어 승인 큐를 추가하는 게 자연스러운 다음 단계입니다.
 2. ~~인증/권한이 없음~~ **(2026-09-16 해결)** — 아래 "로그인/세션/역할" 절 참고. 다만 완전히 메워진 건 아닙니다: 로그인은 `term-standardization-ui`(우리 프론트) 자체를 지킬 뿐, 프론트가 **Dify API를 직접(하드코딩된 키로) 호출하는 구조 자체는 그대로**입니다 — 그 키와 호출 방식을 아는 사람은 우리 로그인 화면을 거치지 않고도 Dify에 임의의 `user`(=`requester`) 값으로 직접 요청할 수 있습니다. 진짜로 막으려면 Dify 호출 자체를 우리 백엔드가 세션 검증 후 대신 호출해주는 프록시로 바꿔야 하는데, 이번 범위에서는 안 했습니다(아래 "로그인/세션/역할" 절의 "범위 밖" 참고).
 3. **SEMANTIC_THRESHOLD(0.85)가 실측상 너무 타이트할 가능성.** "주간식단" 사례에서 진짜 관련 있는 기존 용어들이 임계값 바로 아래(0.82~0.84)에서 대량으로 걸러졌습니다. multilingual-e5-small의 코사인 유사도 분포 자체가 좁은 고구간에 몰리는 경향이 있어서, 카탈로그 전체에 대해 유사/비유사 쌍의 실제 분포를 뽑아 임계값을 재보정하는 작업이 필요합니다(아직 안 함). 실제 13k+ 데이터로도 이 경향이 재확인됐습니다 — 신규 단어 검색(`search_words()`)에서도 정답 단어가 0.855로 최상위가 아니라 5위 안팎에 걸리는 경우를 봤습니다.
 4. **"라는"류 추출 버그는 LLM 프롬프트 레벨이라 근본적으로 불안정.** `naming.strip_trailing_particle`은 결정론적 조사(을/를/이/가/은/는) 제거만 하고, "정보라는" 같은 인용형 어미는 CLASSIFY 프롬프트의 few-shot 예시에만 의존합니다(`STAGE_RULES["awaiting_term_direct"]`). 이런 종류는 유닛테스트가 안 되므로, 비슷한 "자연어 패턴 의존" 버그를 새로 만나면 처음부터 결정론적 파싱으로 옮길 수 있는지부터 검토하세요.
 5. **신규 단어 요청이 기존 단어를 재사용으로 찾아도 용어명 자체는 안 바뀜.** 위 "표준단어 계층" 절의 "알려진 한계" 참고 — "등본" 의미로 "증명서"를 찾아 재사용해도, 원래 용어명("등기부등본")엔 그 글자가 없어서 이후 약어 추천은 여전히 LLM이 즉석으로 지어냅니다. 용어명을 표준단어로 리네이밍하도록 권하는 기능은 없습니다.
-6. **`list_standard_words`가 `word_registration_requests`(검토 대기 단어)를 안 보여줌.** `list_terms`는 `registration_requests`까지 병합해서 대시보드에 보여주는데, 단어 쪽은 대칭 로직을 아직 안 만들었습니다 — 지금은 검토 대기 중인 신규 단어를 보려면 DB를 직접 조회해야 합니다.
-7. **단어사전 검색(`list_standard_words`/`search_words`)이 정의 본문까지 부분일치로 훑어서 노이즈가 생김.** 예: "등본"으로 검색하면 그 글자를 우연히 정의에 포함한 무관한 단어("공부면적")가 나옵니다. 검색 정밀도 개선(이름 우선 가중치, 또는 이름/정의 검색을 분리) 여지가 있습니다.
-8. **공개 URL(`poc-start.sh --public`)은 인증 없는 임시 cloudflare 터널.** 시연용으로만 쓰고, 이 방식 그대로 운영에 노출하면 안 됩니다.
-9. **챗봇 첫 인사말이 아직 "시나리오용 가상 표준용어 데이터"라고 안내함**(`build_chatflow.py`의 `opening_statement`). 실데이터가 이제 공존하므로 이 문구를 손볼 필요가 있습니다.
+6. **단어사전 검색이 정의 본문까지 부분일치로 훑어서 노이즈가 생김.** 예: "등본"으로 검색하면 그 글자를 우연히 정의에 포함한 무관한 단어("공부면적")가 나옵니다. 검색 정밀도 개선(이름 우선 가중치, 또는 이름/정의 검색을 분리) 여지가 있습니다.
+7. **공개 URL(`poc-start.sh --public`)은 인증 없는 임시 cloudflare 터널.** 시연용으로만 쓰고, 이 방식 그대로 운영에 노출하면 안 됩니다.
 
 ## 자주 쓰는 명령
 

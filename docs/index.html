@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>기술 문서 · DATAVE Standard</title>
+<link rel="icon" type="image/svg+xml" href="img/favicon.svg" />
+<link rel="alternate icon" href="img/favicon.ico" />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="assets/docs.css" />
+</head>
+<body>
+
+<button class="docs-menu-btn" id="docs-menu-btn" aria-label="메뉴">☰</button>
+
+<div class="docs-shell">
+  <aside class="docs-sidebar">
+    <div class="docs-brand">
+      <img src="img/datave-symbol-dark.svg" alt="DATAVE" />
+      <div><strong>DATAVE Standard</strong><span>기술 문서</span></div>
+    </div>
+    <nav class="docs-nav">
+      <div class="docs-nav-label">시작</div>
+      <a href="index.html">개요</a>
+
+      <div class="docs-nav-label">설계</div>
+      <a href="architecture.html">아키텍처</a>
+      <div class="docs-subnav">
+        <a href="architecture.html#system">시스템 구성</a>
+        <a href="architecture.html#state-machine">대화 상태머신</a>
+        <a href="architecture.html#data-model">데이터 모델</a>
+        <a href="architecture.html#vectors">두 개의 벡터 시스템</a>
+      </div>
+
+      <div class="docs-nav-label">레퍼런스</div>
+      <a href="reference.html">컴포넌트 &amp; API</a>
+      <div class="docs-subnav">
+        <a href="reference.html#modules">백엔드 모듈</a>
+        <a href="reference.html#mcp-tools">MCP 도구 (29개)</a>
+        <a href="reference.html#frontend">프론트엔드</a>
+      </div>
+
+      <div class="docs-nav-label">이력</div>
+      <a href="changelog.html">변경 이력 / 디버깅 일지</a>
+    </nav>
+    <div class="docs-sidebar-footer">
+      "왜"와 "다음에 뭘 조심해야 하는가"는<br />
+      <a href="../CLAUDE.md">CLAUDE.md</a>를 계속 1순위로 참고하세요.<br />
+      이 문서는 "무엇이 있는가"를 보완합니다.
+    </div>
+  </aside>
+
+  <main class="docs-main">
+    <div class="docs-content">
+      <p class="docs-eyebrow">기술 문서</p>
+      <h1>DATAVE Standard — 용어표준화 AI 에이전트</h1>
+      <p class="docs-updated">마지막 정리: <span class="mono">2026-09-17</span> · 코드와 함께 갱신되는 살아있는 문서입니다 — 어긋난 부분을 보면 그 자리에서 고쳐주세요.</p>
+
+      <p>이 문서는 <a href="../CLAUDE.md">CLAUDE.md</a>(왜 이렇게 만들었는가)를 대체하지 않고, <strong>지금 무엇이 있고 어떻게 맞물리는지</strong>를 코드베이스가 커져도 참조할 수 있는 형태로 정리한 레퍼런스입니다. 유지보수·디버깅·다음 기능 설계 시 여기서 먼저 구조를 확인하고, "왜 이런 선택을 했는지"가 필요하면 CLAUDE.md로 넘어가세요.</p>
+
+      <div class="callout callout-note">
+        <strong>문서 두 개를 유지하는 이유</strong>
+        코드가 바뀌면 이 문서도 같이 고쳐야 하는 수고로움이 있지만, 그만큼 "코드가 실제로 이렇게 동작하나?"를 문서 두 개가 서로 검증하게 됩니다. 특히 MCP 로직(대화 상태머신, 도구 계약)이 자주 바뀌는 이 프로젝트에서는, 그 변경들이 실제로 어떤 순서로 어떤 버그를 잡으며 지금 형태에 이르렀는지를 <a href="changelog.html">변경 이력</a>에 남겨두는 게 다음 디버깅 시간을 크게 줄여줍니다.
+      </div>
+
+      <h2>바로가기</h2>
+      <div class="docs-card-grid">
+        <a class="docs-card" href="architecture.html">
+          <h3>아키텍처 →</h3>
+          <p>시스템 구성, Dify와의 경계, 대화 상태머신 전체 흐름, DB 스키마, 두 개의 독립된 벡터/RAG 시스템.</p>
+        </a>
+        <a class="docs-card" href="reference.html">
+          <h3>컴포넌트 &amp; API 레퍼런스 →</h3>
+          <p>백엔드 모듈별 책임, MCP 도구 29개 전체 계약(입력/출력/주의사항), 프론트엔드 구조.</p>
+        </a>
+        <a class="docs-card" href="changelog.html">
+          <h3>변경 이력 / 디버깅 일지 →</h3>
+          <p>2026-09-08부터 지금까지, 챗플로우·MCP 로직이 바뀐 순서와 그때마다 무슨 버그를 어떻게 잡았는지.</p>
+        </a>
+        <a class="docs-card" href="../CLAUDE.md">
+          <h3>CLAUDE.md →</h3>
+          <p>"왜 이렇게 만들었는가", 반복되는 엔지니어링 패턴, 아직 안 메운 공백. 이 문서 세트의 1순위 진입점.</p>
+        </a>
+      </div>
+
+      <h2>다른 문서와의 역할 분담</h2>
+      <table>
+        <thead><tr><th>문서</th><th>다루</th></tr></thead>
+        <tbody>
+          <tr><td><a href="../CLAUDE.md">CLAUDE.md</a></td><td>왜 이렇게 만들었는가, 반복 발견된 패턴, 다음 세션이 조심할 것, 미해결 이슈</td></tr>
+          <tr><td>이 문서 (docs/)</td><td>무엇이 있는가 — 아키텍처 다이어그램, 모듈/함수 레퍼런스, 시간순 변경 이력</td></tr>
+          <tr><td><a href="../SETUP.md">SETUP.md</a></td><td>처음 설치하는 법 (Mac/Windows)</td></tr>
+          <tr><td><a href="../term-standardization-mcp/DESIGN.md">DESIGN.md</a></td><td>모듈 책임 요약(이 문서의 레퍼런스 페이지가 더 상세한 최신 버전)</td></tr>
+          <tr><td><a href="../term-standardization-mcp/AUTOMATION.md">AUTOMATION.md</a></td><td>Dify 자동 설치 스크립트(<code>setup_dify.py</code>) 내부 구조</td></tr>
+        </tbody>
+      </table>
+
+      <h2>이 문서를 최신으로 유지하는 법</h2>
+      <ul>
+        <li><strong>MCP 도구를 추가/변경/삭제</strong>했으면 → <a href="reference.html#mcp-tools">reference.html의 도구 표</a>를 같이 고치세요.</li>
+        <li><strong>대화 상태머신(stage/전이)을 바꿨으면</strong> → <a href="architecture.html#state-machine">architecture.html의 상태머신 다이어그램</a>을 같이 고치세요.</li>
+        <li><strong>실사용/QA 중 버그를 찾아 고쳤으면</strong> → <a href="changelog.html">changelog.html</a>에 한 항목 추가하세요. 커밋 메시지에 이미 "문제 → 원인 → 수정"을 적는 습관이 있으니(이 프로젝트 관례), 그 내용을 거의 그대로 옮기면 됩니다.</li>
+        <li><strong>새 테이블/컬럼을 추가</strong>했으면 → <a href="architecture.html#data-model">architecture.html의 데이터 모델 표</a>를 같이 고치세요.</li>
+      </ul>
+    </div>
+  </main>
+</div>
+
+<script src="assets/docs.js"></script>
+</body>
+</html>

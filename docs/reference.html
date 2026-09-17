@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>컴포넌트 &amp; API 레퍼런스 · DATAVE Standard 기술 문서</title>
+<link rel="icon" type="image/svg+xml" href="img/favicon.svg" />
+<link rel="alternate icon" href="img/favicon.ico" />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="assets/docs.css" />
+</head>
+<body>
+
+<button class="docs-menu-btn" id="docs-menu-btn" aria-label="메뉴">☰</button>
+
+<div class="docs-shell">
+  <aside class="docs-sidebar">
+    <div class="docs-brand">
+      <img src="img/datave-symbol-dark.svg" alt="DATAVE" />
+      <div><strong>DATAVE Standard</strong><span>기술 문서</span></div>
+    </div>
+    <nav class="docs-nav">
+      <div class="docs-nav-label">시작</div>
+      <a href="index.html">개요</a>
+
+      <div class="docs-nav-label">설계</div>
+      <a href="architecture.html">아키텍처</a>
+      <div class="docs-subnav">
+        <a href="architecture.html#system">시스템 구성</a>
+        <a href="architecture.html#state-machine">대화 상태머신</a>
+        <a href="architecture.html#data-model">데이터 모델</a>
+        <a href="architecture.html#vectors">두 개의 벡터 시스템</a>
+      </div>
+
+      <div class="docs-nav-label">레퍼런스</div>
+      <a href="reference.html">컴포넌트 &amp; API</a>
+      <div class="docs-subnav">
+        <a href="reference.html#modules">백엔드 모듈</a>
+        <a href="reference.html#mcp-tools">MCP 도구 (29개)</a>
+        <a href="reference.html#frontend">프론트엔드</a>
+      </div>
+
+      <div class="docs-nav-label">이력</div>
+      <a href="changelog.html">변경 이력 / 디버깅 일지</a>
+    </nav>
+    <div class="docs-sidebar-footer">
+      "왜"와 "다음에 뭘 조심해야 하는가"는<br />
+      <a href="../CLAUDE.md">CLAUDE.md</a>를 계속 1순위로 참고하세요.<br />
+      이 문서는 "무엇이 있는가"를 보완합니다.
+    </div>
+  </aside>
+
+  <main class="docs-main">
+    <div class="docs-content">
+      <p class="docs-eyebrow">레퍼런스</p>
+      <h1>컴포넌트 &amp; API 레퍼런스</h1>
+      <p class="docs-updated">최신 확인: <span class="mono">2026-09-17</span> · 소스: <code>term-standardization-mcp/term_service/tools.py</code> 등</p>
+
+      <div class="callout callout-warn">
+        <strong>이 페이지를 최신으로 유지하는 법</strong>
+        <code>tools.py</code>에 <code>@tool</code> 함수를 추가/삭제/시그니처 변경했으면 아래 MCP 도구 표를 같이 고치세요. 새 모듈 파일을 추가했으면 백엔드 모듈 표에 한 줄 추가하세요. 표에 있는 설명은 실제 함수 docstring을 최대한 그대로 옮긴 것이니, docstring을 고치면 여기도 고치는 게 제일 빠릅니다.
+      </div>
+
+      <h2 id="modules">백엔드 모듈 (<code>term-standardization-mcp/term_service/</code>)</h2>
+      <table>
+        <thead><tr><th>모듈</th><th>책임</th></tr></thead>
+        <tbody>
+          <tr><td><code>naming.py</code></td><td>Kiwi 형태소 분석, 명명 규칙(길이/문자종류/조사) 검증, <code>strip_trailing_particle</code>(결정론적 조사 제거), <code>unmatched_spans</code>/<code>split_into_nouns</code>(용어명에서 표준단어로 분해 안 되는 부분 추출 및 다중명사 분리, 2026-09-16), <code>segment_words</code>(완전분해 체크).</td></tr>
+          <tr><td><code>search.py</code> / <code>embeddings.py</code></td><td>정규화 RDB 검색(trigram+명사토큰), 로컬 임베딩(multilingual-e5-small)+pgvector 코사인 검색. <code>search()</code>(용어), <code>search_words()</code>(의미로 단어 찾기), <code>search_terms_by_meaning()</code>(의미로 용어 찾기, find_term용), 후보 병합·중복제거.</td></tr>
+          <tr><td><code>guideline.py</code></td><td><code>standard_guide.md</code>를 벡터화한 <code>guideline_chunks</code> 기반 RAG 준수 검사. 형태소 규칙은 코드가, 의미 판단(포괄적 단어 등)만 이 모듈이 담당. <code>matched_forbidden_word</code>를 먼저 선언시켜 코드가 최종 판정을 덮어씀(아래 "작은 모델" 패턴).</td></tr>
+          <tr><td><code>abbreviation.py</code></td><td>용어 영문 약어 추천(RAG+기존 약어 일관성)과 형식/고유성 검증. 대규모 카탈로그에서는 기존 약어 전체 대신 이름 유사도(pg_trgm) 상위 200건만 프롬프트에 넣음(스케일 버그 수정).</td></tr>
+          <tr><td><code>definition_suggestion.py</code></td><td>용어 정의 초안 제안. 이름이 진짜 애매하면(카탈로그 내 이미 갈라진 개념과 겹칠 때) 추측 대신 확인 질문+후보를 먼저 냄. <code>clarification_history</code>(질문·답변 전체 이력)를 받아 여러 라운드 명확화 지원.</td></tr>
+          <tr><td><code>word_suggestion.py</code></td><td>단어 등록은 이름이 아니라 <strong>의미</strong>가 입력 — <code>suggest_word()</code>가 기존 단어와의 일치 여부를 다른 무엇보다 먼저 판단하도록 스키마 순서로 강제. <code>fixed_name</code>으로 제안 이름이 용어의 실제 표기에서 절대 벗어나지 않게 강제(2026-09-16, 리네이밍 드리프트 방지).</td></tr>
+          <tr><td><code>comparison.py</code></td><td>기존 용어와의 정의 비교(SAME_MEANING/RELATED_BUT_DISTINCT/UNCERTAIN), 콘텐츠 기반 캐시(<code>comparison_cache</code>).</td></tr>
+          <tr><td><code>registration.py</code></td><td>용어 등록: 검증 스냅샷(<code>prepare</code>), 최종 확인(<code>submit</code>), 검토 대기 중복 조회(<code>find_pending</code>), 관리자 승인(<code>approve</code>, CLI 전용). 로컬 LLM 테스트 시 비교 후보를 <code>LOCAL_COMPARE_CANDIDATE_CAP</code>으로 제한(운영 경로엔 적용 안 됨).</td></tr>
+          <tr><td><code>word_registration.py</code></td><td>단어 등록: <code>registration.py</code>와 완전 대칭인 <code>prepare</code>/<code>submit</code>/<code>approve</code>. <code>approve()</code>는 그 단어를 기다리던 용어의 의존 관계도 같이 확인해서, 전부 승인됐으면 용어를 <code>WAITING_FOR_WORD_APPROVAL</code>에서 풀어줌.</td></tr>
+          <tr><td><code>conversation.py</code></td><td>Dify가 해석한 의도의 상태 전이(<code>transition</code>)와 revision 충돌 검출(<code>apply</code>). 단계 순서는 <a href="architecture.html#state-machine">아키텍처 문서</a> 참고.</td></tr>
+          <tr><td><code>tools.py</code></td><td>MCP 도구 29개 등록, 공통 에러 래핑(<code>@tool</code> 데코레이터). 아래 표 참고.</td></tr>
+          <tr><td><code>schemas.py</code></td><td>구조화 LLM 출력/도구 입력 Pydantic 모델. 필드 <strong>선언 순서</strong>가 실제로 모델 판단 순서에 영향을 줌(작은 모델에게 중간 판단을 먼저 강제시키는 패턴, 여러 모듈에서 재사용).</td></tr>
+          <tr><td><code>db.py</code></td><td>Postgres 연결(psycopg), 마이그레이션 실행, <code>catalog_fingerprint()</code>(카탈로그 변경 감지용 해시 — 안 바뀐 행까지 건드리면 진행 중 등록이 전부 무효화되므로 idempotent 임포트에 필수).</td></tr>
+          <tr><td><code>credentials.py</code></td><td>OpenAI/로컬(Ollama) LLM 런타임 전환(<code>active_provider()</code>, <code>.runtime/llm_provider.json</code>). provider별 타임아웃(OpenAI 35초/로컬 90초), 로컬 전용 <code>extra_body={"think":False}</code>.</td></tr>
+          <tr><td><code>auth.py</code></td><td>비밀번호 해싱(PBKDF2-HMAC-SHA256, stdlib) + 세션 발급/조회(<code>sessions</code> 테이블, 랜덤 토큰). <code>require_auth</code>/<code>require_admin</code> 헬퍼, <code>active_admin_count()</code>(마지막 관리자 보호).</td></tr>
+          <tr><td><code>admin_api.py</code></td><td>MCP 서버(포트 8100)의 REST 라우트: <code>/admin/llm-status</code>·<code>/admin/llm-provider</code>(LLM 전환), <code>/admin/auth/*</code>(로그인/가입/세션/회원관리/비밀번호변경). Caddy가 <code>/admin/*</code>를 프론트와 같은 오리진으로 프록시.</td></tr>
+          <tr><td><code>config.py</code></td><td>환경변수 로드(<code>.env</code>), 모델 이름/경로 상수.</td></tr>
+        </tbody>
+      </table>
+
+      <h2 id="mcp-tools">MCP 도구 전체 계약 (29개, <code>term_service/tools.py</code>)</h2>
+      <p>모든 도구는 <code>@tool</code> 데코레이터로 공통 에러 처리를 거칩니다 — <code>ValueError</code>는 <code>{"ok":false,"error":{"code":"INVALID_INPUT",...}}</code>, 그 외 예외는 <code>DEPENDENCY_UNAVAILABLE</code>(재시도 가능 표시 포함)로 변환됩니다. 아래 표의 "설명"은 실제 docstring 기반입니다.</p>
+
+      <h3>형태소 · 검증</h3>
+      <table>
+        <thead><tr><th>도구</th><th>입력</th><th>설명</th></tr></thead>
+        <tbody>
+          <tr><td><code>analyze_morphology</code></td><td>text</td><td>Kiwi로 형태소·품사·위치 분석.</td></tr>
+          <tr><td><code>validate_term_name</code></td><td>term</td><td>한글 명사 명명 규칙 검증. valid/violations/근거 기반 제안.</td></tr>
+        </tbody>
+      </table>
+
+      <h3>검색 · 조회</h3>
+      <table>
+        <thead><tr><th>도구</th><th>입력</th><th>설명</th></tr></thead>
+        <tbody>
+          <tr><td><code>search_standard_terms</code></td><td>term, definition?, limit</td><td>정규화 이름/동의어/형태소토큰/pgvector 유사도로 승인 카탈로그 검색. 빈/장애 카탈로그는 UNDETERMINED.</td></tr>
+          <tr><td><code>search_similar_terms_vector</code></td><td>query, top_k?</td><td>호환용: 로컬 임베딩 + pgvector 코사인 검색만.</td></tr>
+          <tr><td><code>search_similar_terms_rdb</code></td><td>query</td><td>호환용: PostgreSQL 정확/동의어/trigram/형태소토큰 검색만.</td></tr>
+          <tr><td><code>get_standard_term</code></td><td>term_id</td><td>이전 후보 정의 등에 대한 질문을 위한 카탈로그 단건 조회.</td></tr>
+          <tr><td><code>analyze_domain_usage</code></td><td>candidate_term, similar_term_ids?</td><td>실제 중복제거된 카탈로그 레코드로 도메인 분포 계산. 증거 없으면 추천 안 함.</td></tr>
+          <tr><td><code>list_data_domains</code></td><td>없음</td><td>실제 도메인 메타데이터 + 도메인별 실제 <code>term_count</code>(LEFT JOIN 집계, 0건 도메인도 누락 없이 포함). 절대 클라이언트에서 페이지 일부로 근사 집계하지 말 것.</td></tr>
+          <tr><td><code>list_terms</code></td><td>limit, offset, q, status, domain, requester</td><td>승인 카탈로그 + 신청건 병합 페이지네이션. <code>q</code>는 이름/정의뿐 아니라 (검토 대기 요청에 한해) 요청자까지 OR 매칭(2026-09-17). <code>requester</code>는 하위호환용 별도 정확일치 필터(프론트는 더 이상 안 씀).</td></tr>
+          <tr><td><code>list_standard_words</code></td><td>limit, offset, q, status, requester, is_format_word</td><td><code>list_terms</code>와 대칭 — 승인 단어 + <code>word_registration_requests</code> 병합. <code>q</code> 매칭 규칙 동일.</td></tr>
+          <tr><td><code>search_standard_words_semantic</code></td><td>meaning_query, limit</td><td>의미 우선 단어 검색(pgvector 코사인) — "이 의미의 공식 단어가 이미 있나" 진입점. 이름 검색이 아님.</td></tr>
+        </tbody>
+      </table>
+
+      <h3>단어 등록 플로우</h3>
+      <table>
+        <thead><tr><th>도구</th><th>입력</th><th>설명</th></tr></thead>
+        <tbody>
+          <tr><td><code>suggest_standard_word</code></td><td>usage_description, clarification_history?</td><td>사용 설명을 보고 기존 단어와 일치하는지(existing_word_match) 우선 판단, 아니면 새 단어(이름/약어/정의) 제안. 애매하면 명확화 질문 — 답할 땐 <strong>이전 질문·답변 전체</strong>를 <code>clarification_history</code>로.</td></tr>
+          <tr><td><code>prepare_word_registration</code></td><td>word_name, definition, english_abbr, requester, conversation_id, is_format_word?, domain_classification?</td><td>중복/약어충돌 재검증, 30분 유효 확인 페이로드 저장.</td></tr>
+          <tr><td><code>create_word_registration_request</code></td><td>confirmation_id, requester, conversation_id, confirmed</td><td>명시적 확인 후 제출. <code>PENDING_REVIEW</code>만 생성(승인 아님). 재확인은 멱등.</td></tr>
+          <tr><td><code>get_word_registration_request</code></td><td>request_id, requester</td><td>본인(신뢰된 requester) 소유 단어 신청 조회.</td></tr>
+          <tr><td><code>validate_standard_word_abbreviation</code></td><td>abbreviation</td><td>단어용 영문 약어 형식·고유성 검증(용어 약어와 별개 네임스페이스).</td></tr>
+        </tbody>
+      </table>
+
+      <h3>용어 등록 플로우</h3>
+      <table>
+        <thead><tr><th>도구</th><th>입력</th><th>설명</th></tr></thead>
+        <tbody>
+          <tr><td><code>compare_term_definition</code></td><td>new_term, new_definition, existing_term_id</td><td>실제 카탈로그 용어와 정의 비교. relation/confidence/근거/recommended_action. LLM 실패는 UNCERTAIN.</td></tr>
+          <tr><td><code>prepare_term_registration</code></td><td>term_name, definition, domain, requester, conversation_id, synonyms?</td><td>재검증+후보 비교, 30분 유효 확인 페이로드 저장. requester/conversation_id는 반드시 Dify 시스템 변수에서(사용자 입력 아님).</td></tr>
+          <tr><td><code>create_term_registration_request</code></td><td>confirmation_id, requester, conversation_id, confirmed, english_abbr?</td><td>다음 턴에 명시적 확인 후에만 제출. PENDING_REVIEW만 생성. 재확인은 멱등.</td></tr>
+          <tr><td><code>check_term_guideline</code></td><td>term_name</td><td><code>standard_guide.md</code> 벡터화본 대비 RAG 준수 검사. <code>validate_term_name</code>이 표현 못 하는 단어선택 규칙(포괄적 단일명사 금지 등)을 잡음.</td></tr>
+          <tr><td><code>suggest_english_abbreviation</code></td><td>term_name</td><td>가이드 약어 규칙(RAG) + 카탈로그 기존 약어 전체 기반 추천. 사용자가 확인/수정.</td></tr>
+          <tr><td><code>validate_english_abbreviation</code></td><td>abbreviation</td><td>형식(대문자/숫자/언더스코어, ≤20자) + 카탈로그 전체 고유성 검증.</td></tr>
+          <tr><td><code>cancel_term_registration</code></td><td>requester, conversation_id</td><td>취소/재시작/수정 시 미제출 확인건 무효화.</td></tr>
+          <tr><td><code>get_registration_request</code></td><td>request_id, requester</td><td>본인 소유 신청 조회.</td></tr>
+          <tr><td><code>register_term</code></td><td>standard_name, definition, synonyms?</td><td>레거시 안전 래퍼 — 즉시 저장 안 하고 <code>prepare_term_registration</code>/<code>create_term_registration_request</code> 사용 안내만 반환.</td></tr>
+        </tbody>
+      </table>
+
+      <h3>대화 상태 · 시스템</h3>
+      <table>
+        <thead><tr><th>도구</th><th>입력</th><th>설명</th></tr></thead>
+        <tbody>
+          <tr><td><code>terminology_health</code></td><td>없음</td><td>설정·실제 카탈로그 카운트 상태 보고(비밀값 노출 없음).</td></tr>
+          <tr><td><code>get_conversation_state</code></td><td>conversation_id, requester</td><td>영속화된 워크플로우 상태 조회. Dify 시스템 식별자 그대로 전달.</td></tr>
+          <tr><td><code>apply_conversation_action</code></td><td>conversation_id, requester, expected_revision, intent, value?, confirmed?</td><td>필드별로 액션을 전달하는 버전. 허용 intent 전체 목록은 함수 docstring 참고 — 턴당 액션 1개, 최종 확인은 준비보다 늦은 턴이어야 함.</td></tr>
+          <tr><td><code>apply_dify_turn</code></td><td>conversation_id, requester, action_json</td><td>턴당 분류된 액션 1개 실행. <code>action_json</code>은 intent/value/confirmed/expected_revision의 JSON — 데이터이지 코드가 아님(12000자 제한, 타입 검증).</td></tr>
+        </tbody>
+      </table>
+
+      <div class="callout callout-note">
+        <strong>왜 <code>list_terms</code>에 "REJECTED"가 스키마에는 있는데 벗어나는 경로가 CLI뿐인지</strong>
+        <code>registration_requests.status</code>/<code>word_registration_requests.status</code>는 승인/반려 값을 스키마에 정의해뒀지만, <code>PENDING_REVIEW</code>를 벗어나게 만드는 유일한 경로는 <code>manage.py approve-word</code>/<code>approve-term</code> CLI입니다 — 관리자 UI에는 아직 없습니다(CLAUDE.md 미해결 이슈 1번).
+      </div>
+
+      <h2 id="frontend">프론트엔드 (<code>term-standardization-ui/</code>)</h2>
+      <table>
+        <thead><tr><th>파일</th><th>역할</th></tr></thead>
+        <tbody>
+          <tr><td><code>index.html</code></td><td>메인 앱 셸. 로그인 카드(<code>#auth-shell</code>) + 사이드바/상단바 고정 SaaS 레이아웃 + 5개 화면(대시보드/용어사전/단어사전/도메인관리/설정) + 챗봇 패널.</td></tr>
+          <tr><td><code>app.js</code></td><td>인증 게이트(<code>requireAuth</code>/<code>showApp</code>), 뷰 전환(<code>switchView</code>), 백엔드 조회(<code>fetchCatalogFromBackend</code> → 목록조회 워크플로우), 챗봇 SSE 스트리밍 + 구조화 카드 렌더러(<code>renderStructuredBlock</code>), 필터 바인딩(<code>bindFilterControls</code>).</td></tr>
+          <tr><td><code>members.html</code></td><td>독립 회원관리 창(관리자 전용). 같은 세션 쿠키 공유, 자체적으로 <code>/admin/auth/me</code> 재확인.</td></tr>
+          <tr><td><code>style.css</code></td><td>전체 스타일. <code>[hidden]{display:none!important}</code> 전역 규칙 — 컴포넌트가 자기 <code>display</code>를 선언하면 브라우저 기본 hidden 동작을 조용히 덮어쓰는 반복 버그를 여기서 한 번에 막음.</td></tr>
+          <tr><td><code>runtime-config.js</code></td><td>호스트별 자동생성 설정(Dify 스튜디오 터널 URL 등). <strong>git에 커밋하지 않음</strong>(2026-09-17부터 <code>.gitignore</code>) — 실행할 때마다 <code>poc-start.sh</code>가 새로 씀.</td></tr>
+        </tbody>
+      </table>
+      <p>빌드 스텝이 없는 순수 HTML/CSS/JS이므로, <code>style.css</code>/<code>app.js</code>를 고치면 <code>index.html</code>·<code>members.html</code>의 <code>?v=N</code> 쿼리스트링을 올리세요(Caddy가 <code>Cache-Control: no-cache</code>를 보내긴 하지만, 이중 안전장치로 유지 중).</p>
+    </div>
+  </main>
+</div>
+
+<script src="assets/docs.js"></script>
+</body>
+</html>

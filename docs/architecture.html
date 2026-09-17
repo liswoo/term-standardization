@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>아키텍처 · DATAVE Standard 기술 문서</title>
+<link rel="icon" type="image/svg+xml" href="img/favicon.svg" />
+<link rel="alternate icon" href="img/favicon.ico" />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="assets/docs.css" />
+</head>
+<body>
+
+<button class="docs-menu-btn" id="docs-menu-btn" aria-label="메뉴">☰</button>
+
+<div class="docs-shell">
+  <aside class="docs-sidebar">
+    <div class="docs-brand">
+      <img src="img/datave-symbol-dark.svg" alt="DATAVE" />
+      <div><strong>DATAVE Standard</strong><span>기술 문서</span></div>
+    </div>
+    <nav class="docs-nav">
+      <div class="docs-nav-label">시작</div>
+      <a href="index.html">개요</a>
+
+      <div class="docs-nav-label">설계</div>
+      <a href="architecture.html">아키텍처</a>
+      <div class="docs-subnav">
+        <a href="architecture.html#system">시스템 구성</a>
+        <a href="architecture.html#state-machine">대화 상태머신</a>
+        <a href="architecture.html#data-model">데이터 모델</a>
+        <a href="architecture.html#vectors">두 개의 벡터 시스템</a>
+      </div>
+
+      <div class="docs-nav-label">레퍼런스</div>
+      <a href="reference.html">컴포넌트 &amp; API</a>
+      <div class="docs-subnav">
+        <a href="reference.html#modules">백엔드 모듈</a>
+        <a href="reference.html#mcp-tools">MCP 도구 (29개)</a>
+        <a href="reference.html#frontend">프론트엔드</a>
+      </div>
+
+      <div class="docs-nav-label">이력</div>
+      <a href="changelog.html">변경 이력 / 디버깅 일지</a>
+    </nav>
+    <div class="docs-sidebar-footer">
+      "왜"와 "다음에 뭘 조심해야 하는가"는<br />
+      <a href="../CLAUDE.md">CLAUDE.md</a>를 계속 1순위로 참고하세요.<br />
+      이 문서는 "무엇이 있는가"를 보완합니다.
+    </div>
+  </aside>
+
+  <main class="docs-main">
+    <div class="docs-content">
+      <p class="docs-eyebrow">설계</p>
+      <h1>아키텍처</h1>
+      <p class="docs-updated">최신 확인: <span class="mono">2026-09-17</span></p>
+
+      <h2 id="system">시스템 구성</h2>
+      <pre>projects/
+  dify/                     &lt;- liswoo/dify 포크, 커밋 0df092d3c7(1.17.0)에 고정. Docker로 실행되는 별도 앱 플랫폼.
+  term-standardization/     &lt;- 이 저장소
+    term-standardization-mcp/   &lt;- MCP 서버(Python) + Postgres/pgvector. 업무 로직 전부 여기.
+    term-standardization-ui/    &lt;- 정적 프론트엔드. 순수 HTML/CSS/JS, 빌드 스텝 없음.
+      ├─ index.html   메인 앱(대시보드/사전/도메인관리/설정 + 채팅 패널)
+      └─ members.html 회원 관리 전용 창(관리자 전용, 새 창으로 열림)
+    tools/Caddyfile              &lt;- UI(:8090)와 Dify API를 한 오리진으로 묶는 리버스 프록시.
+    docs/                        &lt;- 지금 보고 있는 이 문서.</pre>
+
+      <p><strong>dify 폴더는 "엔진"</strong>, term-standardization은 그 위에 얹은 업무 로직 + 자동화 + 프론트입니다. Dify 안의 앱/지식베이스/API 키/모델 자격증명은 설치본마다 새로 생기는 Dify 자체 DB 데이터라 설치본 간 이전이 안 됩니다 — <code>setup_dify.py</code>가 이 부트스트랩 전체를 자동화합니다.</p>
+
+      <h3>요청이 실제로 흐르는 경로</h3>
+      <table>
+        <thead><tr><th>사용자 동작</th><th>경로</th></tr></thead>
+        <tbody>
+          <tr><td>챗봇으로 용어/단어 등록</td><td>UI → Dify Chatflow(<code>용어표준화-대화형</code>) → CLASSIFY(의도해석) → MCP <code>apply_dify_turn</code> → <code>conversation.transition()</code> → RENDER(답변 생성)</td></tr>
+          <tr><td>대시보드/용어사전/단어사전/도메인관리 조회</td><td>UI → Dify 워크플로우(<code>용어표준화-목록조회</code>, 대화 상태 없음) → MCP <code>list_terms</code>/<code>list_standard_words</code>/<code>list_data_domains</code></td></tr>
+          <tr><td>로그인/회원가입/회원관리/LLM 전환</td><td>UI → Caddy가 <code>/admin/*</code>를 MCP 서버(포트 8100)의 <code>admin_api.py</code>로 그대로 프록시 (Dify를 거치지 않음, 순수 REST)</td></tr>
+        </tbody>
+      </table>
+      <p><strong>업무 판단과 저장의 기준은 항상 MCP</strong>이고, Dify의 LLM 노드는 의도 해석과 답변 문장 생성만 담당합니다. 목록조회는 챗플로우와 <strong>완전히 별개의 Dify 앱</strong>이라 배포도 별개입니다.</p>
+
+      <div class="callout callout-note">
+        <strong>회원 관리가 별도 창인 이유</strong>
+        <code>members.html</code>은 <code>index.html</code>과 같은 세션 쿠키를 공유하는 독립 페이지입니다(2026-09-17). 관리자만 보이는 "회원 관리" 버튼이 <code>window.open()</code>으로 열고, 그 페이지 자체가 다시 <code>/admin/auth/me</code>로 관리자 여부를 확인합니다 — 프론트에서 버튼을 숨기는 것과 별개로, 페이지 자체도 스스로를 지킵니다.
+      </div>
+
+      <h2 id="state-machine">대화 상태머신</h2>
+      <p><code>term_service/conversation.py</code>의 <code>transition(state, action, ...)</code>이 순수 함수로 모든 단계 전이를 결정합니다. Dify는 사용자 메시지를 <code>{intent, value, confirmed}</code>로만 해석해서 넘기고, 실제 유효성 검사·중복 판정·저장은 전부 이 함수와 그 안에서 호출하는 모듈이 합니다. <strong>프론트엔드는 이 순서와 무관합니다</strong> — <code>app.js</code>의 카드 렌더러는 stage 이름과 그 stage가 들고 있는 state 필드만 보고 그리므로, 상태머신 순서를 바꿔도 프론트는 대체로 손댈 필요가 없습니다.</p>
+
+      <pre>propose_term → awaiting_term_confirm → confirm_term
+  → (EXACT_MATCH/SYNONYM_MATCH) → existing_term_found  [종료]
+  → (검토 대기 중복) → pending_request_found  [종료]
+  → (형태소/가이드라인 위반) → awaiting_guideline_choice → propose_term로 재시도
+  → (이름이 표준단어로 완전분해 안 됨)
+      → awaiting_word_split_choice (하나로/여러 단어로 쪼갤지 선택)
+          → awaiting_word_meaning [단어 등록 서브플로우, 단어별로 반복] → 전부 완료 후 복귀
+  → awaiting_definition (정의 제안/명확화 질문)
+      → set_definition → awaiting_domain_choice (이름+정의로 검색한 근거로 도메인 추천)
+          → set_domain → registration.prepare() 호출 시점
+              → (SAME_MEANING/GUIDELINE_VIOLATION/SYNONYM_CONFLICT) → definition_blocked  [종료]
+              → awaiting_abbreviation (영문약어 제안)
+                  → set_abbreviation → awaiting_confirm
+                      → confirm_registration → submitted | registration_failed  [종료]
+
+── 독립 진입: 단어를 바로 등록하고 싶을 때 ──
+propose_word → confirm_word
+  → (기존 단어와 의미 일치) → word_reused  [종료]
+  → (신규) → awaiting_word_abbreviation → set_word_abbreviation → word_submitted  [종료]
+
+── 독립 진입: 이름이 아니라 의미로 기존 용어 찾기 ──
+find_term → search_terms_by_meaning() 결과만 보여주고 종료 (등록 아님)</pre>
+
+      <p><strong>왜 정의가 도메인보다 먼저인가</strong> — 원래는 도메인을 먼저 물었지만, 그 시점엔 비교군 검색 신호(용어명 하나뿐)가 약했습니다. 실측: "주간식단"을 이름만으로 검색하면 코사인 유사도 0.838(임계값 미만), 이름+정의로 검색하면 0.910. 그래서 정의를 먼저 받고 그 정의까지 포함한 검색으로 도메인을 추천하도록 순서를 바꿨습니다(2026-09-10, 상세는 <a href="changelog.html">변경 이력</a>). <code>registration.prepare()</code>(SAME_MEANING/구문 검증)는 이름+정의+도메인이 모두 있어야 호출되므로 지금은 <code>set_domain</code>에서 실행됩니다.</p>
+
+      <p><strong>단어 서브플로우 진입점이 두 개입니다</strong>: (a) 임베디드 진입 — 용어 등록 중 이름이 표준단어로 완전분해 안 되면 자동 분기, <code>state["resume_term"]</code>에 원래 진행 상황을 저장해두고 끝나면 복귀. (b) 독립 진입 — <code>propose_word</code>로 처음부터 단어만 등록. 용어 하나가 여러 단어 승인을 동시에 기다릴 수 있어서(2026-09-16), 의존 관계는 다대다 테이블 <code>registration_request_word_dependencies</code>로 추적합니다 — <a href="reference.html#modules">reference.html</a> 참고.</p>
+
+      <h2 id="data-model">데이터 모델</h2>
+      <table>
+        <thead><tr><th>테이블</th><th>역할</th></tr></thead>
+        <tbody>
+          <tr><td><code>domains</code></td><td>데이터 도메인(형식·길이·단위) 카탈로그. <code>ACTIVE</code>/<code>DEPRECATED</code> — 폐기돼도 삭제 안 함(기존 용어의 FK 보존).</td></tr>
+          <tr><td><code>standard_terms</code></td><td>승인된 표준 용어 카탈로그. 이름·정의·도메인·동의어·영문약어 + pgvector 임베딩(384차원, multilingual-e5-small).</td></tr>
+          <tr><td><code>standard_words</code></td><td>승인된 표준 단어 카탈로그(용어를 구성하는 최소 단위). 자체 임베딩 컬럼도 있음 — "의미로 기존 단어 찾기"용.</td></tr>
+          <tr><td><code>registration_preparations</code></td><td>용어 등록의 30분 유효 확인 스냅샷(<code>registration.prepare()</code> 결과). 여기 있어야 <code>submit()</code>이 가능.</td></tr>
+          <tr><td><code>registration_requests</code></td><td>제출된 용어 신청. <code>PENDING_REVIEW</code>/<code>WAITING_FOR_WORD_APPROVAL</code>/<code>APPROVED</code>/<code>REJECTED</code>.</td></tr>
+          <tr><td><code>registration_request_word_dependencies</code></td><td>용어 하나가 기다리는 신규 단어 승인들(다대다). 전부 <code>APPROVED</code>돼야 용어가 <code>WAITING_FOR_WORD_APPROVAL</code>에서 풀림(2026-09-16).</td></tr>
+          <tr><td><code>word_registration_preparations</code> / <code>word_registration_requests</code></td><td>단어 쪽의 동일한 2단계 확인 패턴(<code>word_registration.prepare()</code>/<code>submit()</code>).</td></tr>
+          <tr><td><code>abbreviation_aliases</code></td><td>영문 약어 ↔ 한글 이름 별칭 매핑(약어 추천 근거).</td></tr>
+          <tr><td><code>comparison_cache</code></td><td><code>compare()</code>(정의 비교 LLM 호출) 결과의 내용 기반 캐시 — 같은 비교 재호출 방지.</td></tr>
+          <tr><td><code>guideline_chunks</code></td><td><code>standard_guide.md</code>를 섹션별로 벡터화. 가이드라인 준수 검사/약어·정의 추천의 RAG 근거.</td></tr>
+          <tr><td><code>conversation_state</code></td><td>대화 진행 상황(stage, 지금까지 입력한 값들) + revision(낙관적 동시성 제어).</td></tr>
+          <tr><td><code>users</code></td><td>로그인 계정. <code>role IN (ADMIN, MEMBER)</code>, <code>status IN (PENDING_APPROVAL, ACTIVE, SUSPENDED, REJECTED)</code>(2026-09-16).</td></tr>
+          <tr><td><code>sessions</code></td><td>로그인 세션(랜덤 토큰 + 만료시각). httpOnly 쿠키로 전달, JWT 아님.</td></tr>
+        </tbody>
+      </table>
+
+      <h2 id="vectors">두 개의 독립된 벡터/RAG 시스템 — 절대 섞지 마세요</h2>
+      <ol>
+        <li><strong>MCP 자체 pgvector</strong>(<code>embeddings.py</code>, <code>search.py</code>, <code>guideline.py</code>) — <code>standard_terms</code>(용어 유사도/중복 판정), <code>guideline_chunks</code>(가이드라인 준수 검사·약어·정의 추천 근거), <code>standard_words</code>(의미로 기존 단어 찾기)를 담당. <strong>이게 업무 판단의 기준</strong>입니다.</li>
+        <li><strong>Dify 자체 지식베이스</strong>(<code>sync_dify_knowledge.py</code>가 Weaviate에 업로드) — <code>show_candidates</code>/<code>help</code> 의도일 때만 참고 자료로 노출되는 보조 지식. <strong>업무 판단에 관여하지 않습니다.</strong></li>
+      </ol>
+      <p>두 시스템 다 같은 소스 파일(<code>scenario_catalog.json</code>, <code>standard_guide.md</code>)에서 만들어지지만 완전히 별개의 인덱스입니다. MCP 쪽은 <code>manage.py import-catalog</code>/<code>import-guideline</code>(매 실행 자동), Dify 쪽은 <code>sync_dify_knowledge.py</code>(자동 재실행 안 됨 — 문서 내용을 바꿨으면 수동 재실행 필요).</p>
+    </div>
+  </main>
+</div>
+
+<script src="assets/docs.js"></script>
+</body>
+</html>
