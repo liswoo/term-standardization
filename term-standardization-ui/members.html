@@ -9,10 +9,12 @@
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
 <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
-<link rel="stylesheet" href="style.css?v=5" />
+<link rel="stylesheet" href="style.css?v=8" />
 <style>
-  /* 이 페이지는 사이드바 없이 독립된 창으로 뜨므로 앱 셸 대신 단순 세로 레이아웃만 필요합니다. */
-  body { min-height: 100vh; }
+  /* 이 페이지는 사이드바 없이 독립된 창으로 뜨므로 앱 셸 대신 단순 세로 레이아웃만 필요합니다.
+     style.css의 html,body{overflow:hidden}은 고정 사이드바가 있는 메인 앱 전용 규칙이라
+     여기서는 다시 풀어서 창 전체가 평범한 문서처럼 스크롤되게 한다. */
+  body { min-height: 100vh; overflow: auto; }
   .members-shell { display: flex; flex-direction: column; min-height: 100vh; }
   .members-header {
     display: flex; align-items: center; gap: 10px;

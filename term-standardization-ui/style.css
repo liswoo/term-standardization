@@ -35,6 +35,7 @@
 html, body {
   margin: 0;
   height: 100%;
+  overflow: hidden; /* SaaS형 고정 셸 - 스크롤은 .content 안쪽에서만 일어난다 */
   background: var(--bg);
   color: var(--text);
   font-family: "Noto Sans KR", -apple-system, "Malgun Gothic", sans-serif;
@@ -46,7 +47,11 @@ svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width:
 .mono { font-family: "JetBrains Mono", monospace; font-size: 12.5px; color: var(--text-muted); }
 
 /* ── 앱 셸 ── */
-.app-shell { display: flex; min-height: 100vh; }
+/* height(고정, min-height 아님)로 뷰포트에 못박아야 아래 .content의
+   flex:1 + overflow-y:auto가 실제로 안쪽 스크롤이 된다 - min-height였을 때는
+   본문이 길어지면 .app-shell 자체가 늘어나면서 사이드바/topbar까지 페이지와
+   함께 스크롤되어 내려가버렸다. */
+.app-shell { display: flex; height: 100vh; }
 
 .sidebar {
   width: 248px;
@@ -56,6 +61,7 @@ svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width:
   display: flex;
   flex-direction: column;
   padding: 20px 14px;
+  overflow-y: auto;
 }
 
 .sidebar-brand { display: flex; align-items: center; gap: 10px; padding: 4px 8px 22px; }
@@ -191,8 +197,20 @@ svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width:
 .activity-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--primary); margin-top: 6px; flex-shrink: 0; }
 .activity-list p { margin: 0; font-size: 13px; }
 
+/* ── 용어/단어 사전: 필터·페이지네이션 고정, 표 본문만 스크롤 ──
+   panel을 세로 flex로 만들고 table-wrap만 flex:1 + overflow-y:auto를 가지면
+   panel-header/filter-row/pagination-row는 자기 높이만큼만 차지하고 밀려나지
+   않는다. min-height:0은 flex 자식이 내용물 크기만큼 무한정 늘어나는 걸
+   막아서 overflow-y:auto가 실제로 작동하게 하는 필수 값. */
+#view-terms, #view-words { height: 100%; display: flex; flex-direction: column; min-height: 0; }
+#view-terms .panel, #view-words .panel { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+#view-terms .panel-header, #view-words .panel-header,
+#view-terms .filter-row, #view-words .filter-row,
+#view-terms .pagination-row, #view-words .pagination-row { flex-shrink: 0; }
+
 /* ── 테이블 ── */
 .table-wrap { overflow-x: auto; }
+#view-terms .table-wrap, #view-words .table-wrap { flex: 1; overflow-y: auto; min-height: 0; }
 .data-table { width: 100%; border-collapse: collapse; font-size: 13px; }
 .data-table th {
   text-align: left; font-size: 11.5px; text-transform: uppercase; letter-spacing: .03em;
