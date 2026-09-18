@@ -200,6 +200,25 @@ svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width:
 #view-catalog .filter-row,
 #view-catalog .pagination-row { flex-shrink: 0; }
 
+/* ── 표준 데이터 조회 상단 탭(조회/용어 신청/단어 신청/도메인 신청) ── */
+.catalog-tabs { display: flex; gap: 4px; flex-shrink: 0; margin-bottom: 14px; border-bottom: 1px solid var(--border); }
+.catalog-tab-btn {
+  padding: 10px 16px; border: none; background: none; font-size: 13.5px; font-weight: 600;
+  color: var(--text-muted); cursor: pointer; border-bottom: 2px solid transparent; margin-bottom: -1px;
+}
+.catalog-tab-btn:hover { color: var(--text); }
+.catalog-tab-btn.is-active { color: var(--primary); border-bottom-color: var(--primary); }
+.catalog-tab-panel { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow-y: auto; }
+
+.ai-register-card {
+  display: flex; align-items: center; justify-content: space-between; gap: 16px;
+  background: var(--primary-soft); border: 1px solid var(--primary); border-radius: var(--radius-lg);
+  padding: 16px 18px; margin-bottom: 18px; flex-shrink: 0;
+}
+.ai-register-card strong { display: block; font-size: 14px; margin-bottom: 4px; }
+.ai-register-card p { margin: 0; font-size: 12.5px; }
+.ai-register-card .btn { flex-shrink: 0; white-space: nowrap; }
+
 /* ── 테이블 ── */
 .table-wrap { overflow-x: auto; }
 #view-catalog .table-wrap { flex: 1; overflow-y: auto; min-height: 0; }

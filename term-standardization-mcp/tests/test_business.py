@@ -994,6 +994,61 @@ def test_domain_request_invalid_fields_rejected(api_client):
     resp=api_client.post("/admin/domain-requests",json={"domain_group":"금액"})
     assert resp.status_code==400 and resp.json()["error"]=="INVALID_FIELDS"
 
+def test_term_request_requires_auth(api_client):
+    resp=api_client.post("/admin/term-requests",json={"term_name":"신규용어","definition":"테스트","domain":"수N7"})
+    assert resp.status_code==401
+
+def test_term_request_word_gap_rejected_without_calling_llm(api_client):
+    # word_lookup only knows "일일" - "일일측정계기" has a real gap ("측정계기"), so
+    # this must be rejected by quick_registration's own segment_words check before
+    # registration.prepare() (and its paid LLM comparison calls) ever runs.
+    insert_standard_word("일일","DAILY")
+    _create_active_admin()
+    api_client.post("/admin/auth/login",json={"username":"admin1","password":"adminpass123"})
+    resp=api_client.post("/admin/term-requests",json={"term_name":"일일측정계기","definition":"테스트 정의입니다","domain":"수N7"})
+    assert resp.status_code==422
+    body=resp.json()
+    assert body["error"]=="WORD_GAP_REQUIRES_REGISTRATION" and body["gaps"]
+
+def test_term_request_invalid_fields_rejected(api_client):
+    _create_active_admin()
+    api_client.post("/admin/auth/login",json={"username":"admin1","password":"adminpass123"})
+    resp=api_client.post("/admin/term-requests",json={"definition":"테스트"})
+    assert resp.status_code==400 and resp.json()["error"]=="INVALID_FIELDS"
+
+def test_word_request_requires_auth(api_client):
+    resp=api_client.post("/admin/word-requests",json={"word_name":"새단어","definition":"테스트","english_abbr":"NEW"})
+    assert resp.status_code==401
+
+def test_word_request_success_then_same_abbr_rejected(api_client):
+    _create_active_admin()
+    api_client.post("/admin/auth/login",json={"username":"admin1","password":"adminpass123"})
+    payload={"word_name":"새표준단어","definition":"테스트 정의입니다","english_abbr":"NEWSTD"}
+    first=api_client.post("/admin/word-requests",json=payload)
+    assert first.status_code==200 and first.json()["status"]=="PENDING_REVIEW"
+    second=api_client.post("/admin/word-requests",json=payload)
+    assert second.status_code==409 and second.json()["error"]=="ABBREVIATION_ALREADY_USED"
+
+def test_word_request_same_name_different_abbr_rejected_as_pending_duplicate(api_client):
+    _create_active_admin()
+    api_client.post("/admin/auth/login",json={"username":"admin1","password":"adminpass123"})
+    api_client.post("/admin/word-requests",json={"word_name":"새표준단어2","definition":"테스트 정의입니다","english_abbr":"AAA"})
+    second=api_client.post("/admin/word-requests",json={"word_name":"새표준단어2","definition":"테스트 정의입니다","english_abbr":"BBB"})
+    assert second.status_code==409 and second.json()["error"]=="PENDING_REQUEST_ALREADY_EXISTS"
+
+def test_word_request_exact_match_against_live_catalog_rejected(api_client):
+    insert_standard_word("이미있는단어","EXIST")
+    _create_active_admin()
+    api_client.post("/admin/auth/login",json={"username":"admin1","password":"adminpass123"})
+    resp=api_client.post("/admin/word-requests",json={"word_name":"이미있는단어","definition":"테스트 정의입니다","english_abbr":"DUP"})
+    assert resp.status_code==409 and resp.json()["error"]=="EXACT_MATCH"
+
+def test_word_request_invalid_fields_rejected(api_client):
+    _create_active_admin()
+    api_client.post("/admin/auth/login",json={"username":"admin1","password":"adminpass123"})
+    resp=api_client.post("/admin/word-requests",json={"definition":"테스트"})
+    assert resp.status_code==400 and resp.json()["error"]=="INVALID_FIELDS"
+
 @pytest.mark.skipif(os.getenv("RUN_LLM_TESTS")!="1",reason="Explicit low-volume paid API smoke test")
 def test_real_llm_definition_comparison(catalog):
     same=compare("하루권장칼로리","건강한 생활을 유지하기 위해 개인에게 권장하는 하루 에너지 섭취 기준량",catalog["일일권장열량"])

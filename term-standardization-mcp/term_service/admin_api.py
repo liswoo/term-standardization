@@ -299,6 +299,71 @@ async def domain_sample_data(request: Request) -> JSONResponse:
     return JSONResponse({"ok": True, "results": sample_data_for_domain(request.path_params["code"])})
     return JSONResponse({"ok": True})
 
+# ── 용어/단어 신청 (표준 데이터 조회 화면의 "용어 신청"/"단어 신청" 탭, 간편 입력) ──
+# 도메인 신청과 같은 이유로 prepare()+submit()을 한 요청 안에서 이어서 호출한다.
+# 단어는 word_registration.py를 그대로 씀(exact-match만 확인하므로 도메인과 동급으로
+# 간단함). 용어는 quick_registration.prepare_term()이 단어 gap 체크만 얹어서
+# registration.py의 prepare()/submit()을 그대로 위임 - 임베딩+LLM 의미비교는 챗봇
+# 경로와 동일하게 실행되므로 응답이 도메인/단어보다 느릴 수 있다(수 초).
+_TERM_QUICK_ERROR_STATUS = {
+    "GUIDELINE_VIOLATION": 422, "EXACT_MATCH": 409, "SYNONYM_CONFLICT": 409,
+    "SAME_MEANING": 409, "WORD_GAP_REQUIRES_REGISTRATION": 422,
+    "CATALOG_CHANGED_RETRY": 409, "CATALOG_CHANGED_REVALIDATE": 409,
+    "PENDING_REQUEST_ALREADY_EXISTS": 409,
+}
+
+@mcp.custom_route("/admin/term-requests", methods=["POST"])
+async def create_term_request(request: Request) -> JSONResponse:
+    from pydantic import ValidationError
+    from . import quick_registration, registration
+    from .schemas import RegistrationInput
+    user, error = require_auth(request)
+    if error: return error
+    body = await request.json()
+    english_abbr = (body.pop("english_abbr", "") or "").strip()[:20]
+    try:
+        payload = RegistrationInput(**{**body, "requester": user["username"], "conversation_id": "direct-form"})
+    except ValidationError as exc:
+        return JSONResponse({"ok": False, "error": "INVALID_FIELDS", "detail": exc.errors()}, status_code=400)
+    prep = quick_registration.prepare_term(payload)
+    if not prep["ready"]:
+        return JSONResponse({"ok": False, "error": prep.get("code"), **prep},
+            status_code=_TERM_QUICK_ERROR_STATUS.get(prep.get("code"), 400))
+    result = registration.submit(prep["confirmation_id"], user["username"], "direct-form",
+        confirmed=True, english_abbr=english_abbr)
+    if not result["created"]:
+        return JSONResponse({"ok": False, "error": result.get("code"), **result},
+            status_code=_TERM_QUICK_ERROR_STATUS.get(result.get("code"), 409))
+    return JSONResponse({"ok": True, **result})
+
+_WORD_QUICK_ERROR_STATUS = {
+    "EXACT_MATCH": 409, "ABBREVIATION_ALREADY_USED": 409,
+    "CATALOG_CHANGED_RETRY": 409, "CATALOG_CHANGED_REVALIDATE": 409,
+    "PENDING_REQUEST_ALREADY_EXISTS": 409,
+}
+
+@mcp.custom_route("/admin/word-requests", methods=["POST"])
+async def create_word_request(request: Request) -> JSONResponse:
+    from pydantic import ValidationError
+    from . import word_registration
+    from .schemas import WordRegistrationInput
+    user, error = require_auth(request)
+    if error: return error
+    body = await request.json()
+    try:
+        payload = WordRegistrationInput(**{**body, "requester": user["username"], "conversation_id": "direct-form"})
+    except ValidationError as exc:
+        return JSONResponse({"ok": False, "error": "INVALID_FIELDS", "detail": exc.errors()}, status_code=400)
+    prep = word_registration.prepare(payload)
+    if not prep["ready"]:
+        return JSONResponse({"ok": False, "error": prep.get("code"), **prep},
+            status_code=_WORD_QUICK_ERROR_STATUS.get(prep.get("code"), 400))
+    result = word_registration.submit(prep["confirmation_id"], user["username"], "direct-form", confirmed=True)
+    if not result["created"]:
+        return JSONResponse({"ok": False, "error": result.get("code"), **result},
+            status_code=_WORD_QUICK_ERROR_STATUS.get(result.get("code"), 409))
+    return JSONResponse({"ok": True, **result})
+
 # ── 표준 데이터 조회 (용어/단어/도메인 통합 화면) ──────────────────────────
 @mcp.custom_route("/admin/standard-data", methods=["GET"])
 async def list_standard_data_catalog(request: Request) -> JSONResponse:

@@ -64,11 +64,19 @@ const AUTH_ERROR_LABELS = {
   USERNAME_TAKEN: "이미 사용 중인 아이디입니다.",
   CURRENT_PASSWORD_INCORRECT: "현재 비밀번호가 올바르지 않습니다.",
   CODE_ALREADY_EXISTS: "이미 존재하는 도메인명입니다.",
-  PENDING_REQUEST_ALREADY_EXISTS: "이미 같은 도메인명으로 검토 대기 중인 신청이 있습니다.",
-  CATALOG_CHANGED_RETRY: "처리 중 도메인 목록이 변경되었습니다. 다시 시도해주세요.",
-  CATALOG_CHANGED_REVALIDATE: "처리 중 도메인 목록이 변경되었습니다. 다시 시도해주세요.",
+  PENDING_REQUEST_ALREADY_EXISTS: "이미 같은 이름으로 검토 대기 중인 신청이 있습니다.",
+  CATALOG_CHANGED_RETRY: "처리 중 목록이 변경되었습니다. 다시 시도해주세요.",
+  CATALOG_CHANGED_REVALIDATE: "처리 중 목록이 변경되었습니다. 다시 시도해주세요.",
   DOMAIN_CODE_ALREADY_EXISTS: "이미 존재하는 도메인명입니다.",
   INVALID_FIELDS: "입력 항목을 다시 확인해주세요.",
+  // 용어/단어 간편 입력 폼(quick_registration.py/word_registration.py) 전용.
+  GUIDELINE_VIOLATION: "용어명이 명명 규칙을 위반했습니다. 이름을 수정해주세요.",
+  EXACT_MATCH: "이미 동일한 이름의 표준이 존재합니다.",
+  SYNONYM_CONFLICT: "입력한 동의어가 이미 다른 표준 용어의 이름·동의어와 겹칩니다.",
+  SAME_MEANING: "의미가 같은 기존 용어가 있습니다. 기존 용어를 사용해주세요.",
+  ABBREVIATION_ALREADY_USED: "이미 사용 중인 영문 약어입니다.",
+  CONFIRMATION_NOT_FOUND: "요청 처리 중 문제가 발생했습니다. 다시 시도해주세요.",
+  CONFIRMATION_EXPIRED_OR_CANCELLED: "요청이 만료되었습니다. 다시 시도해주세요.",
 };
 
 document.getElementById("auth-tab-login").addEventListener("click", () => {
@@ -187,8 +195,7 @@ const state = {
 // ── 네비게이션 ──────────────────────────────────────────────────
 const VIEW_META = {
   dashboard: { title: "대시보드", subtitle: "용어 표준화 현황을 한눈에 확인하세요" },
-  catalog: { title: "표준 데이터 조회", subtitle: "용어·단어·도메인을 한 화면에서 검색합니다" },
-  "domain-request": { title: "도메인 신청", subtitle: "신규 데이터 도메인을 직접 입력해서 신청하고 진행 상태를 확인합니다" },
+  catalog: { title: "표준 데이터 조회", subtitle: "용어·단어·도메인을 조회하고, 위 탭에서 바로 신청할 수 있습니다" },
   history: { title: "표준화 이력", subtitle: "AI 파이프라인 실행 기록을 확인합니다" },
   settings: { title: "설정", subtitle: "백엔드 연동 정보를 확인합니다" },
 };
@@ -206,16 +213,34 @@ function switchView(view) {
   if (view === "settings") {
     refreshLlmStatus();
   }
-  if (view === "domain-request") {
-    populateDomainRequestOptions();
-  }
-  if (view === "catalog") {
+  if (view === "catalog" && catalogActiveTab === "browse") {
     fetchUnifiedCatalog();
   }
 }
 
 document.querySelectorAll(".nav-item").forEach((btn) => {
   btn.addEventListener("click", () => switchView(btn.dataset.view));
+});
+
+// ── 표준 데이터 조회 화면의 상단 탭(조회/용어 신청/단어 신청/도메인 신청) ──────
+// 별도 화면 전환이 아니라 같은 view-catalog 안에서 패널만 바꾼다 - "조회"는 항상
+// 최신 데이터를 보여줘야 하므로 그 탭으로 돌아올 때마다 다시 불러오고, 신청
+// 탭들은 옵션(도메인 목록 등)을 처음 열 때만 지연 로드한다.
+let catalogActiveTab = "browse";
+function switchCatalogTab(tab) {
+  catalogActiveTab = tab;
+  document.querySelectorAll(".catalog-tab-btn").forEach((btn) => {
+    btn.classList.toggle("is-active", btn.dataset.catalogTab === tab);
+  });
+  document.querySelectorAll(".catalog-tab-panel").forEach((panel) => {
+    panel.hidden = panel.id !== `catalog-tab-${tab}`;
+  });
+  if (tab === "browse") fetchUnifiedCatalog();
+  if (tab === "term-req") populateTermDomainOptions();
+  if (tab === "domain-req") populateDomainRequestOptions();
+}
+document.querySelectorAll(".catalog-tab-btn").forEach((btn) => {
+  btn.addEventListener("click", () => switchCatalogTab(btn.dataset.catalogTab));
 });
 
 // ── 렌더링 ──────────────────────────────────────────────────────
@@ -775,12 +800,12 @@ Object.entries(LLM_SWITCH_BUTTONS).forEach(([key, btn]) => {
 // 회원 관리 화면은 members.html로 분리되었다(관리자 전용, 새 창) - 그 파일이
 // 자신의 인증/렌더링 로직을 독립적으로 갖고 있다.
 
-// ── 도메인 신청 (버튼 기반 직접 입력 폼, AI 챗봇 아님) ──────────────
+// ── 도메인 신청 (표준 데이터 조회의 "도메인 신청" 탭, 버튼 기반 직접 입력 폼) ──
 // 용어/단어 신청과 달리 대화가 아니라 폼 제출 한 번으로 끝나므로, 별도의
 // prepare/confirm 두 턴을 프론트에서 흉내낼 필요가 없다 - /admin/domain-requests
 // POST 한 번이 서버 쪽에서 이어서 처리한다.
-// 신청 목록 자체는 여기서 따로 안 보여준다 - "도메인 관리" 화면이 용어/단어
-// 사전처럼 검토 대기 신청까지 병합해서 보여주는 걸로 대체될 예정(중복 방지).
+// 신청 목록 자체는 여기서 따로 안 보여준다 - "조회" 탭이 검토 대기 신청까지
+// 이미 병합해서 보여주므로 중복 방지.
 let domainRequestOptionsLoaded = false;
 async function populateDomainRequestOptions() {
   if (domainRequestOptionsLoaded) return;
@@ -861,6 +886,86 @@ document.getElementById("domain-request-form").addEventListener("submit", async 
     toggleDrField("dr-is-personal-info", "dr-personal-info-type", "dr-protection-level", "dr-mapping-table", "dr-mapping-column");
     toggleDrField("dr-is-encrypted", "dr-encryption-method");
     noticeEl.hidden = false;
+    fetchUnifiedCatalog();
+  } catch { /* 에러는 submitAuthForm이 이미 표시함 */ }
+});
+
+// ── 용어/단어 신청 (표준 데이터 조회의 "용어 신청"/"단어 신청" 탭) ──────────
+// 각 탭은 두 가지 진입점을 같이 제공한다: (1) 간편 입력 - 폼 한 번 제출로 끝나되
+// /admin/term-requests·/admin/word-requests가 registration.py/word_registration.py의
+// prepare()/submit()을 그대로 태우므로 챗봇과 동일한 품질 검증(용어는 임베딩+LLM
+// 의미비교까지)을 거친다 - 단, 다단계 안내 없이 실패 사유를 한 번에 에러로 보여줌.
+// (2) AI와 대화하며 등록 - 기존 플로팅 챗봇(submitChatMessage)을 그대로 열어 대화형
+// 등록 흐름을 재사용한다(새 챗 로직 없음).
+document.getElementById("term-ai-start-btn").addEventListener("click", () => {
+  openChat();
+  submitChatMessage("용어를 등록할래요");
+});
+document.getElementById("word-ai-start-btn").addEventListener("click", () => {
+  openChat();
+  submitChatMessage("단어를 등록할래요");
+});
+
+let termDomainOptionsLoaded = false;
+function populateTermDomainOptions() {
+  const list = document.getElementById("tr-domain-options");
+  if (!list || termDomainOptionsLoaded || !state.domains.length) return;
+  termDomainOptionsLoaded = true;
+  list.innerHTML = [...state.domains]
+    .sort((a, b) => a.code.localeCompare(b.code))
+    .map((d) => `<option value="${escapeHtml(d.code)}">${escapeHtml(d.description || "")}</option>`)
+    .join("");
+}
+
+document.getElementById("term-request-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const errorEl = document.getElementById("term-request-error");
+  const noticeEl = document.getElementById("term-request-notice");
+  const submitBtn = document.getElementById("term-request-submit");
+  noticeEl.hidden = true;
+  const payload = {
+    term_name: document.getElementById("tr-term-name").value.trim(),
+    definition: document.getElementById("tr-definition").value.trim(),
+    domain: document.getElementById("tr-domain").value.trim(),
+    synonyms: document.getElementById("tr-synonyms").value.split(",").map((s) => s.trim()).filter(Boolean),
+    english_abbr: document.getElementById("tr-english-abbr").value.trim(),
+  };
+  // 임베딩+LLM 의미비교(registration.prepare)가 실행돼 도메인/단어보다 오래 걸릴 수 있다.
+  submitBtn.disabled = true;
+  submitBtn.textContent = "확인 중...";
+  try {
+    await submitAuthForm("/admin/term-requests", payload, errorEl);
+    document.getElementById("term-request-form").reset();
+    noticeEl.hidden = false;
+    fetchUnifiedCatalog();
+  } catch (err) {
+    if (err.data?.error === "WORD_GAP_REQUIRES_REGISTRATION" && err.data.gaps?.length) {
+      errorEl.textContent = `다음 부분이 아직 표준단어로 등록되지 않았습니다: ${err.data.gaps.join(", ")}. "단어 신청" 탭에서 먼저 등록해주세요.`;
+      errorEl.hidden = false;
+    }
+  } finally {
+    submitBtn.disabled = false;
+    submitBtn.textContent = "간편 입력으로 신청";
+  }
+});
+
+document.getElementById("word-request-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const errorEl = document.getElementById("word-request-error");
+  const noticeEl = document.getElementById("word-request-notice");
+  noticeEl.hidden = true;
+  const payload = {
+    word_name: document.getElementById("wr-word-name").value.trim(),
+    definition: document.getElementById("wr-definition").value.trim(),
+    english_abbr: document.getElementById("wr-english-abbr").value.trim(),
+    is_format_word: document.getElementById("wr-is-format-word").checked,
+    domain_classification: document.getElementById("wr-domain-classification").value.trim(),
+  };
+  try {
+    await submitAuthForm("/admin/word-requests", payload, errorEl);
+    document.getElementById("word-request-form").reset();
+    noticeEl.hidden = false;
+    fetchUnifiedCatalog();
   } catch { /* 에러는 submitAuthForm이 이미 표시함 */ }
 });
 

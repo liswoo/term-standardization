@@ -445,6 +445,16 @@
             <p><strong>프론트 정리</strong>: <code>renderTermsTable</code>/<code>renderWordsTable</code>/<code>renderDomainGrid</code>와 그 전용 페이지네이션(<code>changeTermsPage</code>/<code>changeWordsPage</code>)을 삭제. <code>renderTermsTable</code>이 같이 갱신하던 대시보드 카드(<code>stat-total-terms</code>)만 <code>renderAll()</code>로 옮김 — 두 함수 모두 대상 엘리먼트에 null 가드가 없어서, 이 이관 없이 HTML 섹션만 지웠다면 <code>renderAll()</code>이 매번 던지는 TypeError로 대시보드까지 깨졌을 것. 개인정보 도메인의 "샘플 데이터 보기"(<code>showDomainSampleData</code>)는 통합 표의 <code>&lt;td&gt;</code> 안에 <code>&lt;ul class="domain-sample-list" hidden&gt;</code>를 형제로 두는 것만으로 코드 변경 없이 그대로 재사용.</p>
           </div>
         </div>
+
+        <div class="changelog-entry">
+          <div class="changelog-date">2026-09-17</div>
+          <div class="changelog-title">"표준 데이터 조회"에 용어/단어/도메인 신청 탭 추가 (간편 입력 + AI 대화 두 경로) <span class="pill pill-added">added</span></div>
+          <div class="changelog-body">
+            <p>"표준 데이터 조회" 화면 상단에 조회/용어 신청/단어 신청/도메인 신청 4개 탭을 추가(<code>switchCatalogTab</code>) — 독립 화면이던 "도메인 신청"도 이 탭 구조로 흡수. 용어/단어에는 <strong>두 가지 신청 경로</strong>를 같이 제공: (1) 간편 입력 폼(한 번 제출로 끝남), (2) 기존 플로팅 챗봇을 그대로 여는 "AI와 대화하며 등록" 버튼 — 대화형 경로는 새 챗 로직을 만들지 않고 <code>openChat()</code> + <code>submitChatMessage("용어를 등록할래요")</code>(단어는 "단어를 등록할래요")만 호출해 기존에 검증된 챗봇 플로우를 그대로 재사용한다.</p>
+            <p>간편 입력이 도메인처럼 단순하지 않은 이유: 용어/단어 등록은 원래부터 임베딩 기반 중복탐지·가이드라인 준수(LLM)·표준단어 완전분해가 필수로 얽혀 있어 챗봇 대화로만 존재했다. 새 <code>quick_registration.py</code>(용어 전용)는 <code>registration.py</code>의 <code>prepare()</code>/<code>submit()</code>을 그대로 위임하므로 이 품질 검증은 챗봇과 동일하게 실행되고, 다만 conversation.py의 confirm_term이 하던 <strong>표준단어 gap 체크</strong>만 직접 재현해서 등록 안 된 단어를 포함한 이름은 <code>WORD_GAP_REQUIRES_REGISTRATION</code>으로 먼저 걸러 "단어 신청" 탭을 먼저 쓰라고 안내한다(챗봇의 단어등록 서브플로우 없이는 한 번의 폼 제출로 처리할 수 없는 경우이기 때문 — 브라우저에서 "테스트비표준용어" → "테스트비" 하나만 gap으로 정확히 잡히는 것을 확인). 단어 신청은 별도 모듈 없이 <code>word_registration.py</code>를 그대로 씀(원래도 exact-match만 확인하는 단순 경로라 도메인과 동급) — <code>POST /admin/term-requests</code>·<code>POST /admin/word-requests</code>(<code>admin_api.py</code>) 둘 다 도메인 신청과 같은 패턴으로 prepare+submit을 한 요청 안에서 이어서 호출.</p>
+            <p>스키마·백엔드 신규 변경 없음(테이블 추가 없이 기존 <code>registration_requests</code>/<code>word_registration_requests</code>에 <code>conversation_id="direct-form"</code>으로 쌓임 — 도메인 신청과 동일 관례). 테스트: word-gap 거절(LLM 호출 전에 차단되는지), 단어 신청 성공+약어 중복 거절, 인증 필요, 필드 검증 8건 추가(<code>test_business.py</code>) — 용어 간편 입력의 "성공" 경로 자체는 실제 임베딩+LLM 의미비교를 태우므로 기존 관례대로 <code>RUN_LLM_TESTS=1</code> 없이는 자동 테스트하지 않고, 브라우저로 직접 확인(단어 신청 성공 → 조회 탭에 즉시 반영, AI 대화 버튼 → 실제 챗봇 응답 확인).</p>
+          </div>
+        </div>
       </div>
 
     </div>
