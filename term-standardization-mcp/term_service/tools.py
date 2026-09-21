@@ -88,7 +88,8 @@ def list_terms(limit: int = 50, offset: int = 0, q: str = "", status: str = "", 
     can find either "what term" or "who submitted it"). `status` narrows to "APPROVED"
     (standard_terms only), "PENDING_REVIEW", "WAITING_FOR_WORD_APPROVAL" (a term whose own
     required standard word hasn't been approved yet - not actually ready for review despite
-    also being a pending request) or "REJECTED" (registration_requests only), or "" for all
+    also being a pending request), "WAITING_FOR_DOMAIN_APPROVAL" (same idea, for a term whose
+    chosen domain doesn't exist yet) or "REJECTED" (registration_requests only), or "" for all
     merged (default - matches the old behavior). `domain` narrows to one domain code (exact
     match, both tables). `requester` is a separate exact-match narrower kept for API callers
     that want just one submitter's own requests (standard_terms has no requester concept, so
@@ -101,7 +102,7 @@ def list_terms(limit: int = 50, offset: int = 0, q: str = "", status: str = "", 
     status=status.strip().upper()
     domain=domain.strip()
     requester=requester.strip()
-    all_pending_statuses=["PENDING_REVIEW","WAITING_FOR_WORD_APPROVAL","REJECTED"]
+    all_pending_statuses=["PENDING_REVIEW","WAITING_FOR_WORD_APPROVAL","WAITING_FOR_DOMAIN_APPROVAL","REJECTED"]
     show_approved=status in ("","APPROVED")
     pending_statuses=[status] if status in all_pending_statuses else (all_pending_statuses if status=="" else [])
     approved,pending,total=[],[],0

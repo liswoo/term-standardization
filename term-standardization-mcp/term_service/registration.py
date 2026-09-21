@@ -99,7 +99,8 @@ def prepare(payload: RegistrationInput):
     return {"ready":True,"confirmation_id":prep_id,"expires_at":expires.isoformat(),"payload":payload.model_dump(),
         "assessment":assessment,"requires_final_confirmation":True,"resulting_status":"PENDING_REVIEW"}
 
-def submit(confirmation_id, requester, conversation_id, confirmed, english_abbr="", depends_on_word_request_ids=None):
+def submit(confirmation_id, requester, conversation_id, confirmed, english_abbr="", depends_on_word_request_ids=None,
+        depends_on_domain_request_id=None):
     uuid.UUID(confirmation_id)
     if confirmed is not True:
         return {"created":False,"code":"EXPLICIT_CONFIRMATION_REQUIRED"}
@@ -121,7 +122,7 @@ def submit(confirmation_id, requester, conversation_id, confirmed, english_abbr=
         p=prep["payload"]
         # Serialize pending requests for the same normalized name.
         conn.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s,0))",(key(p["term_name"]),))
-        pending=conn.execute("SELECT id FROM registration_requests WHERE normalized_name=%s AND status IN ('PENDING_REVIEW','WAITING_FOR_WORD_APPROVAL')",(key(p["term_name"]),)).fetchone()
+        pending=conn.execute("SELECT id FROM registration_requests WHERE normalized_name=%s AND status IN ('PENDING_REVIEW','WAITING_FOR_WORD_APPROVAL','WAITING_FOR_DOMAIN_APPROVAL')",(key(p["term_name"]),)).fetchone()
         if pending:
             return {"created":False,"code":"PENDING_REQUEST_ALREADY_EXISTS"}
         # A term whose required word(s) were just submitted (not reused - see conversation.py's
@@ -131,14 +132,26 @@ def submit(confirmation_id, requester, conversation_id, confirmed, english_abbr=
         # words at once (see naming.py's split_into_nouns - a multi-noun gap registered as
         # separate words), tracked in registration_request_word_dependencies rather than a
         # single FK column so word_registration.approve() can require ALL of them approved.
-        initial_status="WAITING_FOR_WORD_APPROVAL" if dependency_ids else "PENDING_REVIEW"
+        # depends_on_domain_request_id is the domain-side twin (conversation.py's domain-request
+        # sub-flow, when the chosen domain didn't exist yet either) - a term needs at most one
+        # new domain, so a plain FK column is enough, no join table. When a term needs BOTH a
+        # new word and a new domain in the same flow, the word status wins here (arbitrary but
+        # harmless: word_registration.approve()'s promotion query below also checks for an
+        # unresolved domain dependency before releasing the term, so it never gets promoted
+        # early either way - see that function's comment).
+        if dependency_ids:
+            initial_status="WAITING_FOR_WORD_APPROVAL"
+        elif depends_on_domain_request_id:
+            initial_status="WAITING_FOR_DOMAIN_APPROVAL"
+        else:
+            initial_status="PENDING_REVIEW"
         row=conn.execute("""INSERT INTO registration_requests
-            (id,preparation_id,term_name,normalized_name,definition,domain,synonyms,english_abbr,requester,conversation_id,assessment,status)
-            VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+            (id,preparation_id,term_name,normalized_name,definition,domain,synonyms,english_abbr,requester,conversation_id,assessment,status,depends_on_domain_request_id)
+            VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
             RETURNING id::text AS request_id,status,created_at,english_abbr""",
             (str(uuid.uuid4()),confirmation_id,p["term_name"],key(p["term_name"]),p["definition"],p["domain"],
              p["synonyms"],english_abbr or None,requester,conversation_id,Jsonb(prep["assessment"]),
-             initial_status)).fetchone()
+             initial_status,depends_on_domain_request_id)).fetchone()
         for word_request_id in dependency_ids:
             conn.execute("""INSERT INTO registration_request_word_dependencies(registration_request_id,word_request_id)
                 VALUES(%s,%s)""",(row["request_id"],word_request_id))
@@ -151,10 +164,11 @@ def approve(request_id):
 
     There is no admin UI yet (see CLAUDE.md's known gaps) - this is the minimal
     entry point a human reviewer invokes (via manage.py) once they've actually
-    read and accepted the request. WAITING_FOR_WORD_APPROVAL requests are refused
-    here on purpose: approving the term before its dependency word is real would
-    publish a term whose abbreviation composition points at a word that doesn't
-    exist yet.
+    read and accepted the request. WAITING_FOR_WORD_APPROVAL/WAITING_FOR_DOMAIN_APPROVAL
+    requests are refused here on purpose: approving the term before its dependency
+    word/domain is real would publish a term whose abbreviation composition points at
+    a word that doesn't exist yet, or whose domain FK (standard_terms.domain REFERENCES
+    domains(code)) has nothing to point at.
     """
     with db.connect() as conn:
         req=conn.execute("SELECT * FROM registration_requests WHERE id=%s",(request_id,)).fetchone()
@@ -182,7 +196,7 @@ def find_pending(term_name):
     """
     with db.connect() as conn:
         row=conn.execute("""SELECT id::text AS request_id,term_name,definition,domain,english_abbr,status,created_at
-            FROM registration_requests WHERE normalized_name=%s AND status IN ('PENDING_REVIEW','WAITING_FOR_WORD_APPROVAL')
+            FROM registration_requests WHERE normalized_name=%s AND status IN ('PENDING_REVIEW','WAITING_FOR_WORD_APPROVAL','WAITING_FOR_DOMAIN_APPROVAL')
             ORDER BY created_at DESC LIMIT 1""",(key(term_name),)).fetchone()
     if row:
         row["created_at"]=row["created_at"].isoformat()

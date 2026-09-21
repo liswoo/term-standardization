@@ -156,6 +156,44 @@ class WordSuggestionResult(WordSuggestion):
     english_name: str = ""
     domain_classification: str = ""
 
+class DomainSuggestion(Schema):
+    # existing_domain_match declared first, before ambiguous/code, so the model must
+    # commit to "does an existing domain already cover this" before it can write either
+    # a clarifying question or a brand-new domain spec - same forced-intermediate-field
+    # trick as WordSuggestion.existing_word_match. Domains carry no embeddings of their
+    # own (unlike words/terms), so the candidate list here is the whole active domain
+    # catalog (small - see domain_suggestion.py), not a similarity search result.
+    existing_domain_match: str = Field(default="", description=
+        "The exact code of an existing domain from known_domains whose data type/length/"
+        "format/valid values already fit this term's definition, or empty string if none "
+        "of them do - do not guess a code that isn't in known_domains.")
+    match_reason: str = Field(default="", description="Only set when existing_domain_match is non-empty: one short Korean sentence why it fits.")
+    ambiguous: bool = Field(default=False, description=
+        "Only relevant when existing_domain_match is empty: true only if the definition "
+        "genuinely doesn't give enough to commit to a concrete data type/length/valid-value "
+        "set - not merely because some attribute (e.g. exact max length) is a judgment call.")
+    question: str = Field(default="", description="Only set when ambiguous=true: a short Korean question naming what's missing.")
+    options: list[str] = Field(default_factory=list, max_length=4,
+        description="Only set when ambiguous=true: 2-4 short Korean labels, each a candidate resolution.")
+    code: str = Field(default="", description="Only set when existing_domain_match is empty and ambiguous=false: a new domain code/name, Korean, short and descriptive (e.g. 결제수단_코드).")
+    domain_group: str = Field(default="", description="Only set alongside code: the domain group/category this belongs to.")
+    data_type: str = Field(default="", description="Only set alongside code: prefer a type already in known_data_types when the definition's type matches one in use - never invent a new type family the catalog doesn't otherwise use.")
+    data_length: int | None = Field(default=None, description="Only set alongside code, when data_type needs a length (e.g. VARCHAR/NUMBER).")
+    decimal_length: int | None = Field(default=None, description="Only set alongside code, only for a decimal numeric type.")
+    display_format: str = Field(default="", description="Only set alongside code, when the definition implies a specific display/presentation format.")
+    valid_values: str = Field(default="", description="Only set alongside code, comma-separated, ONLY when the definition explicitly enumerates a closed set of values - never invent values the definition doesn't support.")
+    description: str = Field(default="", description="Only set alongside code: a confident one-sentence Korean description of the domain.")
+    rationale: str = Field(default="", description=
+        "One short Korean sentence. For a new domain: must name the specific word or phrase "
+        "in the definition each proposed field (especially data_type/data_length/valid_values) "
+        "is based on - if no such basis exists for a field, do not propose it; ask a "
+        "clarifying question instead.")
+
+class DomainSuggestionResult(DomainSuggestion):
+    method: str
+    model: str | None = None
+    error_code: str | None = None
+
 class RegistrationInput(Schema):
     term_name: str = Field(min_length=2, max_length=20)
     definition: str = Field(min_length=5, max_length=4000)

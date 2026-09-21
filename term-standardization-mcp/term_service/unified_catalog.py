@@ -17,7 +17,7 @@ data_length/decimal_length/unit은 용어 자체엔 저장하지 않고 항상 �
 from . import db
 
 ALL_KINDS = ("TERM", "WORD", "DOMAIN")
-PENDING_STATUSES = ("PENDING_REVIEW", "WAITING_FOR_WORD_APPROVAL", "REJECTED")
+PENDING_STATUSES = ("PENDING_REVIEW", "WAITING_FOR_WORD_APPROVAL", "WAITING_FOR_DOMAIN_APPROVAL", "REJECTED")
 
 def list_standard_data(kinds: list[str], q: str = "", status: str = "", limit: int = 50, offset: int = 0) -> dict:
     """`kinds`는 TERM/WORD/DOMAIN 중 임의 조합(빈 값/알 수 없는 값은 셋 다). `q`는

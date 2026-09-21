@@ -102,9 +102,16 @@ ALTER TABLE registration_requests ADD COLUMN IF NOT EXISTS english_abbr text;
 -- so the term must not sit in the same PENDING_REVIEW queue as a term ready for
 -- review on its own merits. WAITING_FOR_WORD_APPROVAL marks that dependency;
 -- word_registration.approve() promotes it to PENDING_REVIEW once the word is in.
+-- WAITING_FOR_DOMAIN_APPROVAL (2026-09-21) is the domain-side twin of the above,
+-- set when confirm_term's word check passed but the term's chosen domain doesn't
+-- exist yet (conversation.py's domain-request sub-flow) - kept as a separate status
+-- rather than folding into WAITING_FOR_WORD_APPROVAL so existing word-dependency
+-- code/data/UI didn't need touching. A term needing BOTH a new word and a new
+-- domain in the same flow still only gets one status column - see registration.
+-- submit()'s comment for which one wins and why it doesn't affect correctness.
 ALTER TABLE registration_requests DROP CONSTRAINT IF EXISTS registration_requests_status_check;
 ALTER TABLE registration_requests ADD CONSTRAINT registration_requests_status_check
-    CHECK(status IN ('PENDING_REVIEW','WAITING_FOR_WORD_APPROVAL','APPROVED','REJECTED'));
+    CHECK(status IN ('PENDING_REVIEW','WAITING_FOR_WORD_APPROVAL','WAITING_FOR_DOMAIN_APPROVAL','APPROVED','REJECTED'));
 ALTER TABLE registration_requests ADD COLUMN IF NOT EXISTS depends_on_word_request_id uuid REFERENCES word_registration_requests(id);
 -- A term can now depend on several new words at once (a multi-noun gap split into
 -- separate word registrations - see naming.py's split_into_nouns), so the single-FK
@@ -121,7 +128,7 @@ INSERT INTO registration_request_word_dependencies(registration_request_id,word_
 ALTER TABLE registration_requests DROP COLUMN IF EXISTS depends_on_word_request_id;
 DROP INDEX IF EXISTS pending_name_unique;
 CREATE UNIQUE INDEX IF NOT EXISTS pending_name_unique ON registration_requests(normalized_name)
-    WHERE status IN ('PENDING_REVIEW','WAITING_FOR_WORD_APPROVAL');
+    WHERE status IN ('PENDING_REVIEW','WAITING_FOR_WORD_APPROVAL','WAITING_FOR_DOMAIN_APPROVAL');
 CREATE TABLE IF NOT EXISTS comparison_cache (
  fingerprint text PRIMARY KEY, result jsonb NOT NULL, created_at timestamptz NOT NULL DEFAULT now()
 );
@@ -183,6 +190,10 @@ CREATE TABLE IF NOT EXISTS domain_requests (
  created_at timestamptz NOT NULL DEFAULT now()
 );
 CREATE UNIQUE INDEX IF NOT EXISTS pending_domain_code_unique ON domain_requests(code) WHERE status='PENDING_REVIEW';
+
+-- Added here (not alongside registration_requests above) because domain_requests
+-- must exist first - a fresh database runs this whole file top to bottom once.
+ALTER TABLE registration_requests ADD COLUMN IF NOT EXISTS depends_on_domain_request_id uuid REFERENCES domain_requests(id);
 
 -- 승인 시 domain_requests의 상세 필드를 domains로 승격시키는 대상 컬럼들. 정부
 -- 카탈로그 임포트로 채워지는 기존 컬럼들과 마찬가지로 전부 nullable - 신청 시점에

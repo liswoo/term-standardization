@@ -159,7 +159,7 @@ document.getElementById("change-password-form").addEventListener("submit", async
 // LLM 분류 파이프라인을 타는 Chatflow 대신 1회성 /v1/workflows/run으로 분리했습니다.
 const LIST_TERMS_API = "/v1/workflows/run";
 const LIST_TERMS_KEY = "app-U0pwaq4eXx9buXrPLtrqoEF0";
-const STATUS_LABELS = { APPROVED: "승인", PENDING_REVIEW: "검토중", REJECTED: "반려", ACTIVE: "사용중", WAITING_FOR_WORD_APPROVAL: "단어 승인 대기" };
+const STATUS_LABELS = { APPROVED: "승인", PENDING_REVIEW: "검토중", REJECTED: "반려", ACTIVE: "사용중", WAITING_FOR_WORD_APPROVAL: "단어 승인 대기", WAITING_FOR_DOMAIN_APPROVAL: "도메인 승인 대기" };
 
 // 워크플로우 그래프의 실제 노드 순서(빌드 스크립트 build_chatflow.py 기준).
 // 사용자에게는 내부 단계를 그대로 노출하지 않고 이해하기 쉬운 라벨로 보여줍니다.
@@ -1370,6 +1370,7 @@ function renderPendingCard(mcpState) {
 const REGISTRATION_STATUS_LABEL = {
   PENDING_REVIEW: "검토 대기 (PENDING_REVIEW)",
   WAITING_FOR_WORD_APPROVAL: "단어 승인 대기 (WAITING_FOR_WORD_APPROVAL)",
+  WAITING_FOR_DOMAIN_APPROVAL: "도메인 승인 대기 (WAITING_FOR_DOMAIN_APPROVAL)",
 };
 
 // 대화 중엔 도메인이 정하는 값(허용값/표현형식/저장형식 등)을 따로 묻지 않지만, 등록이

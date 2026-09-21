@@ -106,7 +106,10 @@ def approve(word_request_id):
     see conversation.py's confirm_term/set_word_abbreviation) to PENDING_REVIEW, but only once
     ALL of that term's word dependencies are approved - a term can depend on several words at
     once now (naming.py's split_into_nouns: a multi-noun gap registered as separate words), so
-    approving just one of them must not release a term still waiting on the others.
+    approving just one of them must not release a term still waiting on the others. Also checks
+    depends_on_domain_request_id (registration.submit()'s word-wins tie-break means a term
+    waiting on both a word and a domain still shows WAITING_FOR_WORD_APPROVAL) so that case
+    isn't released early either - domain_registration.approve() does the symmetric check.
     """
     with db.connect() as conn:
         req = conn.execute("SELECT * FROM word_registration_requests WHERE id=%s", (word_request_id,)).fetchone()
@@ -129,6 +132,9 @@ def approve(word_request_id):
                   SELECT 1 FROM registration_request_word_dependencies d
                   JOIN word_registration_requests w ON w.id=d.word_request_id
                   WHERE d.registration_request_id=registration_requests.id AND w.status<>'APPROVED')
+              AND (depends_on_domain_request_id IS NULL OR EXISTS (
+                  SELECT 1 FROM domain_requests dr
+                  WHERE dr.id=registration_requests.depends_on_domain_request_id AND dr.status='APPROVED'))
             RETURNING id::text AS request_id, term_name""", (word_request_id,)).fetchall()
     return {"approved": True, "word_name": req["word_name"],
         "promoted_terms": [dict(r) for r in promoted]}

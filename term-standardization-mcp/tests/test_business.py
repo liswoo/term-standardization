@@ -329,6 +329,29 @@ def test_suggest_definition_unavailable_when_no_api_key(monkeypatch):
     assert result.method=="unavailable"
     assert result.error_code=="LLM_NOT_CONFIGURED"
 
+def test_suggest_domain_unavailable_when_no_api_key(monkeypatch):
+    import term_service.domain_suggestion as module
+    monkeypatch.setattr(module,"llm_configured",lambda:False)
+    result=module.suggest_domain("결제수단코드","결제수단을 구분하는 코드")
+    assert result.code==""
+    assert result.existing_domain_match==""
+    assert not result.ambiguous
+    assert result.method=="unavailable"
+    assert result.error_code=="LLM_NOT_CONFIGURED"
+
+@pytest.mark.skipif(os.getenv("RUN_LLM_TESTS")!="1",reason="Explicit low-volume paid API smoke test")
+def test_real_suggest_domain_drafts_enumerated_code_list():
+    from term_service.domain_suggestion import suggest_domain
+    with db.connect() as conn:
+        conn.execute("INSERT INTO domains(code,description,source,data_type) VALUES('수N7','테스트 숫자 도메인','TEST','숫자') ON CONFLICT DO NOTHING")
+    result=suggest_domain("결제수단코드","신용카드, 계좌이체, 간편결제, 포인트 중 하나로 결제 방법을 구분하는 코드")
+    assert result.existing_domain_match==""
+    assert result.code
+    for value in ["신용카드","계좌이체","간편결제","포인트"]:
+        assert value in result.valid_values
+    assert result.rationale
+    assert result.method=="structured_llm_rag"
+
 def test_definition_clarification_round_trip(monkeypatch):
     # confirm_term triggers a first suggest_definition call; if it comes back
     # ambiguous, picking one of its options must trigger a SECOND call (with the
@@ -924,12 +947,32 @@ def test_approve_domain_promotes_full_field_set():
     with db.connect() as conn:
         request_id=conn.execute("SELECT id::text AS id FROM domain_requests WHERE code='신규도메인4'").fetchone()["id"]
     result=domain_registration.approve(request_id)
-    assert result=={"approved":True,"code":"신규도메인4"}
+    assert result=={"approved":True,"code":"신규도메인4","promoted_terms":[]}
     with db.connect() as conn:
         row=conn.execute("SELECT domain_group,is_personal_info,status FROM domains WHERE code='신규도메인4'").fetchone()
         mapping=conn.execute("SELECT table_name,column_name FROM domain_data_mappings WHERE domain_code='신규도메인4'").fetchone()
     assert row=={"domain_group":"테스트그룹","is_personal_info":True,"status":"ACTIVE"}
     assert mapping=={"table_name":"mockops_customers","column_name":"resident_number"}
+
+def test_term_waiting_on_new_domain_released_once_domain_approved():
+    insert_pending_domain_request("신규도메인6")
+    with db.connect() as conn:
+        domain_request_id=conn.execute("SELECT id::text AS id FROM domain_requests WHERE code='신규도메인6'").fetchone()["id"]
+    prepared=registration.prepare(RegistrationInput(term_name="도메인대기용어",definition="새 도메인 승인을 기다리는 테스트용 용어",
+        domain="신규도메인6",requester="test-user",conversation_id="test-conversation"))
+    assert prepared["ready"]
+    result=registration.submit(prepared["confirmation_id"],"test-user","test-conversation",True,
+        depends_on_domain_request_id=domain_request_id)
+    term_request_id=result["request_id"]
+    assert result["status"]=="WAITING_FOR_DOMAIN_APPROVAL"
+    # Not actually ready for review yet, same as the word-dependency case.
+    assert registration.approve(term_request_id)["code"]=="NOT_PENDING_REVIEW"
+    approval=domain_registration.approve(domain_request_id)
+    assert approval["approved"]
+    assert term_request_id in [p["request_id"] for p in approval["promoted_terms"]]
+    with db.connect() as conn:
+        row=conn.execute("SELECT status FROM registration_requests WHERE id=%s",(term_request_id,)).fetchone()
+    assert row["status"]=="PENDING_REVIEW"
 
 def test_approve_domain_refuses_non_pending():
     insert_pending_domain_request("신규도메인5",status="APPROVED")

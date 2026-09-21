@@ -101,6 +101,20 @@ propose_term → awaiting_term_confirm → confirm_term
 - "표준 데이터 조회"(`unified_catalog.py`)의 TERM 행은 `domains`를 LEFT JOIN해서 `valid_values`/`display_format`은 용어 자신의 값이 있으면 그걸(COALESCE, 정부 원본의 소수 예외 보존), 없으면(신규 신청 용어 전부 포함) 도메인 값을 대신 보여주고, `storage_format`/`data_type`/`data_length`/`decimal_length`/`unit`은 항상 도메인에서 가져옵니다(용어 자체엔 저장 안 함).
 - **동의어(이음동의어) 챗봇 미수집 문제는 아직 미해결입니다** — `conversation.py`의 용어 등록 흐름이 동의어를 아예 안 물어보고 빈 배열로 등록하며, `registration.prepare()`의 `SYNONYM_CONFLICT` 검사도 그래서 챗봇 경로에선 전혀 안 탑니다. 새 대화 단계(intent) 추가 + Dify 챗플로우 재배포가 필요해 별도 작업으로 미룬 상태 — 다음에 다룰 때는 이 CLAUDE.md 절부터 먼저 읽으세요.
 
+## 신규 도메인 의존성 처리 + 도메인 스펙 초안 모듈 — 챗봇 도메인 등록 서브플로우의 백엔드 기반 (2026-09-21)
+
+**아직 챗봇에 새 인텐트가 연결되지 않았습니다** — 이번 작업은 그 서브플로우가 기댈 승인/의존성 배관과 LLM 초안 모듈만 먼저 놓은 것입니다. 다음 작업(대화 상태머신에 `request_new_domain`/`confirm_domain_spec` 인텐트·`awaiting_domain_spec_confirm` 단계 추가 + Dify 챗플로우 재배포)이 이어져야 실제로 "추천 도메인이 없으면 AI가 새 도메인 스펙을 초안해준다"가 동작합니다.
+
+지금 있는 걸로 풀 수 없던 문제: 챗봇 용어 등록 중 `awaiting_domain_choice`에서 사용자가 추천 도메인/기존 목록을 전부 거절하면(`UNRECOGNIZED_DOMAIN`), 지금은 그냥 막다른 길입니다. 용어가 그 자리에서 만들어질 신규 도메인 승인을 기다리게 하려면, **단어 의존성**(위 "표준단어 계층" 절)과 완전히 같은 문제 — "이 용어는 아직 확정 안 된 다른 무언가의 승인을 기다린다" — 를 도메인에도 풀어야 했습니다.
+
+**의존성 배관**:
+- `registration_requests.status`에 `WAITING_FOR_DOMAIN_APPROVAL`을 **`WAITING_FOR_WORD_APPROVAL`과 별도로** 추가했습니다(하나로 일반화하는 안도 검토했지만, 기존 단어 쪽 코드/데이터/UI 라벨을 안 건드리는 쪽을 택함 — 사용자 결정 2026-09-21). 새 컬럼 `depends_on_domain_request_id`(단일 nullable FK, `domain_requests(id)` 참조) — 용어는 도메인을 최대 하나만 가지므로 단어처럼 다대다 테이블이 필요 없습니다.
+- `registration.submit()`에 `depends_on_domain_request_id` 파라미터 추가. 단어 의존성과 도메인 의존성이 **동시에** 있으면(용어 하나가 신규 단어와 신규 도메인을 같은 흐름에서 둘 다 필요로 하는 드문 경우) `WAITING_FOR_WORD_APPROVAL`이 우선합니다 — 어느 쪽이 이겨도 정확성엔 영향 없음: `word_registration.approve()`와 `domain_registration.approve()`의 승격 쿼리가 **서로의 의존성 테이블도 같이** 확인한 뒤에만 `PENDING_REVIEW`로 풀어주기 때문입니다.
+- `domain_registration.approve()`가 이제 `word_registration.approve()`와 대칭으로 대기 중인 용어를 승격시키고, 반환값에 `promoted_terms`가 추가됐습니다.
+- UI(`STATUS_LABELS`/`REGISTRATION_STATUS_LABEL`/상태 필터 드롭다운)에 "도메인 승인 대기" 라벨 추가.
+
+**`domain_suggestion.py`(신규) — `word_suggestion.py`와 동형 구조**: 용어 자신의 정의를 읽어 새 도메인 스펙(코드/도메인그룹/데이터유형/길이/표현형식/허용값)을 초안합니다. 다른 용어들의 도메인 사용 분포를 보는 `search.domain_usage()`(1단계 추천)와는 **완전히 다른 계산**이라, 사용자가 1단계 추천을 전부 거절한 뒤에 실행돼도 같은 결과를 반복 제시할 수가 없습니다. `existing_domain_match`를 `ambiguous`/`code`보다 먼저 선언하는 강제 중간 필드 트릭(word_suggestion.py와 동일)으로 "재사용 가능한 기존 도메인이 있다"와 "신규 스펙을 만든다"를 한 응답에서 동시에 주장 못 하게 막습니다 — 도메인엔 임베딩이 없어서 이 안전 재확인은 유사도 검색이 아니라 활성 도메인 전체(~126건, 작아서 그대로 전송 가능)를 후보로 씀. `rationale` 필드는 제안한 각 값(특히 `data_type`/`data_length`/`valid_values`)이 정의문 속 어느 표현에 근거했는지 한 문장으로 대게 강제 — 근거를 못 대는 값은 애초에 제안하지 말고 되묻도록 프롬프트에 명시(실측: "신용카드, 계좌이체, 간편결제, 포인트 중 하나로 결제 방법을 구분하는 코드"라는 정의로 `valid_values`를 정확히 4개 값으로, `rationale`도 정의를 인용해 채움 — `RUN_LLM_TESTS=1`로 확인). `is_personal_info`는 이 모듈이 절대 추측하지 않음 — 대화 흐름이 스펙 확정 후 별도로 명시 질문하도록 남겨둠(다음 작업에서 연결).
+
 ## 두 개의 독립된 벡터/RAG 시스템 — 절대 섞지 마세요
 
 1. **MCP 자체 pgvector** (`term_service/embeddings.py`, `search.py`, `guideline.py`) — `standard_terms`(용어 유사도/중복 판정), `guideline_chunks`(`standard_guide.md`를 벡터화, 가이드라인 준수 검사·약어 추천·정의 추천의 근거), `standard_words`(2026-09-14 추가 — 의미로 기존 단어 찾기, 위 "표준단어 계층" 절 참고)를 담당. **이게 업무 판단의 기준**입니다.

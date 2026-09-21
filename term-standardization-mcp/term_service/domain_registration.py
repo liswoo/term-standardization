@@ -99,6 +99,17 @@ def cancel(requester, conversation_id):
     return {"cancelled_confirmations": len(rows)}
 
 def approve(request_id):
+    """Promote a PENDING_REVIEW domain request into the live domains catalog.
+
+    Also promotes any term registration that was waiting on this domain
+    (WAITING_FOR_DOMAIN_APPROVAL, set by registration.submit() when a term's chosen
+    domain didn't exist yet - see conversation.py's domain-request sub-flow) to
+    PENDING_REVIEW. The NOT EXISTS guard is defensive, not load-bearing today:
+    registration.submit()'s word-wins tie-break means a WAITING_FOR_DOMAIN_APPROVAL
+    row never has an unresolved word dependency in practice, but checking costs
+    nothing and protects against that tie-break ever changing - see
+    word_registration.approve()'s symmetric comment.
+    """
     with db.connect() as conn:
         req = conn.execute("SELECT * FROM domain_requests WHERE id=%s", (request_id,)).fetchone()
         if not req:
@@ -127,7 +138,14 @@ def approve(request_id):
                 VALUES(%s,%s,%s,%s) ON CONFLICT DO NOTHING""",
                 (str(uuid.uuid4()), req["code"], req["mapping_table"], req["mapping_column"]))
         conn.execute("UPDATE domain_requests SET status='APPROVED' WHERE id=%s", (request_id,))
-    return {"approved": True, "code": req["code"]}
+        promoted = conn.execute("""UPDATE registration_requests SET status='PENDING_REVIEW'
+            WHERE status='WAITING_FOR_DOMAIN_APPROVAL' AND depends_on_domain_request_id=%s
+              AND NOT EXISTS (
+                  SELECT 1 FROM registration_request_word_dependencies d
+                  JOIN word_registration_requests w ON w.id=d.word_request_id
+                  WHERE d.registration_request_id=registration_requests.id AND w.status<>'APPROVED')
+            RETURNING id::text AS request_id, term_name""", (request_id,)).fetchall()
+    return {"approved": True, "code": req["code"], "promoted_terms": [dict(r) for r in promoted]}
 
 def reject(request_id):
     with db.connect() as conn:
