@@ -146,6 +146,23 @@ svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width:
 .panel-header h2 { margin: 0; font-size: 15.5px; font-weight: 700; }
 .panel-header p { margin: 4px 0 0; }
 .panel-header-row { display: flex; align-items: center; justify-content: space-between; }
+.panel-header-actions { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+
+/* AI 추천 ON/OFF 스위치 (용어 신청 헤더). is-on이면 파란 강조, 꺼지면 회색. */
+.ai-toggle {
+  display: inline-flex; align-items: center; gap: 8px; padding: 5px 12px 5px 8px;
+  border: 1px solid var(--border); border-radius: 999px; background: #fff;
+  font: inherit; font-size: 12.5px; font-weight: 700; color: var(--text-muted); cursor: pointer; white-space: nowrap;
+}
+.ai-toggle:hover { border-color: var(--primary); }
+.ai-toggle-track { position: relative; width: 30px; height: 17px; border-radius: 999px; background: #cbd5e1; transition: background .15s; flex-shrink: 0; }
+.ai-toggle-track::after {
+  content: ""; position: absolute; top: 2px; left: 2px; width: 13px; height: 13px; border-radius: 50%;
+  background: #fff; box-shadow: 0 1px 2px rgba(0,0,0,.25); transition: transform .15s;
+}
+.ai-toggle.is-on { color: var(--primary); border-color: var(--primary); background: var(--primary-soft); }
+.ai-toggle.is-on .ai-toggle-track { background: var(--primary); }
+.ai-toggle.is-on .ai-toggle-track::after { transform: translateX(13px); }
 .pill { background: var(--primary-soft); color: var(--primary); font-size: 12px; font-weight: 700; padding: 4px 10px; border-radius: 999px; }
 
 /* ── 목록 필터 ── */

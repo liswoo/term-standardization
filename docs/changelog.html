@@ -550,6 +550,26 @@
             <p><strong>버그 2 - 후보 라벨이 그대로 정의로 입력됨</strong>: "변경 이후에 할당된 주소 코드" 같은 후보 라벨은 "이 의미가 맞다"는 답일 뿐 완성된 정의 문장이 아닌데 그대로 정의 필드에 꽂혀 들어감. 챗봇의 <code>set_definition</code>이 옵션 선택을 <code>clarification_history</code>에 답으로 추가해 <code>suggest_definition()</code>을 다시 부르는 것과 동일하게 고침 - <code>suggest-definition</code> 라우트가 <code>clarification_history</code> 쿼리 파라미터를 받아 그대로 전달하고, 프론트는 후보 클릭 시 이 라운드트립으로 받은 실제 정의 문장을 적용(추가 클릭 요구 없음). fetch를 모킹해 모호함→후보 클릭→완성된 정의 문장까지 결정론적으로 재현해 확인.</p>
           </div>
         </div>
+
+        <div class="changelog-entry">
+          <div class="changelog-date">2026-09-21</div>
+          <div class="changelog-title">용어 신청: "AI와 대화하며 등록" 카드 삭제 → AI 추천 ON/OFF 토글, 초기화 버튼을 헤더 우측 상단 아이콘으로 이동 <span class="pill pill-changed">changed</span></div>
+          <div class="changelog-body">
+            <p><strong>삭제</strong>: 용어 신청 탭의 파란 "AI와 대화하며 등록" 카드와 "대화로 등록 시작" 버튼(<code>term-ai-start-btn</code>). 헤더의 "+ 신규 용어 등록"이 같은 챗봇을 여는 중복 기능이었음. 단어 신청 탭의 같은 카드는 헤더 버튼과 다른 흐름("단어를 등록할래요")이라 유지.</p>
+            <p><strong>AI 추천 토글</strong>: 헤더 오른쪽 위에 ON/OFF 스위치(기본 ON, 저장하지 않음). OFF면 이름 중복 확인/정의 추천/도메인·영문약어 추천 세 라우트를 호출하지 않고, 끄는 순간 화면의 추천 표시와 진행 중이던 요청 응답을 정리(입력값은 유지). 이름을 적어둔 채 켜면 즉시 확인 시작. 허용값/표현형식/저장형식 참고 표시는 AI 추천이 아니라 도메인 조회라 OFF에서도 동작.</p>
+            <p><strong>초기화</strong>: 하단 텍스트 버튼 대신, 채팅창 "새 대화 시작"과 같은 회전 화살표 아이콘을 용어 신청 헤더 우측 상단에 배치. <code>resetTermRequestForm()</code>은 제출 성공 후 초기화와 공용이며 ON/OFF 선택은 유지.</p>
+          </div>
+        </div>
+
+        <div class="changelog-entry">
+          <div class="changelog-date">2026-09-21</div>
+          <div class="changelog-title">용어 신청: 제출 시 안 되는 칸을 빨간 테두리+사유로 표시 <span class="pill pill-added">added</span></div>
+          <div class="changelog-body">
+            <p>폼에 <code>novalidate</code>를 주고 <code>validateTermForm()</code>이 용어명(2~20자)/정의(5~4000자)/도메인(필수)을 한꺼번에 검사해 문제 칸을 전부 빨갛게 표시(ON/OFF 무관, 브라우저 기본 말풍선 대체). 통과하면 서버로 가고, 서버 거부 코드는 <code>TERM_ERROR_FIELDS</code>로 칸에 매핑(이름 규칙 위반/이미 존재/표준단어 미등록/대기 중 중복 → 용어명, 같은 의미 → 용어명+정의, 동의어 충돌 → 동의어, 영문약어 중복 → 영문 약어). 미등록 도메인은 서버가 거부하지 않고 경고만 붙여 접수하므로 도메인 칸은 "비어 있음"만 실패로 봄. 오류 표시 후 <code>focus()</code>를 쓰지 않는 이유: 이름 칸 blur가 ON 모드의 이름 확인을 다시 돌려 방금 표시한 빨간 표시를 덮어쓸 수 있어서 <code>scrollIntoView</code>만 사용.</p>
+            <p>실제 화면으로 확인: OFF에서 이름 blur 시 서버 요청 0건, 정의/도메인 비운 채 신청 → 두 칸만 빨강, 기존 이름 신청 → 서버 <code>EXACT_MATCH</code>로 용어명 칸만 빨강+사유, 초기화 후에도 OFF 유지, ON에서 추천 응답이 오는 도중 초기화해도 칸이 다시 채워지지 않음. 실제 접수(성공 경로)는 DB에 신청이 남아 이번엔 확인하지 않음.</p>
+            <p><strong>알려진 미해결(무관, 확인됨)</strong>: 동의어에 100자 초과 항목이 있으면 <code>INVALID_FIELDS</code> 응답의 <code>exc.errors()</code>(<code>ctx</code>에 <code>ValueError</code> 객체)가 JSON 직렬화에 실패해 500이 됨 — 프론트가 동의어 길이를 미리 검사하지 않아 경로가 열려 있음.</p>
+          </div>
+        </div>
       </div>
 
     </div>

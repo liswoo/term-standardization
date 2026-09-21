@@ -913,16 +913,12 @@ document.getElementById("domain-request-form").addEventListener("submit", async 
 });
 
 // ── 용어/단어 신청 (표준 데이터 조회의 "용어 신청"/"단어 신청" 탭) ──────────
-// 각 탭은 두 가지 진입점을 같이 제공한다: (1) 간편 입력 - 폼 한 번 제출로 끝나되
-// /admin/term-requests·/admin/word-requests가 registration.py/word_registration.py의
-// prepare()/submit()을 그대로 태우므로 챗봇과 동일한 품질 검증(용어는 임베딩+LLM
-// 의미비교까지)을 거친다 - 단, 다단계 안내 없이 실패 사유를 한 번에 에러로 보여줌.
-// (2) AI와 대화하며 등록 - 기존 플로팅 챗봇(submitChatMessage)을 그대로 열어 대화형
-// 등록 흐름을 재사용한다(새 챗 로직 없음).
-document.getElementById("term-ai-start-btn").addEventListener("click", () => {
-  openChat();
-  submitChatMessage("용어를 등록할래요");
-});
+// 간편 입력 - 폼 한 번 제출로 끝나되 /admin/term-requests·/admin/word-requests가
+// registration.py/word_registration.py의 prepare()/submit()을 그대로 태우므로 챗봇과 동일한
+// 품질 검증(용어는 임베딩+LLM 의미비교까지)을 거친다 - 단, 다단계 안내 없이 실패 사유를 한 번에
+// 에러로 보여줌. 단어 신청 탭은 추가로 "AI와 대화하며 등록"(기존 플로팅 챗봇 재사용) 진입점이
+// 있다. 용어 신청 탭은 그 진입점을 없앴다(2026-09-21) - 헤더의 "신규 용어 등록" 버튼과 같은
+// 챗봇을 여는 중복 기능이라서 - 대신 이 탭 안의 AI 추천을 ON/OFF 하는 토글이 있다(아래).
 document.getElementById("word-ai-start-btn").addEventListener("click", () => {
   openChat();
   submitChatMessage("단어를 등록할래요");
@@ -983,6 +979,10 @@ document.getElementById("tr-domain").addEventListener("input", () => {
 // 읽기전용 라우트라, "이미 있다/없다"는 여기서 바로 답하지만 의미 기반 중복 판정(SAME_
 // MEANING)처럼 더 깊은 판단은 여전히 제출 시점에만 실행된다(느리고 부작용 있는 registration.
 // prepare()를 여기서 또 돌리지 않음).
+// AI 추천 ON/OFF(2026-09-21). 기본 ON, 새로고침하면 다시 ON(저장하지 않음). OFF면 아래의
+// 즉시 반응(이름 확인/정의 추천/도메인·약어 추천)을 전부 호출하지 않고, 대신 "간편 입력으로 신청"
+// 시점에 안 되는 칸을 빨간 테두리로 알려준다(제출 검증은 ON/OFF와 무관하게 항상 동작).
+let termAiAssist = true;
 let termNameStatus = ""; // "" | "checking" | "available" | "invalid" | "exact_match" | "synonym_match" | "pending"
 let termNameCheckToken = 0;
 
@@ -1003,6 +1003,7 @@ function setFieldState(inputEl, hintEl, kind, message) {
 }
 
 async function checkTermName() {
+  if (!termAiAssist) return;
   const input = document.getElementById("tr-term-name");
   const hint = document.getElementById("tr-term-name-hint");
   const termName = input.value.trim();
@@ -1095,7 +1096,7 @@ async function suggestDefinitionForTerm(termName, history) {
 // "일일이 묻지 않아도 진행 가능한 영역"(사용자 지시, 2026-09-21)이라 버튼 없이 바로 추천.
 let termFollowupsToken = 0;
 async function maybeSuggestFollowups() {
-  if (termNameStatus !== "available") return;
+  if (!termAiAssist || termNameStatus !== "available") return;
   const termName = document.getElementById("tr-term-name").value.trim();
   const definition = document.getElementById("tr-definition").value.trim();
   if (!termName || !definition) return;
@@ -1129,6 +1130,103 @@ async function maybeSuggestFollowups() {
 }
 document.getElementById("tr-definition").addEventListener("blur", maybeSuggestFollowups);
 
+// ── 칸별 오류 표시(빨간 테두리 + 문구) ──
+// 제출 시점에 "이 칸 때문에 신청이 안 된다"를 알려주는 용도. ON/OFF와 무관하게 항상 동작한다.
+// (이름 칸은 ON일 때 blur 확인의 초록/빨강 표시와 같은 자리를 쓴다 - setFieldState 공용)
+const TERM_FIELDS = {
+  term_name: ["tr-term-name", "tr-term-name-hint"],
+  definition: ["tr-definition", "tr-definition-hint"],
+  domain: ["tr-domain", "tr-domain-hint"],
+  synonyms: ["tr-synonyms", "tr-synonyms-hint"],
+  english_abbr: ["tr-english-abbr", "tr-english-abbr-hint"],
+};
+function markTermFieldError(field, message) {
+  const [inputId, hintId] = TERM_FIELDS[field];
+  setFieldState(document.getElementById(inputId), document.getElementById(hintId), "error", message);
+}
+function clearTermFieldError(field) {
+  const [inputId, hintId] = TERM_FIELDS[field];
+  const input = document.getElementById(inputId);
+  if (input.classList.contains("field-invalid")) setFieldState(input, document.getElementById(hintId), "", "");
+}
+// 값을 고치기 시작하면 그 칸의 빨간 표시는 더 이상 유효하지 않다(이름 칸은 위에 자체 리스너가 있음).
+["definition", "domain", "synonyms", "english_abbr"].forEach((field) => {
+  document.getElementById(TERM_FIELDS[field][0]).addEventListener("input", () => clearTermFieldError(field));
+});
+
+// 서버(quick_registration/registration)가 돌려주는 거부 코드 → 어느 칸 때문인지.
+// 미등록 도메인은 서버가 거부하지 않고 경고만 붙여 접수하므로(UNREGISTERED_DOMAIN_REQUIRES_REVIEW)
+// 여기에 없다 - 도메인 칸은 "비어 있음"만 실패로 본다. CATALOG_CHANGED_* 등 칸과 무관한 코드도 없음.
+const TERM_ERROR_FIELDS = {
+  GUIDELINE_VIOLATION: ["term_name"],
+  EXACT_MATCH: ["term_name"],
+  WORD_GAP_REQUIRES_REGISTRATION: ["term_name"],
+  PENDING_REQUEST_ALREADY_EXISTS: ["term_name"],
+  SAME_MEANING: ["term_name", "definition"],
+  SYNONYM_CONFLICT: ["synonyms"],
+  ABBREVIATION_ALREADY_USED: ["english_abbr"],
+};
+
+// 서버 왕복 전에 브라우저에서 바로 잡을 수 있는 것들(스키마 RegistrationInput의 길이 제한과 동일).
+// form에 novalidate를 줘서 브라우저 기본 말풍선 대신 이 검증이 모든 칸을 한꺼번에 빨갛게 표시한다.
+function validateTermForm(payload) {
+  const problems = [];
+  const name = payload.term_name, definition = payload.definition;
+  if (!name) problems.push(["term_name", "용어명을 입력해주세요."]);
+  else if (name.length < 2 || name.length > 20) problems.push(["term_name", "용어명은 2~20자로 입력해주세요."]);
+  if (!definition) problems.push(["definition", "정의를 입력해주세요."]);
+  else if (definition.length < 5) problems.push(["definition", "정의는 5자 이상 입력해주세요."]);
+  else if (definition.length > 4000) problems.push(["definition", "정의는 4000자 이내로 입력해주세요."]);
+  if (!payload.domain) problems.push(["domain", "도메인을 입력해주세요."]);
+  return problems;
+}
+
+// 진행 중이던/표시 중이던 AI 추천 흔적만 걷어낸다(입력한 값은 그대로 둠) - 토글을 끌 때와
+// 초기화 때 공용. 아직 도착 안 한 비동기 응답이 뒤늦게 칸을 채우지 못하도록 각 fetch 토큰과
+// 디바운스 타이머도 같이 무효화한다.
+function clearTermAiSuggestions() {
+  termNameCheckToken++;
+  termDefinitionSuggestToken++;
+  termFollowupsToken++;
+  termDomainDerivedFetchToken++;
+  clearTimeout(termDomainDerivedTimer);
+  termNameStatus = "";
+  const nameInput = document.getElementById("tr-term-name");
+  // 이름 칸의 빨강은 "이름 확인" 결과일 수도, 제출 거부 표시일 수도 있어 초록/빨강 상관없이 걷어낸다.
+  setFieldState(nameInput, document.getElementById("tr-term-name-hint"), "", "");
+  const suggestion = document.getElementById("tr-definition-suggestion");
+  suggestion.innerHTML = "";
+  suggestion.hidden = true;
+  document.getElementById("tr-domain-suggestion-note").hidden = true;
+  document.getElementById("tr-english-abbr-suggestion-note").hidden = true;
+}
+
+// 모든 칸과 추천/판정/오류 표시를 처음 상태로 되돌린다(초기화 버튼 + 제출 성공 후 공용).
+// AI 추천 ON/OFF 선택은 유지한다 - 초기화는 "입력"을 비우는 것이지 사용자의 모드 선택이 아니다.
+function resetTermRequestForm() {
+  document.getElementById("term-request-form").reset();
+  clearTermAiSuggestions();
+  Object.keys(TERM_FIELDS).forEach(clearTermFieldError);
+  document.getElementById("tr-domain-derived").hidden = true;
+  document.getElementById("term-request-error").hidden = true;
+  document.getElementById("term-request-notice").hidden = true;
+}
+document.getElementById("term-request-reset").addEventListener("click", resetTermRequestForm);
+
+function setTermAiAssist(on) {
+  termAiAssist = on;
+  const toggle = document.getElementById("term-ai-toggle");
+  toggle.classList.toggle("is-on", on);
+  toggle.setAttribute("aria-checked", String(on));
+  document.getElementById("term-ai-toggle-label").textContent = on ? "AI 추천 ON" : "AI 추천 OFF";
+  if (!on) {
+    clearTermAiSuggestions(); // 화면에 떠 있던 추천/판정과 진행 중이던 요청을 정리(입력값은 유지)
+  } else if (document.getElementById("tr-term-name").value.trim()) {
+    checkTermName(); // 이미 이름을 적어둔 채 켰다면 지금 값으로 바로 확인/추천을 시작
+  }
+}
+document.getElementById("term-ai-toggle").addEventListener("click", () => setTermAiAssist(!termAiAssist));
+
 document.getElementById("term-request-form").addEventListener("submit", async (e) => {
   e.preventDefault();
   const errorEl = document.getElementById("term-request-error");
@@ -1144,24 +1242,47 @@ document.getElementById("term-request-form").addEventListener("submit", async (e
     // 허용값/표현형식/저장형식은 선택한 도메인이 정하는 값이라 참고용 표시일 뿐 -
     // 제출 payload에는 포함하지 않는다(populateTermDomainDerivedFields 참고).
   };
+  // 지난 제출의 빨간 표시를 먼저 걷어낸다(이름 칸의 ON 모드 초록 확인 표시는 건드리지 않음).
+  Object.keys(TERM_FIELDS).forEach(clearTermFieldError);
+  errorEl.hidden = true;
+
+  const problems = validateTermForm(payload);
+  if (problems.length) {
+    problems.forEach(([field, message]) => markTermFieldError(field, message));
+    errorEl.textContent = AUTH_ERROR_LABELS.INVALID_FIELDS;
+    errorEl.hidden = false;
+    // focus()는 쓰지 않는다 - 이름 칸에 focus→blur가 일어나면 ON 모드의 이름 확인이 다시 돌아
+    // 방금 표시한 빨간 표시를 덮어쓸 수 있다. 스크롤만 첫 문제 칸으로 옮긴다.
+    document.getElementById(TERM_FIELDS[problems[0][0]][0]).scrollIntoView({ block: "center", behavior: "smooth" });
+    return;
+  }
+
   // 임베딩+LLM 의미비교(registration.prepare)가 실행돼 도메인/단어보다 오래 걸릴 수 있다.
   submitBtn.disabled = true;
   submitBtn.textContent = "확인 중...";
   try {
     await submitAuthForm("/admin/term-requests", payload, errorEl);
-    document.getElementById("term-request-form").reset();
-    document.getElementById("tr-domain-derived").hidden = true;
-    document.getElementById("tr-definition-suggestion").hidden = true;
-    document.getElementById("tr-domain-suggestion-note").hidden = true;
-    document.getElementById("tr-english-abbr-suggestion-note").hidden = true;
-    termNameStatus = "";
-    setFieldState(document.getElementById("tr-term-name"), document.getElementById("tr-term-name-hint"), "", "");
+    resetTermRequestForm();
     noticeEl.hidden = false;
     fetchUnifiedCatalog();
   } catch (err) {
-    if (err.data?.error === "WORD_GAP_REQUIRES_REGISTRATION" && err.data.gaps?.length) {
-      errorEl.textContent = `다음 부분이 아직 표준단어로 등록되지 않았습니다: ${err.data.gaps.join(", ")}. "단어 신청" 탭에서 먼저 등록해주세요.`;
+    const code = err.data?.error;
+    let message = AUTH_ERROR_LABELS[code] || err.message;
+    if (code === "GUIDELINE_VIOLATION") {
+      message = err.data.validation?.violations?.[0]?.reason || message;
+    } else if (code === "WORD_GAP_REQUIRES_REGISTRATION" && err.data.gaps?.length) {
+      message = `다음 부분이 아직 표준단어로 등록되지 않았습니다: ${err.data.gaps.join(", ")}. "단어 신청" 탭에서 먼저 등록해주세요.`;
+      errorEl.textContent = message;
       errorEl.hidden = false;
+    }
+    let fields = TERM_ERROR_FIELDS[code] || [];
+    if (code === "INVALID_FIELDS" && Array.isArray(err.data.detail)) {
+      // 브라우저 검증을 통과했는데 서버 스키마가 거부한 경우 - pydantic의 loc[0]이 칸 이름.
+      fields = [...new Set(err.data.detail.map((d) => d.loc?.[0]).filter((f) => f in TERM_FIELDS))];
+    }
+    fields.forEach((field) => markTermFieldError(field, message));
+    if (fields.length) {
+      document.getElementById(TERM_FIELDS[fields[0]][0]).scrollIntoView({ block: "center", behavior: "smooth" });
     }
   } finally {
     submitBtn.disabled = false;

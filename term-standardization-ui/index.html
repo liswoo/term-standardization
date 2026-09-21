@@ -9,7 +9,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
 <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
-<link rel="stylesheet" href="style.css?v=11" />
+<link rel="stylesheet" href="style.css?v=13" />
 </head>
 <body class="pre-auth">
 
@@ -201,30 +201,38 @@
           </div>
         </div>
 
-        <!-- 용어 신청: 간편 입력(폼 1회 제출) 또는 AI와 대화하며 등록 중 선택 -->
+        <!-- 용어 신청: 간편 입력(폼 1회 제출). AI 추천(이름 확인/정의/도메인/약어)은 ON/OFF 토글 -->
         <div class="catalog-tab-panel" id="catalog-tab-term-req" hidden>
           <div class="panel">
-            <div class="panel-header">
-              <h2>용어 신청</h2>
-              <p class="muted">간편 입력으로 바로 신청하거나, AI와 대화하며 이름·정의·도메인을 다듬어 등록할 수 있습니다.</p>
-            </div>
-            <div class="ai-register-card">
+            <div class="panel-header panel-header-row">
               <div>
-                <strong>AI와 대화하며 등록</strong>
-                <p class="muted">중복 확인, 가이드라인 위반 검토, 정의 초안 제안까지 챗봇이 안내합니다.</p>
+                <h2>용어 신청</h2>
+                <p class="muted">이름·정의·도메인을 입력해 바로 신청합니다. AI 추천을 켜 두면 입력하는 즉시 중복 확인과 정의·도메인·영문 약어 추천을 받습니다.</p>
               </div>
-              <button type="button" class="btn btn-primary" id="term-ai-start-btn">대화로 등록 시작</button>
+              <div class="panel-header-actions">
+                <button type="button" class="ai-toggle is-on" id="term-ai-toggle" role="switch" aria-checked="true" title="AI 추천 켜기/끄기">
+                  <span class="ai-toggle-track" aria-hidden="true"></span>
+                  <span class="ai-toggle-label" id="term-ai-toggle-label">AI 추천 ON</span>
+                </button>
+                <button type="button" class="chat-icon-btn" id="term-request-reset" aria-label="초기화" title="초기화 (입력한 내용과 추천 표시를 모두 지웁니다)">
+                  <svg viewBox="0 0 24 24"><path d="M20 11A8 8 0 1 0 18.6 15.5M20 5v6h-6"/></svg>
+                </button>
+              </div>
             </div>
-            <form id="term-request-form" class="auth-form">
+            <form id="term-request-form" class="auth-form" novalidate>
               <label>용어명<input type="text" id="tr-term-name" required minlength="2" maxlength="20" /></label>
               <p class="field-hint" id="tr-term-name-hint" hidden></p>
               <label>정의<textarea id="tr-definition" required minlength="5" maxlength="4000"></textarea></label>
+              <p class="field-hint" id="tr-definition-hint" hidden></p>
               <div id="tr-definition-suggestion" hidden></div>
               <label>도메인<input type="text" id="tr-domain" list="tr-domain-options" required maxlength="100" /></label>
               <datalist id="tr-domain-options"></datalist>
+              <p class="field-hint" id="tr-domain-hint" hidden></p>
               <p class="field-suggestion-note" id="tr-domain-suggestion-note" hidden></p>
               <label>동의어<input type="text" id="tr-synonyms" placeholder="쉼표로 구분(선택)" maxlength="1000" /></label>
+              <p class="field-hint" id="tr-synonyms-hint" hidden></p>
               <label>영문 약어<input type="text" id="tr-english-abbr" placeholder="선택" maxlength="20" /></label>
+              <p class="field-hint" id="tr-english-abbr-hint" hidden></p>
               <p class="field-suggestion-note" id="tr-english-abbr-suggestion-note" hidden></p>
               <div class="domain-derived-fields" id="tr-domain-derived" hidden>
                 <p class="muted">아래는 선택한 도메인이 정하는 값입니다(참고용 - 별도 입력 불필요).</p>
@@ -455,6 +463,6 @@
 
 <script src="runtime-config.js"></script>
 <script src="mock-data.js"></script>
-<script src="app.js?v=9"></script>
+<script src="app.js?v=11"></script>
 </body>
 </html>
