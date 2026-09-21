@@ -554,6 +554,28 @@ function changeCatalogPage(delta) {
   fetchUnifiedCatalog();
 }
 
+// 정부 원본 xlsx에 있었지만 한동안 비어 있던 필드들(2026-09-18) - 대부분의 행엔
+// 값이 없으므로(원본 기준 허용값 38%, 표현형식 오버라이드 0.5%, 행정표준코드명
+// 0.6%, 소관기관명 2%) 표에 항상 컬럼을 추가하는 대신 값이 있을 때만 "내용" 칸
+// 아래 작은 보조줄로 보여준다. valid_values/display_format은 TERM 행에서 이미
+// unified_catalog.py가 소속 도메인 값으로 대체(COALESCE)해서 내려주므로, 용어든
+// 도메인이든 이 노트에 뜨는 값은 항상 "적용되는" 값이다. storage_format/data_type/
+// unit/데이터길이는 도메인 고유 속성이라 TERM 행에도 소속 도메인 값을 그대로 조인해줌.
+const EXTRA_FIELD_LABELS = {
+  data_type: "데이터유형", valid_values: "허용값", display_format: "표현형식",
+  storage_format: "저장형식", unit: "단위",
+  administrative_code_name: "행정표준코드명", competent_agency: "소관기관명",
+};
+function catalogExtraFieldsNote(r) {
+  const parts = Object.entries(EXTRA_FIELD_LABELS)
+    .filter(([key]) => r[key])
+    .map(([key, label]) => `${label}: ${escapeHtml(r[key])}`);
+  if (r.data_length !== null && r.data_length !== undefined) {
+    parts.splice(1, 0, `데이터길이: ${escapeHtml([r.data_length, r.decimal_length].filter((v) => v !== null && v !== undefined).join(","))}`);
+  }
+  return parts.length ? `<div class="cell-note">${parts.join(" · ")}</div>` : "";
+}
+
 function renderCatalogTable(items) {
   const tbody = document.getElementById("catalog-tbody");
   if (!tbody) return;
@@ -562,7 +584,7 @@ function renderCatalogTable(items) {
       <td><span class="kind-badge" style="--kind-color:${KIND_COLORS[r.kind]}">${KIND_LABELS[r.kind] || r.kind}</span></td>
       <td><strong>${escapeHtml(r.logical_name)}</strong></td>
       <td><span class="mono">${escapeHtml(r.physical_name || "-")}</span></td>
-      <td class="cell-def">${escapeHtml(r.content || "-")}</td>
+      <td class="cell-def">${escapeHtml(r.content || "-")}${catalogExtraFieldsNote(r)}</td>
       <td>${r.domain ? `<span class="domain-tag" style="--tag-color:${domainColor(r.domain)}">${escapeHtml(r.domain)}</span>` : "-"}</td>
       <td><span class="status-badge status-${r.status === "APPROVED" ? "ok" : "pending"}">${STATUS_LABELS[r.status] || r.status}</span></td>
       <td class="muted">${escapeHtml(r.requester || "-")}</td>
@@ -917,6 +939,44 @@ function populateTermDomainOptions() {
     .join("");
 }
 
+// 도메인 하나의 상세(허용값/표현형식/저장형식 등)를 가져온다 - list_data_domains()
+// (state.domains, 목록조회 워크플로우 경유)는 이 필드들을 안 담고 있어서 별도 REST 호출이
+// 필요하다. 용어 신청 폼의 도메인 참고값 자동표시와 챗봇 등록완료 카드 둘 다 이 함수를 씀.
+async function fetchDomainDetail(code) {
+  if (!code) return null;
+  try {
+    const res = await fetch(`/admin/domains/${encodeURIComponent(code)}`);
+    const data = await res.json();
+    return data.ok ? data.domain : null;
+  } catch {
+    return null;
+  }
+}
+
+// "도메인이 결정하는" 값(허용값/표현형식/저장형식)은 신청자가 입력하지 않고, 도메인을
+// 고르면 참고용으로만 자동 표시한다(2026-09-18) - 제출 payload에는 포함되지 않음.
+let termDomainDerivedFetchToken = 0;
+async function populateTermDomainDerivedFields() {
+  const code = document.getElementById("tr-domain").value.trim();
+  const wrap = document.getElementById("tr-domain-derived");
+  const myToken = ++termDomainDerivedFetchToken;
+  const domain = await fetchDomainDetail(code);
+  if (myToken !== termDomainDerivedFetchToken) return;
+  if (!domain) {
+    wrap.hidden = true;
+    return;
+  }
+  document.getElementById("tr-valid-values").value = domain.valid_values || "-";
+  document.getElementById("tr-display-format").value = domain.display_format || "-";
+  document.getElementById("tr-storage-format").value = domain.storage_format || "-";
+  wrap.hidden = false;
+}
+let termDomainDerivedTimer = null;
+document.getElementById("tr-domain").addEventListener("input", () => {
+  clearTimeout(termDomainDerivedTimer);
+  termDomainDerivedTimer = setTimeout(populateTermDomainDerivedFields, 300);
+});
+
 document.getElementById("term-request-form").addEventListener("submit", async (e) => {
   e.preventDefault();
   const errorEl = document.getElementById("term-request-error");
@@ -929,6 +989,8 @@ document.getElementById("term-request-form").addEventListener("submit", async (e
     domain: document.getElementById("tr-domain").value.trim(),
     synonyms: document.getElementById("tr-synonyms").value.split(",").map((s) => s.trim()).filter(Boolean),
     english_abbr: document.getElementById("tr-english-abbr").value.trim(),
+    // 허용값/표현형식/저장형식은 선택한 도메인이 정하는 값이라 참고용 표시일 뿐 -
+    // 제출 payload에는 포함하지 않는다(populateTermDomainDerivedFields 참고).
   };
   // 임베딩+LLM 의미비교(registration.prepare)가 실행돼 도메인/단어보다 오래 걸릴 수 있다.
   submitBtn.disabled = true;
@@ -936,6 +998,7 @@ document.getElementById("term-request-form").addEventListener("submit", async (e
   try {
     await submitAuthForm("/admin/term-requests", payload, errorEl);
     document.getElementById("term-request-form").reset();
+    document.getElementById("tr-domain-derived").hidden = true;
     noticeEl.hidden = false;
     fetchUnifiedCatalog();
   } catch (err) {
@@ -1309,16 +1372,30 @@ const REGISTRATION_STATUS_LABEL = {
   WAITING_FOR_WORD_APPROVAL: "단어 승인 대기 (WAITING_FOR_WORD_APPROVAL)",
 };
 
-function renderRegistrationCard(mcpState) {
+// 대화 중엔 도메인이 정하는 값(허용값/표현형식/저장형식 등)을 따로 묻지 않지만, 등록이
+// 끝나는 시점엔 사용자가 그 도메인의 전체 스펙을 알 수 있어야 하므로(2026-09-18) 여기서
+// 도메인 코드로 상세를 조회해서 같이 보여준다. registration.submit()의 반환값엔 도메인
+// 코드만 있어 이 조회가 필요 - 실패해도(네트워크 등) 등록완료 카드 자체는 계속 보여준다.
+async function renderRegistrationCard(mcpState) {
   const reg = mcpState.registration;
   if (!reg) return "";
   if (reg.request_id) {
+    const domainCode = reg.domain || mcpState.domain;
+    const domain = await fetchDomainDetail(domainCode);
     return summaryCard([
       ["신청 ID", reg.request_id.slice(0, 8) + "…", true],
       ["용어명", reg.term_name || mcpState.term_name],
-      ["도메인", reg.domain || mcpState.domain, true],
+      ["도메인", domainCode, true],
       ["영문 약어", reg.english_abbr || mcpState.english_abbr, true],
       ["상태", REGISTRATION_STATUS_LABEL[reg.status] || "검토 대기 (PENDING_REVIEW)"],
+      ["도메인그룹", domain?.domain_group],
+      ["도메인분류", domain?.domain_classification],
+      ["데이터유형", domain?.data_type],
+      ["데이터길이", [domain?.data_length, domain?.decimal_length].filter((v) => v !== null && v !== undefined).join(",")],
+      ["저장형식", domain?.storage_format, true],
+      ["표현형식", domain?.display_format, true],
+      ["단위", domain?.unit],
+      ["허용값", domain?.valid_values],
     ], "summary-card-ok");
   }
   return summaryCard([["실패 사유 코드", reg.code, true]], "summary-card-fail");
@@ -1401,7 +1478,7 @@ function renderTermLookupTable(mcpState) {
 // stage별로 어떤 구조화 블록을 붙일지 결정합니다. 서버(build_chatflow.py의
 // RENDER 프롬프트)는 이 stage들에서 같은 내용을 문장으로 다시 나열하지
 // 않도록 되어 있어, 프론트엔드 표/카드가 유일한 상세 정보 출처입니다.
-function renderStructuredBlock(mcpState) {
+async function renderStructuredBlock(mcpState) {
   if (!mcpState) return "";
   switch (mcpState.stage) {
     case "awaiting_domain_choice":
@@ -1424,7 +1501,7 @@ function renderStructuredBlock(mcpState) {
       return renderPendingCard(mcpState);
     case "submitted":
     case "registration_failed":
-      return renderRegistrationCard(mcpState);
+      return await renderRegistrationCard(mcpState);
     case "awaiting_word_confirm":
       return renderWordSuggestionCard(mcpState);
     case "awaiting_word_abbreviation":
@@ -1626,7 +1703,7 @@ async function submitChatMessage(raw) {
     // suppress_stage_summary); this is the same suppression for the frontend's cards.
     const needsFreshInput = ["TERM_REQUIRED", "WORD_MEANING_REQUIRED", "TERM_MEANING_REQUIRED"].includes(mcpError);
 
-    const structuredHtml = needsFreshInput ? "" : renderStructuredBlock(mcpState);
+    const structuredHtml = needsFreshInput ? "" : await renderStructuredBlock(mcpState);
     if (structuredHtml) {
       bubble.querySelector(".bubble").classList.add("has-data");
       bubble.querySelector(".bubble").insertAdjacentHTML("beforeend", structuredHtml);

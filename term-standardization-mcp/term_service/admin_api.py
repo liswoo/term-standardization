@@ -299,6 +299,22 @@ async def domain_sample_data(request: Request) -> JSONResponse:
     return JSONResponse({"ok": True, "results": sample_data_for_domain(request.path_params["code"])})
     return JSONResponse({"ok": True})
 
+# 허용값/표현형식/저장형식처럼 "도메인이 결정하는" 값은 용어 신청 폼에 직접 입력받지
+# 않고(2026-09-18), 도메인 선택 시 이 라우트로 조회해서 참고용으로 보여준다. 챗봇의
+# 등록완료 카드도 같은 라우트로 도메인 상세를 가져와 붙인다(registration.submit()이
+# 반환하는 domain은 코드뿐이라 별도 조회가 필요).
+@mcp.custom_route("/admin/domains/{code}", methods=["GET"])
+async def get_domain_detail(request: Request) -> JSONResponse:
+    _, error = require_auth(request)
+    if error: return error
+    with db.connect() as conn:
+        row = conn.execute("""SELECT code,description,domain_group,domain_classification,data_type,
+            data_length,decimal_length,storage_format,display_format,unit,valid_values,status
+            FROM domains WHERE code=%s""", (request.path_params["code"],)).fetchone()
+    if not row:
+        return JSONResponse({"ok": False, "error": "DOMAIN_NOT_FOUND"}, status_code=404)
+    return JSONResponse({"ok": True, "domain": row})
+
 # ── 용어/단어 신청 (표준 데이터 조회 화면의 "용어 신청"/"단어 신청" 탭, 간편 입력) ──
 # 도메인 신청과 같은 이유로 prepare()+submit()을 한 요청 안에서 이어서 호출한다.
 # 단어는 word_registration.py를 그대로 씀(exact-match만 확인하므로 도메인과 동급으로

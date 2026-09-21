@@ -221,6 +221,12 @@
               <datalist id="tr-domain-options"></datalist>
               <label>동의어<input type="text" id="tr-synonyms" placeholder="쉼표로 구분(선택)" maxlength="1000" /></label>
               <label>영문 약어<input type="text" id="tr-english-abbr" placeholder="선택" maxlength="20" /></label>
+              <div class="domain-derived-fields" id="tr-domain-derived" hidden>
+                <p class="muted">아래는 선택한 도메인이 정하는 값입니다(참고용 - 별도 입력 불필요).</p>
+                <label>허용값<input type="text" id="tr-valid-values" readonly /></label>
+                <label>표현형식<input type="text" id="tr-display-format" readonly /></label>
+                <label>저장형식<input type="text" id="tr-storage-format" readonly /></label>
+              </div>
 
               <p class="auth-error" id="term-request-error" hidden></p>
               <p class="auth-notice" id="term-request-notice" hidden>용어 신청이 접수되었습니다. 관리자 승인 후 표준 데이터 조회에 반영됩니다.</p>

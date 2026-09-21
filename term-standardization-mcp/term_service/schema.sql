@@ -26,6 +26,19 @@ CREATE TABLE IF NOT EXISTS standard_terms (
 );
 ALTER TABLE standard_terms ADD COLUMN IF NOT EXISTS english_abbr text;
 ALTER TABLE standard_terms ADD COLUMN IF NOT EXISTS status text NOT NULL DEFAULT 'ACTIVE' CHECK(status IN ('ACTIVE','DEPRECATED'));
+-- 정부 공공데이터 공통표준 원본 xlsx(공통표준용어 시트)에는 있었지만 최초 임포트 때
+-- 빠졌던 4개 컬럼(2026-09-18) - import_standard_catalog() 전용 읽기전용 정부 메타데이터.
+-- 허용값/표현형식은 실측 결과 99%+ 소속 도메인 값과 동일(허용값 83/13,176건만 다르고
+-- 그중 82건은 도메인 쪽이 아예 비어있는 예외, 표현형식은 71/13,176건 중 36건만 실제
+-- 내용이 다름 - 나머지는 쉼표 서식 등 원본 데이터 입력 노이즈)이라 신청 단계에서 입력받지
+-- 않음 - "표준 데이터 조회"에서 term 자체 값이 없으면 소속 도메인 값으로 대체해서 보여줌.
+-- 행정표준코드명/소관기관명은 정부 표준 자체의 관리 메타데이터라 신청자가 알 수 있는
+-- 정보가 아님 - 마찬가지로 조회 화면 표시 전용, registration_requests엔 컬럼 자체가 없음
+-- (챗봇도 간편 입력 폼도 이 4개를 받지 않음 - 전부 import_standard_catalog()로만 채워짐).
+ALTER TABLE standard_terms ADD COLUMN IF NOT EXISTS valid_values text;
+ALTER TABLE standard_terms ADD COLUMN IF NOT EXISTS display_format text;
+ALTER TABLE standard_terms ADD COLUMN IF NOT EXISTS administrative_code_name text;
+ALTER TABLE standard_terms ADD COLUMN IF NOT EXISTS competent_agency text;
 CREATE INDEX IF NOT EXISTS term_name_trgm ON standard_terms USING gin(normalized_name gin_trgm_ops);
 CREATE INDEX IF NOT EXISTS term_synonyms ON standard_terms USING gin(normalized_synonyms);
 CREATE INDEX IF NOT EXISTS term_tokens ON standard_terms USING gin(noun_tokens);

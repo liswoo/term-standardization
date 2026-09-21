@@ -121,8 +121,8 @@ find_term → search_terms_by_meaning() 결과만 보여주고 종료 (등록 �
       <table>
         <thead><tr><th>테이블</th><th>역할</th></tr></thead>
         <tbody>
-          <tr><td><code>domains</code></td><td>데이터 도메인(형식·길이·단위) 카탈로그. <code>ACTIVE</code>/<code>DEPRECATED</code> — 폐기돼도 삭제 안 함(기존 용어의 FK 보존). <code>created_at</code>(2026-09-17, "표준 데이터 조회" 통합 화면의 정렬 기준용으로 추가 — 기존 행은 배포 시점 <code>now()</code>로 일괄 채워짐, 1회성 부작용).</td></tr>
-          <tr><td><code>standard_terms</code></td><td>승인된 표준 용어 카탈로그. 이름·정의·도메인·동의어·영문약어 + pgvector 임베딩(384차원, multilingual-e5-small).</td></tr>
+          <tr><td><code>domains</code></td><td>데이터 도메인(형식·길이·단위) 카탈로그. <code>ACTIVE</code>/<code>DEPRECATED</code> — 폐기돼도 삭제 안 함(기존 용어의 FK 보존). <code>created_at</code>(2026-09-17, "표준 데이터 조회" 통합 화면의 정렬 기준용으로 추가 — 기존 행은 배포 시점 <code>now()</code>로 일괄 채워짐, 1회성 부작용). <code>valid_values</code> 컬럼은 진작부터 있었지만 <code>import_standard_catalog()</code>가 정부 원본 xlsx의 "허용값" 컬럼을 매핑 안 하고 있던 버그를 2026-09-18에 수정(129개 도메인 중 14개에 실제 값 존재).</td></tr>
+          <tr><td><code>standard_terms</code></td><td>승인된 표준 용어 카탈로그. 이름·정의·도메인·동의어·영문약어 + pgvector 임베딩(384차원, multilingual-e5-small). <code>valid_values</code>/<code>display_format</code>/<code>administrative_code_name</code>/<code>competent_agency</code>(2026-09-18, 정부 원본 xlsx에는 있었지만 최초 임포트 때 빠졌던 컬럼)는 <code>import_standard_catalog()</code>로만 채워지는 읽기전용 정부 메타데이터 — 챗봇도 간편 입력 폼도 이 4개를 받지 않음("허용값/표현형식은 도메인이 결정한다"는 원칙, 실측 결과 99%+ 소속 도메인 값과 일치). "표준 데이터 조회"는 용어 자신의 값이 없으면 소속 도메인 값으로 대체(COALESCE)해서 보여줌.</td></tr>
           <tr><td><code>standard_words</code></td><td>승인된 표준 단어 카탈로그(용어를 구성하는 최소 단위). 자체 임베딩 컬럼도 있음 — "의미로 기존 단어 찾기"용.</td></tr>
           <tr><td><code>registration_preparations</code></td><td>용어 등록의 30분 유효 확인 스냅샷(<code>registration.prepare()</code> 결과). 여기 있어야 <code>submit()</code>이 가능.</td></tr>
           <tr><td><code>registration_requests</code></td><td>제출된 용어 신청. <code>PENDING_REVIEW</code>/<code>WAITING_FOR_WORD_APPROVAL</code>/<code>APPROVED</code>/<code>REJECTED</code>.</td></tr>

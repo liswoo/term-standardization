@@ -74,7 +74,7 @@ def read_standard_catalog_xlsx(path):
             "domain_group": _cell(row[1]), "domain_classification": _cell(row[2]),
             "data_type": _cell(row[5]) or None, "data_length": _int_or_none(row[6]), "decimal_length": _int_or_none(row[7]),
             "storage_format": _cell(row[8]) or None, "display_format": _cell(row[9]) or None, "unit": _cell(row[10]) or None,
-            "status": _revision_status(row[13])}
+            "valid_values": _cell(row[11]) or None, "status": _revision_status(row[13])}
     for row in wb["공통표준단어"].iter_rows(min_row=2, values_only=True):
         name = _cell(row[1]) if row else ""
         if not name:
@@ -87,7 +87,9 @@ def read_standard_catalog_xlsx(path):
         if not name:
             continue
         terms[key(name)] = {"name": name, "definition": _cell(row[2]), "english_abbr": _cell(row[3]) or None,
-            "domain": _cell(row[4]), "synonyms": _split_list(row[10]), "status": _revision_status(row[12])}
+            "domain": _cell(row[4]), "valid_values": _cell(row[5]) or None, "display_format": _cell(row[7]) or None,
+            "administrative_code_name": _cell(row[8]) or None, "competent_agency": _cell(row[9]) or None,
+            "synonyms": _split_list(row[10]), "status": _revision_status(row[12])}
     return {"domains": list(domains.values()), "words": list(words.values()), "terms": list(terms.values())}
 
 def import_standard_catalog(path):
@@ -110,15 +112,16 @@ def import_standard_catalog(path):
     with db.connect() as conn:
         for d in data["domains"]:
             conn.execute("""INSERT INTO domains(code,description,source,domain_group,domain_classification,
-                data_type,data_length,decimal_length,storage_format,display_format,unit,status)
-                VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                data_type,data_length,decimal_length,storage_format,display_format,unit,valid_values,status)
+                VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
                 ON CONFLICT(code) DO UPDATE SET description=excluded.description,source=excluded.source,
                 domain_group=excluded.domain_group,domain_classification=excluded.domain_classification,
                 data_type=excluded.data_type,data_length=excluded.data_length,decimal_length=excluded.decimal_length,
                 storage_format=excluded.storage_format,display_format=excluded.display_format,unit=excluded.unit,
-                status=excluded.status""",
+                valid_values=excluded.valid_values,status=excluded.status""",
                 (d["code"],d["description"],source,d["domain_group"],d["domain_classification"],d["data_type"],
-                 d["data_length"],d["decimal_length"],d["storage_format"],d["display_format"],d["unit"],d["status"]))
+                 d["data_length"],d["decimal_length"],d["storage_format"],d["display_format"],d["unit"],
+                 d["valid_values"],d["status"]))
         known_domains = {r["code"] for r in conn.execute("SELECT code FROM domains").fetchall()}
         # Same incremental-embedding rule as terms below: a word whose name+definition
         # is unchanged (or whose embedding is already backfilled) skips re-embedding -
@@ -164,23 +167,29 @@ def import_standard_catalog(path):
             normalized_synonyms=[key(s) for s in t["synonyms"]]
             if existing.get(nkey)==t["definition"]:
                 conn.execute("""UPDATE standard_terms SET name=%s,domain=%s,synonyms=%s,normalized_synonyms=%s,
-                    noun_tokens=%s,source=%s,english_abbr=COALESCE(%s,english_abbr),status=%s
+                    noun_tokens=%s,source=%s,english_abbr=COALESCE(%s,english_abbr),status=%s,
+                    valid_values=%s,display_format=%s,administrative_code_name=%s,competent_agency=%s
                     WHERE normalized_name=%s""",
-                    (t["name"],t["domain"],t["synonyms"],normalized_synonyms,nouns,source,t["english_abbr"],t["status"],nkey))
+                    (t["name"],t["domain"],t["synonyms"],normalized_synonyms,nouns,source,t["english_abbr"],t["status"],
+                     t["valid_values"],t["display_format"],t["administrative_code_name"],t["competent_agency"],nkey))
                 skipped_unchanged+=1
                 continue
             vector=embed(t["name"]+" : "+t["definition"])
             embedded+=1
             conn.execute("""INSERT INTO standard_terms(id,name,normalized_name,definition,domain,synonyms,
-                normalized_synonyms,noun_tokens,source,embedding,embedding_model,english_abbr,status)
-                VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                normalized_synonyms,noun_tokens,source,embedding,embedding_model,english_abbr,status,
+                valid_values,display_format,administrative_code_name,competent_agency)
+                VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
                 ON CONFLICT(normalized_name) DO UPDATE SET name=excluded.name,definition=excluded.definition,
                 domain=excluded.domain,synonyms=excluded.synonyms,normalized_synonyms=excluded.normalized_synonyms,
                 noun_tokens=excluded.noun_tokens,source=excluded.source,embedding=excluded.embedding,
                 embedding_model=excluded.embedding_model,english_abbr=COALESCE(excluded.english_abbr,standard_terms.english_abbr),
-                status=excluded.status,updated_at=now()""",
+                status=excluded.status,valid_values=excluded.valid_values,display_format=excluded.display_format,
+                administrative_code_name=excluded.administrative_code_name,competent_agency=excluded.competent_agency,
+                updated_at=now()""",
                 (str(uuid.uuid5(uuid.NAMESPACE_URL,source+"/term/"+nkey)),t["name"],nkey,t["definition"],t["domain"],
-                 t["synonyms"],normalized_synonyms,nouns,source,vector,EMBEDDING_MODEL,t["english_abbr"],t["status"]))
+                 t["synonyms"],normalized_synonyms,nouns,source,vector,EMBEDDING_MODEL,t["english_abbr"],t["status"],
+                 t["valid_values"],t["display_format"],t["administrative_code_name"],t["competent_agency"]))
     print(json.dumps({"domains_imported":len(data["domains"]),"words_imported":len(data["words"]),
         "terms_total":len(data["terms"]),"terms_embedded":embedded,"terms_unchanged_skipped":skipped_unchanged,
         "terms_skipped_unknown_domain":len(skipped_unknown_domain),

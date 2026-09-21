@@ -90,6 +90,17 @@ propose_term → awaiting_term_confirm → confirm_term
 - **AI 대화 경로는 새로 만들지 않았습니다**: "대화로 등록 시작" 버튼은 그냥 기존 플로팅 챗봇을 열고(`openChat()`) `submitChatMessage("용어를 등록할래요")`(단어는 "단어를 등록할래요")를 대신 보낼 뿐입니다 — 이미 검증된 챗봇 플로우를 그대로 재사용.
 - **아직 없는 것**: 용어/단어의 "내 신청 목록" 전용 뷰(도메인처럼) — "조회" 탭이 검토 대기 신청까지 이미 병합해서 보여주므로 중복 없이 생략. 간편 입력의 성공 경로 자체(용어)는 실제 LLM 호출이 있어 `RUN_LLM_TESTS=1` 없이는 자동 테스트하지 않음(기존 관례와 동일) — 브라우저로 직접 확인하세요.
 
+## 정부 원본 xlsx의 용어별 누락 컬럼 + "도메인이 결정하는 값" 표시 원칙 (2026-09-18)
+
+정부 공공데이터 공통표준 xlsx(`data/공공데이터 공통표준(2025.11월).xlsx`)의 3개 시트를 실측 대조해서 찾은 결과: **단어는 빠진 게 없었고**, **도메인은 스키마엔 있던 `valid_values` 컬럼을 `import_standard_catalog()`가 안 채우던 버그**(수정 완료, 129개 중 14개에 실제 값), **용어만 실제로 4개 컬럼이 DB 어디에도 없었습니다** — `valid_values`(허용값)/`display_format`(표현형식)/`administrative_code_name`(행정표준코드명)/`competent_agency`(소관기관명). 전부 `standard_terms`에 추가하고 `import_standard_catalog()`로 채웠습니다.
+
+**처음엔 이 4개를 신청 폼에도 입력받게 만들었다가 뒤집었습니다.** 용어-도메인 쌍으로 허용값/표현형식을 다시 비교해보니(도메인 값과 "-"/타입 차이를 정확히 정규화해서 비교하는 게 중요했습니다 — 처음엔 비교 스크립트 버그로 표현형식 불일치를 71건이라고 했다가 705건으로 잘못 다시 셌던 적도 있습니다), 82/13,176건(허용값)을 제외하면 사실상 **도메인이 결정하는 값**이었고, 행정표준코드명·소관기관명은 애초에 신청자가 알 수 있는 정보가 아니었습니다. 그래서:
+
+- **`registration_requests`엔 이 4개 컬럼을 추가하지 않았습니다** — 챗봇도 간편 입력 폼도 받지 않고, `standard_terms`는 오직 `import_standard_catalog()`로만 채워집니다(정부 원본 데이터 보존/표시 전용).
+- 대신 **"도메인이 결정하는 값"을 신청 경로 전반에 보여주는 패턴**을 새로 만들었습니다: 새 `GET /admin/domains/{code}`(전체 도메인 스펙 반환) → 프론트 `fetchDomainDetail()`이 (1) 용어 신청 간편 입력 폼에서 도메인 선택 시 허용값/표현형식/저장형식을 읽기전용으로 자동 표시(제출 payload엔 미포함), (2) 챗봇의 등록완료 카드(`renderRegistrationCard`, 이제 async — `renderStructuredBlock`/`submitChatMessage`도 그래서 `await` 체인으로 바뀜)에서 대화 중엔 안 물어본 도메인 전체 스펙을 완료 시점에 한꺼번에 보여줍니다. **"대화 중엔 쓸데없는 정보를 묻지 않고, 완료 시점엔 전부 보여준다"**는 원칙입니다.
+- "표준 데이터 조회"(`unified_catalog.py`)의 TERM 행은 `domains`를 LEFT JOIN해서 `valid_values`/`display_format`은 용어 자신의 값이 있으면 그걸(COALESCE, 정부 원본의 소수 예외 보존), 없으면(신규 신청 용어 전부 포함) 도메인 값을 대신 보여주고, `storage_format`/`data_type`/`data_length`/`decimal_length`/`unit`은 항상 도메인에서 가져옵니다(용어 자체엔 저장 안 함).
+- **동의어(이음동의어) 챗봇 미수집 문제는 아직 미해결입니다** — `conversation.py`의 용어 등록 흐름이 동의어를 아예 안 물어보고 빈 배열로 등록하며, `registration.prepare()`의 `SYNONYM_CONFLICT` 검사도 그래서 챗봇 경로에선 전혀 안 탑니다. 새 대화 단계(intent) 추가 + Dify 챗플로우 재배포가 필요해 별도 작업으로 미룬 상태 — 다음에 다룰 때는 이 CLAUDE.md 절부터 먼저 읽으세요.
+
 ## 두 개의 독립된 벡터/RAG 시스템 — 절대 섞지 마세요
 
 1. **MCP 자체 pgvector** (`term_service/embeddings.py`, `search.py`, `guideline.py`) — `standard_terms`(용어 유사도/중복 판정), `guideline_chunks`(`standard_guide.md`를 벡터화, 가이드라인 준수 검사·약어 추천·정의 추천의 근거), `standard_words`(2026-09-14 추가 — 의미로 기존 단어 찾기, 위 "표준단어 계층" 절 참고)를 담당. **이게 업무 판단의 기준**입니다.
