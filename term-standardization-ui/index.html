@@ -217,11 +217,15 @@
             </div>
             <form id="term-request-form" class="auth-form">
               <label>용어명<input type="text" id="tr-term-name" required minlength="2" maxlength="20" /></label>
+              <p class="field-hint" id="tr-term-name-hint" hidden></p>
               <label>정의<textarea id="tr-definition" required minlength="5" maxlength="4000"></textarea></label>
+              <div id="tr-definition-suggestion" hidden></div>
               <label>도메인<input type="text" id="tr-domain" list="tr-domain-options" required maxlength="100" /></label>
               <datalist id="tr-domain-options"></datalist>
+              <p class="field-suggestion-note" id="tr-domain-suggestion-note" hidden></p>
               <label>동의어<input type="text" id="tr-synonyms" placeholder="쉼표로 구분(선택)" maxlength="1000" /></label>
               <label>영문 약어<input type="text" id="tr-english-abbr" placeholder="선택" maxlength="20" /></label>
+              <p class="field-suggestion-note" id="tr-english-abbr-suggestion-note" hidden></p>
               <div class="domain-derived-fields" id="tr-domain-derived" hidden>
                 <p class="muted">아래는 선택한 도메인이 정하는 값입니다(참고용 - 별도 입력 불필요).</p>
                 <label>허용값<input type="text" id="tr-valid-values" readonly /></label>

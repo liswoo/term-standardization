@@ -183,11 +183,19 @@ class DomainSuggestion(Schema):
     display_format: str = Field(default="", description="Only set alongside code, when the definition implies a specific display/presentation format.")
     valid_values: str = Field(default="", description="Only set alongside code, comma-separated, ONLY when the definition explicitly enumerates a closed set of values - never invent values the definition doesn't support.")
     description: str = Field(default="", description="Only set alongside code: a confident one-sentence Korean description of the domain.")
+    changed_fields: list[str] = Field(default_factory=list, description=
+        "Only meaningful when current_draft is provided (an edit, not a fresh draft): the exact "
+        "field names - from code, domain_group, data_type, data_length, decimal_length, "
+        "display_format, valid_values, description - that the correction actually asks to "
+        "change. Every field you name here is used as you wrote it; every field you do NOT "
+        "name here is forced back to current_draft's own value regardless of what you put in "
+        "this response, so list every field the correction implies changing, and nothing else.")
     rationale: str = Field(default="", description=
         "One short Korean sentence. For a new domain: must name the specific word or phrase "
         "in the definition each proposed field (especially data_type/data_length/valid_values) "
         "is based on - if no such basis exists for a field, do not propose it; ask a "
-        "clarifying question instead.")
+        "clarifying question instead. For an edit (current_draft present): state exactly what "
+        "changed and why, quoting the correction.")
 
 class DomainSuggestionResult(DomainSuggestion):
     method: str

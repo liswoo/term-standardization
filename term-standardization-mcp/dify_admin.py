@@ -33,8 +33,11 @@ with app.app_context():
 
 def execute(body):
     script=PRELUDE+"\n".join("    "+line for line in body.splitlines())+"\nimport sys,os\nsys.stdout.flush()\nos._exit(0)\n"
+    # 2026-09-21: measured `uv run --no-sync ... python -c "print(1)"` alone (before any
+    # app_factory/DSL work) taking 60-90s on this machine - 150s left no margin for the
+    # real create_app()+import_app() work on top of that baseline and timed out live.
     result=subprocess.run(["docker","exec","-i","docker-api-1","uv","run","--no-sync","--project","/app/api","python","-"],
-        input=script,text=True,encoding="utf-8",capture_output=True,timeout=150)
+        input=script,text=True,encoding="utf-8",capture_output=True,timeout=400)
     if result.returncode:
         # Administrative code carries no passwords or decrypted keys.
         raise RuntimeError(result.stderr[-3500:])

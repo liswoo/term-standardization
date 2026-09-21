@@ -104,6 +104,14 @@
               → awaiting_abbreviation (영문약어 제안)
                   → set_abbreviation → awaiting_confirm
                       → confirm_registration → submitted | registration_failed  [종료]
+          → (추천/기존 도메인 전부 거절) request_new_domain [신규 도메인 서브플로우, 2026-09-21]
+              → domain_suggestion.suggest_domain()이 정의에서 스펙 초안
+              → (모호) awaiting_domain_spec_clarify → request_new_domain(재질문 답변)으로 재초안
+              → (기존 도메인과 실은 일치) → 그 도메인으로 곧장 진행(위 set_domain 이후와 동일 경로)
+              → awaiting_domain_spec_confirm
+                  → confirm_domain_spec(수정 요청) → 재초안
+                  → confirm_domain_spec(확정) → awaiting_domain_pii_choice
+                      → set_domain_pii → domain_registration.prepare()+submit() 즉시 호출 → 위 set_domain 이후와 동일 경로
 
 ── 독립 진입: 단어를 바로 등록하고 싶을 때 ──
 propose_word → confirm_word

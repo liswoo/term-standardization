@@ -214,7 +214,33 @@ let the still-violating original name slip through registration unchanged).""",
 A request to see, repeat, or explain the domain options (e.g. '제공해줘', '알려줘', '뭐가 있어', '추천해줘', '보여줘') is NOT a selection -> show_candidates.
 Example: '제공해줘' -> show_candidates, NOT set_domain.
 Only classify set_domain when the user names/picks an actual domain (by its code or its description) or explicitly repeats a code you already showed them.
+A statement that none of the shown domains fit and a new one should be created (e.g. '이 중엔 없어요', '새로 만들어야 해요',
+'해당하는 게 없어요', '새 도메인 만들어줘') -> request_new_domain, value="" (no description needed - the system already
+has the term's name/definition to draft from).
 A request to change the definition just given (e.g. '정의를 다시 쓸게', '정의를 바꾸고 싶어') -> edit_definition.""",
+"awaiting_domain_spec_clarify":
+"""At awaiting_domain_spec_clarify, the stored state's domain_suggestion field holds a clarifying question with
+short candidate-resolution labels (domain_suggestion.options) about the new domain's spec. A pick of one of those
+options (clicked or typed exactly), or the user's own answer to that question -> request_new_domain, value = that
+exact text verbatim - this is answering the clarifying question, NOT a yes/no confirmation and NOT a fresh
+description of the term itself.
+Only an actual question about this step -> help.""",
+"awaiting_domain_spec_confirm":
+"""At awaiting_domain_spec_confirm, the stored state's domain_suggestion field holds a complete drafted domain
+spec (code/domain_group/data_type/etc., shown to the user as a card). Explicit acceptance (e.g. '네', '좋아요',
+'이대로 할게요', '그걸로 해줘') -> confirm_domain_spec confirmed=true, value="".
+A correction describing what should change about the spec (e.g. '길이를 늘려줘', '허용값에 하나 더 추가해줘', '데이터유형이
+틀렸어요') -> confirm_domain_spec confirmed=false, value = that exact text verbatim (never invent/reformat it) - this
+redrafts the spec, it does not restart the whole domain sub-flow.
+A bare rejection with no description of what to change (e.g. '아니요', '다시') -> confirm_domain_spec confirmed=false,
+value="" (the system will ask what to change next).
+Only an actual question about this step -> help.""",
+"awaiting_domain_pii_choice":
+"""At awaiting_domain_pii_choice, the system is asking whether the new domain's values are personal information.
+Explicit yes (e.g. '네', '개인정보 맞아요', '예') -> set_domain_pii confirmed=true. Explicit no (e.g. '아니요', '개인정보
+아니에요', '아뇨') -> set_domain_pii confirmed=false. This is a plain yes/no answer, not an accept/reject of a
+proposal - never classify it as confirm_domain_spec here.
+Only an actual question about this step -> help.""",
 "awaiting_definition":
 """At awaiting_definition, the stored state's definition_suggestion field may hold a proposed
 definition (definition_suggestion.definition) or, if the term name was ambiguous, a clarifying
@@ -303,7 +329,8 @@ Only an actual question about the abbreviation or its rules -> help.""",
 }
 STAGE_RULES={stage:_pv(value) for stage,value in _STAGE_RULES_RAW.items()}
 CLASSIFY_TERMINAL_RULE=_pv("At submitted/registration_failed/existing_term_found/pending_request_found/definition_blocked/cancelled/"
-    "word_reused/word_submitted/word_registration_failed/word_request_blocked/term_lookup_result, a new term name to "
+    "word_reused/word_submitted/word_registration_failed/word_request_blocked/term_lookup_result/domain_spec_unavailable/"
+    "domain_request_blocked, a new term name to "
     "register -> propose_term; a description asking to find/recommend a 용어 (or 단어/용어 unspecified) -> find_term; "
     "a description explicitly asking for a 단어/표준단어 -> propose_word. "
     "The exact phrase '다른 용어를 등록할래요' (this precise button-generated text, not a paraphrase) -> propose_term "
@@ -311,7 +338,8 @@ CLASSIFY_TERMINAL_RULE=_pv("At submitted/registration_failed/existing_term_found
     "'다른 단어를 등록할래요' -> propose_word with value=''. The exact phrase '여기서 마칠게요' -> restart "
     "(this fully resets the conversation to idle - never confuse it with the propose_term/propose_word phrases above).")
 CLASSIFY_TERMINAL_STAGES=["submitted","registration_failed","existing_term_found","pending_request_found","definition_blocked","cancelled",
-    "word_reused","word_submitted","word_registration_failed","word_request_blocked","term_lookup_result"]
+    "word_reused","word_submitted","word_registration_failed","word_request_blocked","term_lookup_result",
+    "domain_spec_unavailable","domain_request_blocked"]
 CLASSIFY_TAIL=_pv("""Edit definition/domain intents only change stage; ask for the replacement on the next turn.
 No invented term/domain/definition. If unsure use unknown. value is empty when not applicable.
 confirmed is a JSON boolean and defaults false.""")
@@ -330,9 +358,14 @@ awaiting_term_confirm: 추출 용어를 인용하고 맞는지 묻고 '네, 맞�
 화면 하단에는 별도의 표/카드 UI가 상세 데이터(도메인 목록, 유사 용어 비교, 위반 사유, 추천 약어, 검토 대기 정보, 등록 결과 등)를 항상 정확하게 그려서 보여줍니다. 아래 각 stage에서 그 상세 데이터를 답변 문장 안에서 다시 나열·인용하지 마세요 - 짧은 안내 문장 하나와 다음 행동 질문이면 충분하고, 나머지는 화면에 이미 보이는 표/카드를 가리키면 됩니다 (예: "아래 목록에서 선택해주세요", "아래 비교 결과를 참고해주세요").
 awaiting_guideline_choice: 위반이 있었다는 사실과 어떤 종류인지(형태소 규칙 또는 표준가이드 규칙)만 한 문장으로 언급하고, 구체적 사유·근거·후보는 반복하지 말고 아래에서 확인 후 선택하거나 새 이름을 입력해달라고만 요청하세요.
 awaiting_abbreviation: 영문 약어 후보가 아래에 제시되었다고만 안내하고, 그 약어로 등록할지 다른 약어를 직접 입력할지 물으세요. abbreviation/rationale 값 자체를 문장에서 다시 쓰지 마세요. 한글 용어와 영문 약어는 한 쌍으로 등록되며, 아직 최종 등록이 완료된 게 아님을 명시.
-awaiting_domain_choice 또는 error가 UNRECOGNIZED_DOMAIN: 도메인 선택지가 아래 표에 정리되어 있다고만 안내하고 그중 하나를 선택해달라고 요청하세요. 코드/설명/비율을 문장으로 다시 나열하지 마세요.
+awaiting_domain_choice 또는 error가 UNRECOGNIZED_DOMAIN: 도메인 선택지가 아래 표에 정리되어 있다고만 안내하고 그중 하나를 선택하거나, 맞는 게 없으면 새로 만들 수도 있다고 짧게 덧붙이세요. 코드/설명/비율을 문장으로 다시 나열하지 마세요.
 UNRECOGNIZED_DOMAIN이면 방금 입력하신 내용은 실제 등록 가능한 도메인이 아니라고 먼저 안내한 뒤 아래 표에서 하나를 선택하거나 정확한 도메인명을 다시 말해달라고 요청하세요.
 SYNONYM_MATCH이면 기존 표준용어 사용을 먼저 권장하되 별도 정의가 있으면 비교 가능함을 설명.
+awaiting_domain_spec_clarify: domain_spec_hint에 이번 턴에 안내할 문장이 정해져 있습니다 - 그대로 다듬어 포함하세요. 확인 질문의 구체적 내용은 화면에 별도로 표시되니 문장에서 반복하지 마세요.
+awaiting_domain_spec_confirm: existing_domain_matched_hint가 비어있지 않으면 그 문장을 먼저 포함하세요(신규 도메인이 아니라 기존 도메인을 그대로 쓰게 됐다는 뜻입니다). 그렇지 않으면 domain_spec_hint를 그대로 다듬어 포함하세요 - 새 도메인 스펙(데이터유형/길이/허용값 등)이 아래 카드에 준비되어 있다고만 안내하고, 그대로 등록할지 아니면 무엇을 바꿀지 직접 말해달라고 물으세요. 스펙 값 자체를 문장에서 다시 나열하지 마세요.
+awaiting_domain_pii_choice: 방금 확정한 도메인의 값이 개인정보에 해당하는지 예/아니오로 물으세요. 스펙 내용을 반복하지 마세요.
+domain_spec_unavailable: domain_spec_hint를 그대로 다듬어 포함하세요 - AI가 지금 새 도메인 스펙을 만들지 못했다는 사실을 안내하고, 대신 "표준 데이터 조회" 화면의 도메인 신청 탭에서 직접 입력하거나 다른 용어명으로 다시 시작할 수 있다고 안내하세요.
+domain_request_blocked: 새 도메인 신청이 접수되지 않은 이유를 아래 근거를 바탕으로 짧게 안내하고, 다른 용어명으로 다시 시작하거나 도메인 신청 탭에서 직접 입력할 수 있다고 안내하세요.
 awaiting_definition: definition_hint에 이번 턴에 사용자에게 안내할 문장이 이미 정해져 있습니다 - 그 문장을 자연스럽게 다듬어 답변에 포함하세요(의미를 바꾸거나 다른 안내로 대체하지 마세요, has_definition_suggestion 값으로 직접 판단하지 마세요). 정의/질문/후보의 구체적 내용은 화면에 별도로 표시되니 문장에서 반복하지 마세요. 기존 후보의 정의를 선택하라고 질문하지 마세요. 조회/도움말 요청은 응답하되 정의로 저장하지 말 것.
 awaiting_confirm: 비교 가능한 기존 용어가 있었는지 여부만 한 문장으로 언급하고("유사한 기존 용어가 있어 아래에 비교 결과를 정리했습니다" 등), 개별 용어명·판정·사유는 나열하지 마세요. UNCERTAIN이 있었다면 의미가 다르다고 단정하지 말고 담당자 판단이 필요하다고만 짧게 덧붙이세요. 등록하려는 용어명/정의/도메인/영문약어는 아래 요약에 이미 나오므로 문장에서 반복하지 말고, 등록 요청을 진행할지만 물으세요.
 existing_term_found: existing_match_hint에 이번 턴에 안내할 문장이 정해져 있습니다 - 그 문장을 자연스럽게 다듬어 포함하세요(의미를 바꾸지 마세요). 용어명·정의·도메인·영문약어는 아래 카드에 나오므로 반복하지 마세요. 기존 용어 사용을 권장하세요. 등록 여부나 네/아니오 확인 질문을 절대로 만들지 마세요. 다른 용어를 검토하려면 새 이름을 입력할 수 있다고만 안내하세요.
@@ -349,7 +382,7 @@ awaiting_word_abbreviation: 새 표준단어의 영문 약어 후보가 아래�
 word_reused: 설명한 개념이 이미 등록된 표준단어로 존재해 그 단어를 그대로 쓰기로 했다는 사실만 한 문장으로 안내하세요(어떤 단어인지는 아래 카드 참고). 원래 등록하려던 용어가 있었다면 이어서 정의 작성 단계로 자동 진행됨을 언급하지 말고, 다음 턴의 실제 stage 안내를 따르세요.
 word_submitted: 새 표준단어 등록 신청이 접수되었다는 사실과(상세는 아래 참고) 담당자 승인 전 정식 표준이 아님을 한 문장으로 안내하세요. 단어명/약어를 문장에서 반복하지 마세요.
 word_registration_failed/word_request_blocked: 단어 등록이 완료되지 않은 이유를 아래 근거를 바탕으로 짧게 안내하고, 다시 설명하거나 취소할 수 있다고 안내하세요.
-next_action이 unknown이면 요청을 이해하지 못했다고 짧게 안내하고 business_result.state.stage에 맞는 입력만 다시 요청하세요 - 아래 표에 없는 stage는 지어내지 말고 반드시 이 목록에서만 고르세요: awaiting_term_direct→등록할 용어명, awaiting_term_confirm→방금 추출한 용어가 맞는지 '네, 맞아요' 또는 '아니요, 다시 입력할게요' 중 선택, awaiting_guideline_choice→아래 후보 중 선택 또는 새 용어명, awaiting_domain_choice→도메인 선택, awaiting_definition→정의 작성, awaiting_abbreviation→아래 약어 후보 확인 또는 직접 입력, awaiting_confirm→등록 여부, awaiting_word_split_choice→하나로 등록할지 나눠서 등록할지 선택, awaiting_word_meaning→개념 사용 용도 설명, awaiting_word_confirm→단어 후보 확인, awaiting_word_definition→단어의 정의 작성, awaiting_word_abbreviation→단어 약어 후보 확인 또는 직접 입력. 다른 단계에서나 나올 법한 질문(예: 정의 작성 요청)을 지어내지 마세요.
+next_action이 unknown이면 요청을 이해하지 못했다고 짧게 안내하고 business_result.state.stage에 맞는 입력만 다시 요청하세요 - 아래 표에 없는 stage는 지어내지 말고 반드시 이 목록에서만 고르세요: awaiting_term_direct→등록할 용어명, awaiting_term_confirm→방금 추출한 용어가 맞는지 '네, 맞아요' 또는 '아니요, 다시 입력할게요' 중 선택, awaiting_guideline_choice→아래 후보 중 선택 또는 새 용어명, awaiting_domain_choice→도메인 선택 또는 새로 만들기, awaiting_definition→정의 작성, awaiting_abbreviation→아래 약어 후보 확인 또는 직접 입력, awaiting_confirm→등록 여부, awaiting_word_split_choice→하나로 등록할지 나눠서 등록할지 선택, awaiting_word_meaning→개념 사용 용도 설명, awaiting_word_confirm→단어 후보 확인, awaiting_word_definition→단어의 정의 작성, awaiting_word_abbreviation→단어 약어 후보 확인 또는 직접 입력, awaiting_domain_spec_clarify→도메인 스펙 확인 질문에 답변, awaiting_domain_spec_confirm→새 도메인 스펙 확인 또는 수정 요청, awaiting_domain_pii_choice→개인정보 해당 여부 예/아니오. 다른 단계에서나 나올 법한 질문(예: 정의 작성 요청)을 지어내지 마세요.
 error가 WORD_MEANING_REQUIRED 또는 TERM_MEANING_REQUIRED이면 meaning_required_hint에 이번 턴에 안내할 문장이 이미 정해져 있습니다 - 그 문장을 자연스럽게 다듬어 그대로 답변하세요(두 에러가 서로 비슷해 보여도 절대 다른 쪽 문구를 가져다 쓰지 마세요 - meaning_required_hint에 있는 그대로만 쓰세요). suppress_stage_summary가 true이면 stage의 완료/차단 설명(예: 접수 완료, 재사용 완료)은 이번 턴에 언급하지 말고 이 안내만 하세요.
 error가 WORD_SUGGESTION_NOT_READY면 단어 추천이 아직 준비되지 않았다고 안내하고 다시 설명해 달라고 요청하세요.
 term_lookup_result: term_lookup_hint에 이번 턴에 안내할 문장이 정해져 있습니다 - 그 문장을 자연스럽게 다듬어 답변에 포함하세요(has_term_matches 값으로 직접 판단하지 마세요). 후보 목록의 이름/약어/도메인/정의는 화면 표에 나오므로 문장에서 나열하지 마세요.
@@ -442,7 +475,8 @@ def main(action: list, rag: list) -> dict:
     # which reads this same set of error codes off the action node's own output.)
     suppress_stage_summary=error in ("TERM_REQUIRED","WORD_MEANING_REQUIRED","TERM_MEANING_REQUIRED") and stage in (
         "submitted","registration_failed","existing_term_found","pending_request_found","definition_blocked","cancelled",
-        "word_reused","word_submitted","word_registration_failed","word_request_blocked","term_lookup_result")
+        "word_reused","word_submitted","word_registration_failed","word_request_blocked","term_lookup_result",
+        "domain_spec_unavailable","domain_request_blocked")
     # The "여기서 마칠게요" terminal-stage button sends restart (see CLASSIFY_TERMINAL_RULE),
     # which conversation.py resets to a bare {"stage":"awaiting_term_direct"} - no leftover
     # fields to redact, so unlike suppress_stage_summary above this needs no flag-based
@@ -484,6 +518,9 @@ def main(action: list, rag: list) -> dict:
                 lines.append(f"- {d['code']} ({d.get('description') or '설명 없음'}): 비교군에는 없지만 등록 가능한 도메인")
                 options.append({"label":f"{d['code']} ({d.get('description') or '설명 없음'})","value":d["code"]})
         domain_summary="\\n".join(lines) if lines else "비교 가능한 근거가 없어 추천을 만들 수 없습니다. known_domains 중 하나를 직접 선택해야 합니다."
+        # Always available at this step (see conversation.py's request_new_domain) -
+        # appended after the catalog options, never replacing them.
+        options.append({"label":"이 중엔 없어요, 새로 만들래요","value":"이 중엔 없어요, 새로 만들래요"})
     elif stage=="awaiting_term_confirm":
         options=[{"label":"네, 맞아요","value":"네, 맞아요"},{"label":"아니요, 다시 입력할게요","value":"아니요, 다시 입력할게요"}]
     elif stage=="awaiting_guideline_choice":
@@ -522,6 +559,17 @@ def main(action: list, rag: list) -> dict:
     elif stage=="awaiting_word_abbreviation":
         suggested=(state.get("word_registration_payload") or {}).get("english_abbr")
         options=[{"label":f"네, {suggested}로 할게요","value":suggested}] if suggested else []
+    elif stage=="awaiting_domain_spec_clarify":
+        dom_sug=state.get("domain_suggestion") or {}
+        options=[{"label":o,"value":o} for o in dom_sug.get("options",[])]
+    elif stage=="awaiting_domain_spec_confirm":
+        # No generic reject button, same reasoning as awaiting_definition: rejecting
+        # here means describing WHAT to change, which can't be a canned button.
+        dom_sug=state.get("domain_suggestion") or {}
+        options=[{"label":"네, 이 스펙으로 할게요","value":"네, 이 스펙으로 할게요"}] if dom_sug.get("code") else []
+    elif stage=="awaiting_domain_pii_choice":
+        options=[{"label":"예, 개인정보입니다","value":"예, 개인정보입니다"},
+            {"label":"아니요, 개인정보 아닙니다","value":"아니요, 개인정보 아닙니다"}]
     # Same reliability problem as domain_summary above: comparisons[] only carries
     # an opaque existing_term_id, and the matched term's own name/definition/domain
     # lives in a separate search.candidates list - pre-join them here instead of
@@ -654,13 +702,37 @@ def main(action: list, rag: list) -> dict:
         word_hint="새로운 표준단어 후보가 아래에 준비되어 있다고 안내하고, 확인 후 그 단어로 등록할지 물어보세요."
     else:
         word_hint="단어 추천을 만드는 데 실패했습니다. 어떤 개념인지 다시 한 번 설명해 달라고 요청하세요."
-    # A term submitted alongside a brand-new (not-yet-approved) word starts life as
-    # WAITING_FOR_WORD_APPROVAL, not the usual PENDING_REVIEW (see registration.submit()) -
-    # worth calling out explicitly so the user doesn't think it's already in the normal
-    # review queue.
+    # Same "decide the sentence in code, let the reply LLM only relay it" pattern as
+    # word_hint above, for the new-domain sub-flow (conversation.py's request_new_domain/
+    # confirm_domain_spec/set_domain_pii).
+    domain_suggestion=state.get("domain_suggestion") or {}
+    has_domain_suggestion=stage in ("awaiting_domain_spec_clarify","awaiting_domain_spec_confirm") and bool(domain_suggestion)
+    # existing_domain_match can land the flow straight at awaiting_abbreviation (see
+    # conversation.py's _apply_domain_suggestion) - domain_suggestion itself is gone by
+    # then (only the plain "domain" field remains), so this flag/hint is captured here,
+    # at render time, from the action node's own result rather than from stage/state.
+    existing_domain_matched=result.get("existing_domain_matched") or ""
+    existing_domain_matched_hint=(f"신규 도메인을 새로 만들 필요 없이, 이미 있는 '{existing_domain_matched}' 도메인이 이 용어에 맞아 "
+        "그 도메인으로 바로 진행했다고 안내하세요." if existing_domain_matched else "")
+    if stage=="domain_spec_unavailable":
+        domain_spec_hint="지금 AI가 새 도메인 스펙을 만들지 못했다는 사실을 안내하세요."
+    elif not has_domain_suggestion:
+        domain_spec_hint=""
+    elif domain_suggestion.get("ambiguous"):
+        domain_spec_hint="새 도메인의 스펙을 확정하기에 정보가 부족해 아래에 확인 질문과 후보가 준비되어 있다고 안내하고, 후보 중 선택하거나 다시 설명해 달라고 요청하세요."
+    elif domain_suggestion.get("code"):
+        domain_spec_hint="새 도메인 스펙 초안이 아래에 준비되어 있다고 안내하고, 그대로 등록할지 무엇을 바꿀지 직접 말해달라고 요청하세요."
+    else:
+        domain_spec_hint="도메인 스펙 초안을 만드는 데 실패했습니다. 어떤 데이터인지 다시 한 번 설명해 달라고 요청하세요."
+    # A term submitted alongside a brand-new (not-yet-approved) word or domain starts life
+    # as WAITING_FOR_WORD_APPROVAL/WAITING_FOR_DOMAIN_APPROVAL, not the usual PENDING_REVIEW
+    # (see registration.submit()) - worth calling out explicitly so the user doesn't think
+    # it's already in the normal review queue.
     registration=state.get("registration") or {}
     registration_status_hint=("이 용어는 함께 신청하신 표준단어가 먼저 승인되어야 그 다음 검토가 진행된다고 안내하세요."
-        if stage=="submitted" and registration.get("status")=="WAITING_FOR_WORD_APPROVAL" else "")
+        if stage=="submitted" and registration.get("status")=="WAITING_FOR_WORD_APPROVAL" else
+        "이 용어는 새로 신청한 도메인이 먼저 승인되어야 그 다음 검토가 진행된다고 안내하세요."
+        if stage=="submitted" and registration.get("status")=="WAITING_FOR_DOMAIN_APPROVAL" else "")
     has_term_matches=stage=="term_lookup_result" and bool((state.get("term_lookup") or {}).get("matches"))
     if stage!="term_lookup_result":
         term_lookup_hint=""
@@ -694,6 +766,10 @@ def main(action: list, rag: list) -> dict:
         state["registration"]={"note":"등록 결과는 화면 카드에 표시됨"}
     if has_word_suggestion:
         state["word_suggestion"]={"note":"단어 추천/질문은 화면 카드에 표시됨"}
+    if has_domain_suggestion:
+        state["domain_suggestion"]={"note":"도메인 스펙 초안/질문은 화면 카드에 표시됨"}
+    if stage=="domain_request_blocked" and state.get("domain_prepare_error"):
+        state["domain_prepare_error"]={"note":"실패 사유는 화면 카드에 표시됨"}
     if stage=="awaiting_word_abbreviation" and state.get("word_registration_payload"):
         state["word_registration_payload"]={"note":"추천 약어는 화면 카드에 표시됨"}
     if stage in ("word_reused","word_submitted") and (state.get("resolved_word") or state.get("word_registration")):
@@ -712,6 +788,8 @@ def main(action: list, rag: list) -> dict:
         "has_domain_options":has_domain_options,"has_comparisons":has_comparisons,"existing_match_hint":existing_match_hint,
         "has_definition_suggestion":has_definition_suggestion,"definition_hint":definition_hint,
         "has_word_suggestion":has_word_suggestion,"word_hint":word_hint,
+        "has_domain_suggestion":has_domain_suggestion,"domain_spec_hint":domain_spec_hint,
+        "existing_domain_matched_hint":existing_domain_matched_hint,
         "has_term_matches":has_term_matches,"term_lookup_hint":term_lookup_hint,
         "meaning_required_hint":meaning_required_hint,"suppress_stage_summary":suppress_stage_summary,
         "close_hint":close_hint,"registration_status_hint":registration_status_hint},ensure_ascii=False),

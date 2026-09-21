@@ -498,6 +498,58 @@
             <p>실측(<code>RUN_LLM_TESTS=1</code>): "신용카드, 계좌이체, 간편결제, 포인트 중 하나로 결제 방법을 구분하는 코드"라는 정의를 주자 <code>valid_values</code>를 정확히 그 4개 값으로, <code>data_type</code>="CHAR"(길이 1), <code>rationale</code>도 정의 문구를 인용해 채움 — 구조는 되지만 아직 <code>conversation.py</code>에 연결 안 된 상태.</p>
           </div>
         </div>
+
+        <div class="changelog-entry">
+          <div class="changelog-date">2026-09-21</div>
+          <div class="changelog-title">신규 도메인 서브플로우 챗봇 연결 + 실배포 검증 (3/3) <span class="pill pill-added">added</span></div>
+          <div class="changelog-body">
+            <p><strong>구현</strong>: <code>conversation.py</code>에 <code>request_new_domain</code>/<code>confirm_domain_spec</code>/<code>set_domain_pii</code> 인텐트와 <code>awaiting_domain_spec_clarify</code>/<code>awaiting_domain_spec_confirm</code>/<code>awaiting_domain_pii_choice</code>/<code>domain_spec_unavailable</code>/<code>domain_request_blocked</code> 단계 추가. <code>set_domain</code>의 마무리 로직(<code>registration.prepare()</code>+약어 추천)을 <code>_finalize_domain()</code>으로 뽑아 신규 도메인 확정 경로와 공유. <code>build_chatflow.py</code>의 CLASSIFY 규칙·RENDER 안내(<code>domain_spec_hint</code>/<code>existing_domain_matched_hint</code>, word_hint와 동일한 "코드가 문장 결정, LLM은 다듬기만" 패턴)·퀵리플라이 버튼을 전부 갱신하고 <code>dify-chatflow.yaml</code> 재생성. <code>app.js</code>에 <code>renderDomainSuggestionCard</code>/<code>renderDomainRequestBlockedCard</code> 추가.</p>
+            <p><strong>검증 방법 — curl 대신 진짜 스트리밍 API로 3회 전 구간 실행</strong>: 배포(<code>dify_admin.py import</code> → <code>scripts/publish_chatflow.py</code>) 후, 단어 갭이 있는 용어("간편결제OOO코드") → 단어 서브플로우 → 도메인 전부 거절 → 신규 스펙 초안 → 확정 → 개인정보 질문 → 약어 → 최종 제출(<code>WAITING_FOR_DOMAIN_APPROVAL</code>) → <code>manage.py approve-domain</code> → 용어 자동 <code>PENDING_REVIEW</code> 승격까지 실제 `/v1/chat-messages` 스트리밍 호출로 확인. 두 번째 실행에서는 <code>existing_domain_match</code> 안전망(첫 실행에서 만든 도메인을 두 번째 용어가 실제로 재사용)도 실측으로 확인.</p>
+            <p><strong>과정에서 발견한 문제 둘, 이번 작업과는 분리 처리</strong>: (1) <code>dify_admin.py</code>의 배포 서브프로세스 타임아웃(150초)이 이 환경 기준 마진이 없어(아무 것도 안 하는 <code>uv run</code> 호출조차 60~90초) <code>400</code>으로 올림 — 인프라 성격이라 이번 커밋에 포함. (2) <code>set_word_abbreviation</code>이 <code>PENDING_REQUEST_ALREADY_EXISTS</code>(같은 신규 단어가 다른 대화에서 이미 대기 중)를 처리하지 않고 의존성 추적 없이 용어 흐름을 그냥 재개시키는 기존 버그를 반복 테스트 중 실제 개발 DB에서 발견 — 이번 도메인 작업과 무관한 별개 이슈라 수정하지 않고 후속 작업으로 남김(CLAUDE.md 참고).</p>
+          </div>
+        </div>
+
+        <div class="changelog-entry">
+          <div class="changelog-date">2026-09-21</div>
+          <div class="changelog-title">수정 요청이 무관한 기존 도메인으로 새치기당하는 버그 수정 <span class="pill pill-fixed">fixed</span></div>
+          <div class="changelog-body">
+            <p><strong>실사용자 리포트</strong>: 신규 도메인("기관등록코드") 초안을 받은 뒤 "길이를 12로 해줘"라고 수정을 요청했더니, 수정도 개인정보 질문도 건너뛰고 곧장 약어 확정 단계로 넘어감. 실제 대화 상태를 DB에서 직접 조회해 원인 확인: <code>existing_domain_match</code> 안전망이 이 짧은 수정 문구 하나만 보고 완전히 무관한 기존 도메인("운전면허번호C12" — 길이가 우연히 같다는 이유만으로)에 매칭시켜, 사용자의 초안·수정 요청을 통째로 버리고 그 기존 도메인으로 진행해버렸음.</p>
+            <p><strong>수정</strong>: <code>suggest_domain()</code>에 <code>allow_existing_match</code> 파라미터 추가 — <code>confirm_domain_spec</code>의 수정 루프에서만 <code>False</code>로 호출해 <code>known_domains</code>를 프롬프트에서 빼고, <code>word_suggestion.py</code>의 <code>fixed_name</code>과 동일한 결정론적 강제 초기화로 <code>existing_domain_match</code>를 항상 비움. 최초 거부/모호함 재질문 단계는 안전망 그대로 유지 — "이미 드래프트를 확정하려는 단계"에서만 끔. 회귀 테스트로 같은 시나리오(동일 길이의 미끼 도메인)를 재현해 확인.</p>
+          </div>
+        </div>
+
+        <div class="changelog-entry">
+          <div class="changelog-date">2026-09-21</div>
+          <div class="changelog-title">수정 요청이 안 건드린 필드까지 같이 바뀌는 버그 수정 <span class="pill pill-fixed">fixed</span></div>
+          <div class="changelog-body">
+            <p><strong>바로 이어서 재현된 문제</strong>: 위 수정 직후, 길이만 바꿔달라는 요청에 <code>code</code>("한강수질C20"→"수질등급_VARCHAR")와 <code>domain_group</code>("수질"→"환경")까지 같이 바뀜. <code>clarification_history</code>는 질문/답변 텍스트 쌍일 뿐 이전 드래프트의 실제 필드 값을 모델에 다시 넘기지 않아서, 모델이 대화 맥락만으로 자기 이전 응답을 그대로 베끼길 기대한 게 애초에 무리였음. <code>current_draft</code>를 프롬프트에 넘기고 "언급 안 된 필드는 그대로 두라"는 프롬프트 지시만으로는 실측상 여전히 <code>code</code>가 바뀜 — 이 프로젝트에서 반복 확인된 "작은 모델에게 부탁하지 말고 코드가 결정하게 하라" 교훈이 다시 재현됨.</p>
+            <p><strong>수정</strong>: <code>DomainSuggestion</code>에 <code>changed_fields: list[str]</code> 추가 — 모델은 실제로 바뀌어야 하는 필드 이름만 나열하고, <code>suggest_domain()</code>이 거기 없는 모든 필드를 <code>current_draft</code> 원래 값으로 결정론적으로 강제 복원(<code>existing_domain_match</code>와 같은 방어 철학, 모델이 값을 그대로 베꼈는지는 신뢰하지 않음). 회귀 테스트가 실제 스크린샷 시나리오를 그대로 재현해 <code>code</code>/<code>domain_group</code>/<code>data_type</code>/<code>description</code>은 그대로, <code>data_length</code>만 바뀌는 것을 확인. 길이 외 필드(허용값 리스트 추가, 도메인그룹 텍스트 변경)도 각 3회씩 실측해 일반화됨을 확인.</p>
+          </div>
+        </div>
+      </div>
+
+      <!-- ══════════════════════ 용어 신청 실시간 반응 ══════════════════════ -->
+      <div class="docs-daygroup">
+        <h2>2026-09-21</h2>
+
+        <div class="changelog-entry">
+          <div class="changelog-date">2026-09-21</div>
+          <div class="changelog-title">용어 신청 간편 입력에 챗봇 수준의 즉시 반응(중복 확인/정의·도메인·영문약어 추천) 추가 <span class="pill pill-added">added</span></div>
+          <div class="changelog-body">
+            <p><strong>동기</strong>: "챗봇에서 반응해주듯이" 간편 입력 폼도 제출해야만 알 수 있던 것들(이름 중복 여부, 정의·도메인·영문약어 추천)을 필드를 벗어나는 즉시 알려달라는 요구. 새 판단 로직은 만들지 않고 챗봇이 이미 쓰는 모듈(<code>search()</code>/<code>validate_name()</code>/<code>suggest_definition()</code>/<code>domain_usage()</code>/<code>suggest_abbreviation()</code>)을 그대로 재사용하는 읽기전용 GET 라우트 3개와 프론트 이벤트 바인딩만 추가.</p>
+            <p><strong>구현</strong>: <code>GET /admin/term-requests/check-name</code>(형식→대기중복→<code>search()</code>의 EXACT_MATCH/SYNONYM_MATCH, LLM 없이 임베딩만이라 즉시 응답 - <code>registration.prepare()</code>의 LLM 기반 SAME_MEANING 비교는 이전과 동일하게 제출 시점에만 실행)이 <code>tr-term-name</code> blur에서 초록/빨강 테두리 + 사유 문구를 결정. 이름이 통과하면 <code>GET /admin/term-requests/suggest-definition</code>이 자동 호출돼 추천 정의를 클릭형 카드로 제시(적용 전엔 건드리지 않음). 정의까지 채워지면 <code>GET /admin/term-requests/suggest-followups</code>가 도메인·영문약어를 함께 추천해, <strong>비어있는 필드에만</strong> 채워넣고 근거를 회색 문구로 안내("직접 입력해 바꿀 수 있습니다").</p>
+            <p>브라우저로 직접 확인: 기존 용어명 → 빨강 테두리+사유 즉시 표시, 신규 이름 → 초록 테두리 → 정의 추천 카드 → 클릭 시 도메인("수N7", 비교군 43% 사용)·영문약어("DAILY_MST_INTK", 조합 근거) 자동 채움까지 전체 흐름 확인. 백엔드 라우트 7개 테스트(인증/available/exact_match/invalid/pending/파라미터 검증) 추가.</p>
+          </div>
+        </div>
+
+        <div class="changelog-entry">
+          <div class="changelog-date">2026-09-21</div>
+          <div class="changelog-title">배포 직후 발견된 정의 추천 버그 둘 수정 <span class="pill pill-fixed">fixed</span></div>
+          <div class="changelog-body">
+            <p><strong>버그 1 - 모호함 질문 문구와 선택 버튼이 겹침</strong>: <code>.field-suggestion-note</code>/<code>.field-suggestion-options</code>가 둘 다 음수 <code>margin-top</code>을 써서, 연달아 배치되니 누적돼 거의 겹쳐 보였음. 전용 클래스 <code>.field-suggestion-question</code>으로 분리하고 양의 여백으로 교체.</p>
+            <p><strong>버그 2 - 후보 라벨이 그대로 정의로 입력됨</strong>: "변경 이후에 할당된 주소 코드" 같은 후보 라벨은 "이 의미가 맞다"는 답일 뿐 완성된 정의 문장이 아닌데 그대로 정의 필드에 꽂혀 들어감. 챗봇의 <code>set_definition</code>이 옵션 선택을 <code>clarification_history</code>에 답으로 추가해 <code>suggest_definition()</code>을 다시 부르는 것과 동일하게 고침 - <code>suggest-definition</code> 라우트가 <code>clarification_history</code> 쿼리 파라미터를 받아 그대로 전달하고, 프론트는 후보 클릭 시 이 라운드트립으로 받은 실제 정의 문장을 적용(추가 클릭 요구 없음). fetch를 모킹해 모호함→후보 클릭→완성된 정의 문장까지 결정론적으로 재현해 확인.</p>
+          </div>
+        </div>
       </div>
 
     </div>

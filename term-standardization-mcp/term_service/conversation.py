@@ -4,12 +4,13 @@ User messages are never implicitly stored as definitions. Trusted identities mus
 from typing import Literal
 from pydantic import Field
 from psycopg.types.json import Jsonb
-from . import db, registration, word_registration
+from . import db, registration, word_registration, domain_registration
 from .abbreviation import suggest_abbreviation, validate_abbreviation, validate_word_abbreviation
 from .definition_suggestion import suggest_definition
+from .domain_suggestion import suggest_domain
 from .guideline import check_guideline
 from .naming import strip_trailing_particle, segment_words, unmatched_spans, split_into_nouns, key
-from .schemas import Schema, RegistrationInput, WordRegistrationInput
+from .schemas import Schema, RegistrationInput, WordRegistrationInput, DomainRequestInput
 from .search import validate_name, search, domain_usage, search_terms_by_meaning
 from .word_suggestion import suggest_word
 
@@ -17,13 +18,68 @@ class ConversationAction(Schema):
     intent: Literal["propose_term","confirm_term","set_domain","set_definition","set_abbreviation","confirm_registration",
                     "show_candidates","edit_term","edit_domain","edit_definition","cancel","restart","help","unknown",
                     "propose_word","confirm_word","set_word_abbreviation","find_term",
-                    "edit_word_definition","set_word_definition","set_word_split_choice"]
+                    "edit_word_definition","set_word_definition","set_word_split_choice",
+                    "request_new_domain","confirm_domain_spec","set_domain_pii"]
     value: str = Field(default="",max_length=4000)
     confirmed: bool = False
 
 def db_domain_codes():
     with db.connect() as conn:
         return conn.execute("SELECT code FROM domains WHERE status='ACTIVE'").fetchall()
+
+def _finalize_domain(s, value, requester, conversation_id):
+    """Shared tail once a domain code is settled - whether picked from the known list
+    (set_domain) or just approved-pending via the new-domain sub-flow (set_domain_pii).
+    Runs the term's own registration.prepare() (duplicate/guideline checks already done
+    earlier in the flow, so this is really just the domain/catalog-fingerprint step) and
+    moves on to the abbreviation step."""
+    s["domain"]=value
+    p=RegistrationInput(term_name=s["term_name"],definition=s["definition"],domain=value,
+        requester=requester,conversation_id=conversation_id)
+    prepared=registration.prepare(p)
+    s["preparation"]=prepared
+    if not prepared.get("ready"):
+        s["stage"]="definition_blocked"
+        return s,{"next_action":"EXPLAIN_BLOCK"}
+    # A Korean term and its English abbreviation are registered as one set; recommend
+    # one now so the user isn't left to invent a compliant abbreviation unaided. If
+    # this term's decomposition required submitting one or more brand-new words earlier
+    # in this same flow (term_pending_words - see set_word_abbreviation below), those
+    # words aren't in standard_words yet, so they must be handed in explicitly or the
+    # composition falls through to the LLM and invents unrelated abbreviations for them.
+    extra_words=s.get("term_pending_words") or []
+    s["abbreviation_suggestion"]=suggest_abbreviation(s["term_name"],extra_words=extra_words).model_dump()
+    s.pop("english_abbr",None)
+    s["stage"]="awaiting_abbreviation"
+    return s,{"next_action":"CONFIRM_ABBREVIATION"}
+
+def _apply_domain_suggestion(s, suggestion, requester, conversation_id):
+    """Routes a fresh domain_suggestion.py result to the right next stage. Shared by
+    request_new_domain (first draft / clarify-answer) and confirm_domain_spec's
+    free-text-correction branch (redraft), so the three entry points that can produce a
+    new suggestion all land on the same rules."""
+    s["domain_suggestion"]=suggestion
+    if suggestion.get("method")=="unavailable":
+        s["stage"]="domain_spec_unavailable"
+        return s,{"next_action":"EXPLAIN_DOMAIN_SUGGESTION_UNAVAILABLE"}
+    if suggestion.get("existing_domain_match"):
+        # Safety net caught a real fit the popularity-based recommendation (domain_usage())
+        # missed - domain_suggestion.py only sets this with high confidence, so proceed
+        # with it directly rather than adding another confirmation round; the render layer
+        # uses existing_domain_matched to explain what happened.
+        new_s,result=_finalize_domain(s,suggestion["existing_domain_match"],requester,conversation_id)
+        result["existing_domain_matched"]=suggestion["existing_domain_match"]
+        return new_s,result
+    if suggestion.get("ambiguous"):
+        s["stage"]="awaiting_domain_spec_clarify"
+        return s,{"next_action":"CLARIFY_DOMAIN_SPEC"}
+    if not suggestion.get("code"):
+        # Neither existing_domain_match, ambiguous, nor a code - defensive fallback,
+        # should not happen given domain_suggestion.py's own completeness guard.
+        s["stage"]="domain_spec_unavailable"
+        return s,{"next_action":"EXPLAIN_DOMAIN_SUGGESTION_UNAVAILABLE"}
+    s["stage"]="awaiting_domain_spec_confirm"
+    return s,{"next_action":"CONFIRM_DOMAIN_SPEC"}
 
 def _word_lookup():
     with db.connect() as conn:
@@ -250,7 +306,8 @@ def transition(state, action, requester, conversation_id):
         if "term_name" not in s or not s.get("definition"):
             return s,{"error":"SET_DEFINITION_FIRST"}
         registration.cancel(requester,conversation_id)
-        for name in ["domain","preparation","abbreviation_suggestion","english_abbr"]:
+        for name in ["domain","preparation","abbreviation_suggestion","english_abbr",
+                "domain_suggestion","domain_clarification_history"]:
             s.pop(name,None)
         result=search(s["term_name"],s["definition"],limit=30)
         s["search"]=result.model_dump()
@@ -266,25 +323,99 @@ def transition(state, action, requester, conversation_id):
         known={d["code"] for d in s.get("domains",{}).get("known_domains",[])} or {r["code"] for r in db_domain_codes()}
         if value not in known:
             return s,{"error":"UNRECOGNIZED_DOMAIN","known_domains":sorted(known)}
-        s["domain"]=value
-        p=RegistrationInput(term_name=s["term_name"],definition=s["definition"],domain=value,
+        return _finalize_domain(s,value,requester,conversation_id)
+    if a.intent=="request_new_domain":
+        # Reached only once the user has rejected every domain awaiting_domain_choice
+        # offered (recommended + known_domains) - see conversation that led here in
+        # domain_suggestion.py's own docstring. No extra description is asked for on
+        # first entry: suggest_domain() already has everything it needs (term_name/
+        # definition), matching this project's "don't ask unless needed" principle.
+        if stage=="awaiting_domain_choice":
+            s.pop("domain_clarification_history",None)
+            suggestion=suggest_domain(s["term_name"],s["definition"]).model_dump()
+        elif stage=="awaiting_domain_spec_clarify":
+            value=a.value.strip()
+            if not value:
+                return s,{"error":"DOMAIN_CLARIFICATION_REQUIRED"}
+            prior=s.get("domain_suggestion") or {}
+            history=(s.get("domain_clarification_history") or [])+[{"question":prior.get("question",""),"answer":value}]
+            s["domain_clarification_history"]=history
+            suggestion=suggest_domain(s["term_name"],s["definition"],clarification_history=history).model_dump()
+        else:
+            return s,{"error":"UNEXPECTED_INTENT"}
+        return _apply_domain_suggestion(s,suggestion,requester,conversation_id)
+    if a.intent=="confirm_domain_spec":
+        if stage!="awaiting_domain_spec_confirm":
+            return s,{"error":"UNEXPECTED_INTENT"}
+        suggestion=s.get("domain_suggestion") or {}
+        if not a.confirmed:
+            # A free-text correction ("아니 길이 늘려줘"), not a full re-description -
+            # folded into clarification_history same as everywhere else in this file.
+            value=a.value.strip()
+            if not value:
+                return s,{"error":"DOMAIN_CORRECTION_REQUIRED"}
+            history=(s.get("domain_clarification_history") or [])+[{"question":"이 도메인 스펙이 맞습니까?","answer":value}]
+            s["domain_clarification_history"]=history
+            # allow_existing_match=False: a real incident showed the existing-domain safety
+            # net re-firing here on a short correction fragment (e.g. "길이를 12로 해줘"
+            # alone matched an unrelated existing domain that happened to share that length),
+            # silently discarding the user's own draft and correction both, and skipping
+            # straight to abbreviation with the wrong domain. Past this point the user is
+            # refining THEIR draft, not re-answering "does an existing domain fit" - see
+            # domain_suggestion.py's suggest_domain() docstring for this parameter.
+            # current_draft=suggestion: a real incident showed that without handing the
+            # model its own prior concrete field values back, a "redraft from scratch"
+            # (grounded only in loose clarification_history prose) drifted on fields the
+            # user never asked to change (code/domain_group both changed when only length
+            # was requested) - passing the exact current spec anchors the edit.
+            new_suggestion=suggest_domain(s["term_name"],s["definition"],clarification_history=history,
+                allow_existing_match=False,current_draft=suggestion).model_dump()
+            return _apply_domain_suggestion(s,new_suggestion,requester,conversation_id)
+        if not suggestion.get("code"):
+            return s,{"error":"DOMAIN_SUGGESTION_NOT_READY"}
+        # is_personal_info is the one field domain_suggestion.py deliberately never
+        # guesses (see its own docstring) - always asked explicitly, one more turn.
+        s["stage"]="awaiting_domain_pii_choice"
+        return s,{"next_action":"CONFIRM_DOMAIN_PII"}
+    if a.intent=="set_domain_pii":
+        if stage!="awaiting_domain_pii_choice":
+            return s,{"error":"UNEXPECTED_INTENT"}
+        suggestion=s.get("domain_suggestion") or {}
+        if not suggestion.get("code"):
+            return s,{"error":"DOMAIN_SUGGESTION_NOT_READY"}
+        # confirmed is repurposed here as the direct yes/no answer to "is this personal
+        # information?" (true=yes), not as an accept/redo gate like elsewhere in this file.
+        p=DomainRequestInput(code=suggestion["code"],domain_group=suggestion.get("domain_group") or "",
+            data_type=suggestion.get("data_type") or "",data_length=suggestion.get("data_length"),
+            decimal_length=suggestion.get("decimal_length"),display_format=suggestion.get("display_format") or "",
+            valid_values=suggestion.get("valid_values") or "",description=suggestion.get("description") or "",
+            is_personal_info=a.confirmed,request_reason=f"용어 '{s['term_name']}' 등록을 위해 필요",
             requester=requester,conversation_id=conversation_id)
-        prepared=registration.prepare(p)
-        s["preparation"]=prepared
+        prepared=domain_registration.prepare(p)
         if not prepared.get("ready"):
-            s["stage"]="definition_blocked"
-            return s,{"next_action":"EXPLAIN_BLOCK"}
-        # A Korean term and its English abbreviation are registered as one set; recommend
-        # one now so the user isn't left to invent a compliant abbreviation unaided. If
-        # this term's decomposition required submitting one or more brand-new words earlier
-        # in this same flow (term_pending_words - see set_word_abbreviation below), those
-        # words aren't in standard_words yet, so they must be handed in explicitly or the
-        # composition falls through to the LLM and invents unrelated abbreviations for them.
-        extra_words=s.get("term_pending_words") or []
-        s["abbreviation_suggestion"]=suggest_abbreviation(s["term_name"],extra_words=extra_words).model_dump()
-        s.pop("english_abbr",None)
-        s["stage"]="awaiting_abbreviation"
-        return s,{"next_action":"CONFIRM_ABBREVIATION"}
+            s["domain_prepare_error"]=prepared
+            s["stage"]="domain_request_blocked"
+            return s,{"next_action":"EXPLAIN_DOMAIN_BLOCK"}
+        result=domain_registration.submit(prepared["confirmation_id"],requester,conversation_id,True)
+        if not result.get("request_id"):
+            s["domain_prepare_error"]=result
+            s["stage"]="domain_request_blocked"
+            return s,{"next_action":"EXPLAIN_DOMAIN_BLOCK"}
+        # Mirrors term_pending_words: once submitted, this domain request is a real,
+        # independent PENDING_REVIEW row regardless of what happens to the rest of this
+        # term flow afterward (same precedent as the word sub-flow - see set_word_
+        # abbreviation below).
+        s["pending_domain_request"]={"request_id":result["request_id"],"code":result["code"]}
+        return _finalize_domain(s,result["code"],requester,conversation_id)
+    if a.intent=="set_abbreviation":
+        if stage!="awaiting_abbreviation":
+            return s,{"error":"UNEXPECTED_INTENT"}
+        value,error=validate_abbreviation(a.value)
+        if error:
+            return s,{"error":error}
+        s["english_abbr"]=value
+        s["stage"]="awaiting_confirm"
+        return s,{"next_action":"FINAL_CONFIRMATION"}
     if a.intent=="set_abbreviation":
         if stage!="awaiting_abbreviation":
             return s,{"error":"UNEXPECTED_INTENT"}
@@ -303,7 +434,8 @@ def transition(state, action, requester, conversation_id):
             return s,{"next_action":"CANCELLED"}
         result=registration.submit(s["preparation"]["confirmation_id"],requester,conversation_id,True,
             english_abbr=s["english_abbr"],
-            depends_on_word_request_ids=[w["request_id"] for w in s.get("term_pending_words") or []])
+            depends_on_word_request_ids=[w["request_id"] for w in s.get("term_pending_words") or []],
+            depends_on_domain_request_id=(s.get("pending_domain_request") or {}).get("request_id"))
         s["registration"]=result
         # A failed submit() must not leave the conversation parked in
         # awaiting_confirm: preparation.ready is still true, so a repeated

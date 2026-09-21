@@ -352,6 +352,90 @@ def test_real_suggest_domain_drafts_enumerated_code_list():
     assert result.rationale
     assert result.method=="structured_llm_rag"
 
+@pytest.mark.skipif(os.getenv("RUN_LLM_TESTS")!="1",reason="Explicit low-volume paid API smoke test")
+def test_real_suggest_domain_correction_never_matches_existing_domain():
+    # Regression for a real live incident: correcting an already-drafted spec with a short
+    # fragment ("길이를 12로 해줘") re-triggered the existing-domain safety net, which matched
+    # a completely unrelated existing domain (a driver's license number domain) purely
+    # because it happened to share that length - silently discarding the user's own draft
+    # and skipping straight past confirmation. allow_existing_match=False must guarantee an
+    # empty existing_domain_match even when a same-length decoy domain is sitting right there.
+    from term_service.domain_suggestion import suggest_domain
+    with db.connect() as conn:
+        conn.execute("""INSERT INTO domains(code,description,source,data_type,data_length)
+            VALUES('운전면허번호C12','테스트용 운전면허번호','TEST','CHAR',12) ON CONFLICT DO NOTHING""")
+    history=[{"question":"기관등록코드의 길이나 형식은 어떻게 되나요?","answer":"고정된 길이 코드"},
+        {"question":"이 도메인 스펙이 맞습니까?","answer":"길이를 12로 해줘."}]
+    result=suggest_domain("기관등록코드","특정 기관이나 단체의 공식 등록을 나타내는 기호 체계",
+        clarification_history=history,allow_existing_match=False)
+    assert result.existing_domain_match==""
+    assert result.code
+    assert result.data_length==12
+    assert result.method=="structured_llm_rag"
+
+@pytest.mark.skipif(os.getenv("RUN_LLM_TESTS")!="1",reason="Explicit low-volume paid API smoke test")
+def test_real_suggest_domain_correction_only_changes_requested_field():
+    # Regression for a real live report: asking to change only the length also changed the
+    # domain's code and domain_group (a real screenshot showed "한강수질C20"/도메인그룹 "수질"
+    # drift to "수질등급_VARCHAR"/"환경" after asking only "길이를 10으로 변경하고싶어") - the
+    # redraft had nothing but loose clarification_history prose to anchor to, so it
+    # regenerated the whole spec from scratch instead of editing it. current_draft must pin
+    # every field the correction doesn't mention.
+    from term_service.domain_suggestion import suggest_domain
+    current_draft={"code":"한강수질C20","domain_group":"수질","data_type":"VARCHAR","data_length":20,
+        "decimal_length":None,"display_format":"","valid_values":"","description":"한강의 수질을 나타내는 등급을 표현하기 위한 도메인입니다."}
+    history=[{"question":"수질 등급의 표현 방식이 무엇인가요?","answer":"명칭으로 표현"},
+        {"question":"이 도메인 스펙이 맞습니까?","answer":"길이를 10으로 변경하고싶어."}]
+    result=suggest_domain("한강수질등급","한강의 수질을 나타내는 등급",
+        clarification_history=history,allow_existing_match=False,current_draft=current_draft)
+    assert result.existing_domain_match==""
+    assert result.code==current_draft["code"]
+    assert result.domain_group==current_draft["domain_group"]
+    assert result.data_type==current_draft["data_type"]
+    assert result.description==current_draft["description"]
+    assert result.data_length==10
+    assert result.method=="structured_llm_rag"
+
+@pytest.mark.skipif(os.getenv("RUN_LLM_TESTS")!="1",reason="Explicit low-volume paid API smoke test")
+def test_real_suggest_domain_correction_adds_valid_value():
+    # Same current_draft mechanism as the length-only test above, but for a list-shaped
+    # field: adding one more allowed value must leave code/domain_group/data_type/data_length
+    # untouched and must not silently drop the two values already there.
+    from term_service.domain_suggestion import suggest_domain
+    current_draft={"code":"결제수단_코드","domain_group":"코드","data_type":"CHAR","data_length":10,
+        "decimal_length":None,"display_format":"","valid_values":"신용카드, 계좌이체",
+        "description":"결제 방법을 구분하는 코드입니다."}
+    history=[{"question":"이 도메인 스펙이 맞습니까?","answer":"카카오페이도 허용값에 추가해줘."}]
+    result=suggest_domain("결제수단코드","결제 방법을 구분하는 코드",
+        clarification_history=history,allow_existing_match=False,current_draft=current_draft)
+    assert result.existing_domain_match==""
+    assert result.code==current_draft["code"]
+    assert result.domain_group==current_draft["domain_group"]
+    assert result.data_type==current_draft["data_type"]
+    assert result.data_length==current_draft["data_length"]
+    for value in ["신용카드","계좌이체","카카오페이"]:
+        assert value in result.valid_values
+    assert result.method=="structured_llm_rag"
+
+@pytest.mark.skipif(os.getenv("RUN_LLM_TESTS")!="1",reason="Explicit low-volume paid API smoke test")
+def test_real_suggest_domain_correction_renames_domain_group():
+    # A correction targeting a text-identity field (domain_group), not a number or a list -
+    # everything else, including the unrelated code, must stay exactly as drafted.
+    from term_service.domain_suggestion import suggest_domain
+    current_draft={"code":"한강수질C20","domain_group":"수질","data_type":"VARCHAR","data_length":20,
+        "decimal_length":None,"display_format":"","valid_values":"",
+        "description":"한강의 수질을 나타내는 등급을 표현하기 위한 도메인입니다."}
+    history=[{"question":"이 도메인 스펙이 맞습니까?","answer":"도메인그룹을 '환경'으로 바꿔줘."}]
+    result=suggest_domain("한강수질등급","한강의 수질을 나타내는 등급",
+        clarification_history=history,allow_existing_match=False,current_draft=current_draft)
+    assert result.existing_domain_match==""
+    assert result.code==current_draft["code"]
+    assert result.domain_group=="환경"
+    assert result.data_type==current_draft["data_type"]
+    assert result.data_length==current_draft["data_length"]
+    assert result.description==current_draft["description"]
+    assert result.method=="structured_llm_rag"
+
 def test_definition_clarification_round_trip(monkeypatch):
     # confirm_term triggers a first suggest_definition call; if it comes back
     # ambiguous, picking one of its options must trigger a SECOND call (with the
@@ -596,6 +680,95 @@ def test_term_waits_for_new_word_approval_and_reuses_its_abbreviation(monkeypatc
         word_row=conn.execute("SELECT english_abbr,status FROM standard_words WHERE name='보행량'").fetchone()
     assert term_row["english_abbr"]=="DAILY_WALKCNT" and term_row["status"]=="ACTIVE"
     assert word_row["english_abbr"]=="WALKCNT" and word_row["status"]=="ACTIVE"
+
+def test_term_waits_for_new_domain_approval_via_chat_and_reuses_it(monkeypatch):
+    # End-to-end version of registration.py's test_term_waiting_on_new_domain_released_
+    # once_domain_approved, but driven through conversation.py's actual state machine
+    # (request_new_domain -> confirm_domain_spec -> set_domain_pii) instead of calling
+    # registration.submit()/domain_registration.approve() directly - this is the part
+    # that was still untested: the chat wiring itself, not just the backend plumbing.
+    monkeypatch.setattr(conversation,"suggest_domain",
+        lambda term_name,definition,clarification_history=None: type("R",(),{"model_dump":lambda self:{
+            "existing_domain_match":"","match_reason":"","ambiguous":False,"question":"","options":[],
+            "code":"결제수단_코드","domain_group":"코드","data_type":"CHAR","data_length":1,"decimal_length":None,
+            "display_format":"","valid_values":"신용카드,계좌이체","description":"결제 방법을 구분하는 코드",
+            "rationale":"정의의 '결제 방법을 구분' 표현에서 도출","method":"test_stub"}})())
+    monkeypatch.setattr(conversation,"suggest_definition",
+        lambda term_name,clarification_history=None: DefinitionSuggestionResult(
+            ambiguous=False,definition="신용카드 또는 계좌이체 등 결제 방법을 구분하는 코드",rationale="",method="test_stub"))
+    monkeypatch.setattr(conversation,"suggest_abbreviation",
+        lambda term_name,extra_words=None: AbbreviationResult(abbreviation="PAYMTHD_CD",rationale="",method="test_stub"))
+    def apply(revision,intent,value="",confirmed=False):
+        return conversation.apply("domain-approval-conv","user",revision,{"intent":intent,"value":value,"confirmed":confirmed})
+    apply(0,"propose_term","결제수단코드")
+    result=apply(1,"confirm_term",confirmed=True)
+    assert result["state"]["stage"]=="awaiting_definition"
+    result=apply(2,"set_definition",result["state"]["definition_suggestion"]["definition"])
+    assert result["state"]["stage"]=="awaiting_domain_choice"
+    # The user rejects every recommended/known domain (none exist in this clean test DB
+    # anyway) - no extra description needed, suggest_domain() drafts from context alone.
+    result=apply(3,"request_new_domain")
+    assert result["state"]["stage"]=="awaiting_domain_spec_confirm"
+    assert result["state"]["domain_suggestion"]["code"]=="결제수단_코드"
+    result=apply(4,"confirm_domain_spec",confirmed=True)
+    assert result["state"]["stage"]=="awaiting_domain_pii_choice"
+    result=apply(5,"set_domain_pii",confirmed=False)
+    assert result["state"]["stage"]=="awaiting_abbreviation"
+    assert result["state"]["domain"]=="결제수단_코드"
+    domain_request_id=result["state"]["pending_domain_request"]["request_id"]
+    result=apply(6,"set_abbreviation","PAYMTHD_CD")
+    assert result["state"]["stage"]=="awaiting_confirm"
+    result=apply(7,"confirm_registration",confirmed=True)
+    assert result["state"]["stage"]=="submitted"
+    term_request_id=result["state"]["registration"]["request_id"]
+    # Not ready for review yet - it depends on a domain that isn't a real standard yet.
+    assert result["state"]["registration"]["status"]=="WAITING_FOR_DOMAIN_APPROVAL"
+    assert registration.approve(term_request_id)["code"]=="NOT_PENDING_REVIEW"
+
+    approval=domain_registration.approve(domain_request_id)
+    assert approval["approved"]
+    assert term_request_id in [p["request_id"] for p in approval["promoted_terms"]]
+    with db.connect() as conn:
+        row=conn.execute("SELECT status,domain FROM registration_requests WHERE id=%s",(term_request_id,)).fetchone()
+    assert row["status"]=="PENDING_REVIEW"
+    assert row["domain"]=="결제수단_코드"
+
+    final=registration.approve(term_request_id)
+    assert final["approved"]
+    with db.connect() as conn:
+        term_row=conn.execute("SELECT english_abbr,status,domain FROM standard_terms WHERE name='결제수단코드'").fetchone()
+    assert term_row["english_abbr"]=="PAYMTHD_CD" and term_row["status"]=="ACTIVE" and term_row["domain"]=="결제수단_코드"
+
+def test_domain_spec_existing_match_skips_straight_to_abbreviation(monkeypatch):
+    # domain_suggestion.py's safety net: even after the user rejects every domain
+    # awaiting_domain_choice offered, the model can still find that an existing domain
+    # actually fits once it reads the definition directly - this must proceed with that
+    # domain immediately (no new domain_requests row, no PII question), not repeat a
+    # spec-drafting round for something that already exists.
+    with db.connect() as conn:
+        conn.execute("INSERT INTO domains(code,description,source) VALUES('코드C2','테스트 코드 도메인','TEST')")
+    monkeypatch.setattr(conversation,"suggest_domain",
+        lambda term_name,definition,clarification_history=None: type("R",(),{"model_dump":lambda self:{
+            "existing_domain_match":"코드C2","match_reason":"이미 있는 코드 도메인이 정의에 부합",
+            "ambiguous":False,"question":"","options":[],"code":"","domain_group":"","data_type":"",
+            "data_length":None,"decimal_length":None,"display_format":"","valid_values":"","description":"",
+            "rationale":"","method":"test_stub"}})())
+    monkeypatch.setattr(conversation,"suggest_definition",
+        lambda term_name,clarification_history=None: DefinitionSuggestionResult(
+            ambiguous=False,definition="테스트용 정의",rationale="",method="test_stub"))
+    def apply(revision,intent,value="",confirmed=False):
+        return conversation.apply("domain-match-conv","user",revision,{"intent":intent,"value":value,"confirmed":confirmed})
+    apply(0,"propose_term","환불사유코드")
+    result=apply(1,"confirm_term",confirmed=True)
+    result=apply(2,"set_definition",result["state"]["definition_suggestion"]["definition"])
+    assert result["state"]["stage"]=="awaiting_domain_choice"
+    result=apply(3,"request_new_domain")
+    assert result["state"]["stage"]=="awaiting_abbreviation"
+    assert result["state"]["domain"]=="코드C2"
+    assert "pending_domain_request" not in result["state"]
+    with db.connect() as conn:
+        count=conn.execute("SELECT count(*) AS n FROM domain_requests").fetchone()["n"]
+    assert count==0
 
 def test_term_can_split_its_missing_part_into_several_new_words(monkeypatch):
     # A real user report: registering "소리동굴" found NEITHER "소리" NOR "동굴" in the
@@ -1058,6 +1231,89 @@ def test_term_request_invalid_fields_rejected(api_client):
     api_client.post("/admin/auth/login",json={"username":"admin1","password":"adminpass123"})
     resp=api_client.post("/admin/term-requests",json={"definition":"테스트"})
     assert resp.status_code==400 and resp.json()["error"]=="INVALID_FIELDS"
+
+def test_check_term_name_requires_auth(api_client):
+    resp=api_client.get("/admin/term-requests/check-name",params={"term_name":"아무이름"})
+    assert resp.status_code==401
+
+def test_check_term_name_available_for_new_name(api_client):
+    _create_active_admin()
+    api_client.post("/admin/auth/login",json={"username":"admin1","password":"adminpass123"})
+    resp=api_client.get("/admin/term-requests/check-name",params={"term_name":"전혀새로운용어명"})
+    assert resp.status_code==200
+    body=resp.json()
+    assert body["ok"] and body["status"]=="available"
+
+def test_check_term_name_exact_match(api_client,catalog):
+    _create_active_admin()
+    api_client.post("/admin/auth/login",json={"username":"admin1","password":"adminpass123"})
+    resp=api_client.get("/admin/term-requests/check-name",params={"term_name":"일일섭취칼로리"})
+    body=resp.json()
+    assert body["status"]=="exact_match"
+    assert body["matched"]["name"]=="일일섭취칼로리"
+
+def test_check_term_name_invalid_mechanical(api_client):
+    _create_active_admin()
+    api_client.post("/admin/auth/login",json={"username":"admin1","password":"adminpass123"})
+    resp=api_client.get("/admin/term-requests/check-name",params={"term_name":"값"})
+    body=resp.json()
+    assert body["status"]=="invalid" and body["message"]
+
+def test_check_term_name_pending(api_client):
+    _create_active_admin()
+    api_client.post("/admin/auth/login",json={"username":"admin1","password":"adminpass123"})
+    with db.connect() as conn:
+        conn.execute("INSERT INTO domains(code,description,source) VALUES('수N7','테스트 숫자 도메인','TEST') ON CONFLICT DO NOTHING")
+    prepared=registration.prepare(RegistrationInput(term_name="검토대기용어신청",
+        definition="전혀 다른 개념을 가리키는 완전히 독립적인 정의 문장입니다",domain="수N7",
+        requester="test-user",conversation_id="test-conversation"))
+    registration.submit(prepared["confirmation_id"],"test-user","test-conversation",True)
+    resp=api_client.get("/admin/term-requests/check-name",params={"term_name":"검토대기용어신청"})
+    assert resp.json()["status"]=="pending"
+
+def test_suggest_definition_route_requires_auth(api_client):
+    resp=api_client.get("/admin/term-requests/suggest-definition",params={"term_name":"아무이름"})
+    assert resp.status_code==401
+
+def test_suggest_definition_route_rejects_invalid_clarification_history(api_client):
+    _create_active_admin()
+    api_client.post("/admin/auth/login",json={"username":"admin1","password":"adminpass123"})
+    resp=api_client.get("/admin/term-requests/suggest-definition",
+        params={"term_name":"아무이름","clarification_history":"이건 JSON이 아님"})
+    assert resp.status_code==400 and resp.json()["error"]=="INVALID_CLARIFICATION_HISTORY"
+
+def test_suggest_definition_route_passes_clarification_history_through(api_client,monkeypatch):
+    # A real live bug: clicking an ambiguous option's label used to be written straight into
+    # the definition field verbatim, instead of being fed back for an actual definition
+    # sentence (mirrors conversation.py's set_definition, which never treats an option pick
+    # as the final definition either). This checks the route wiring carries the history
+    # through to suggest_definition() rather than re-verifying suggest_definition() itself
+    # (already covered elsewhere).
+    # admin_api.py's route does a LOCAL import (`from .definition_suggestion import
+    # suggest_definition` inside the function body, re-resolved on every call) rather than a
+    # module-level one, so the source module's attribute must be patched, not admin_api's.
+    import json
+    import term_service.definition_suggestion as definition_suggestion_module
+    captured={}
+    def fake_suggest_definition(term_name,clarification_history=None):
+        captured["term_name"]=term_name
+        captured["clarification_history"]=clarification_history
+        return DefinitionSuggestionResult(ambiguous=False,definition="반영된 정의",rationale="",method="test_stub")
+    monkeypatch.setattr(definition_suggestion_module,"suggest_definition",fake_suggest_definition)
+    _create_active_admin()
+    api_client.post("/admin/auth/login",json={"username":"admin1","password":"adminpass123"})
+    history=[{"question":"의미는 어떤 것인가요?","answer":"변경 이후에 할당된 주소 코드"}]
+    resp=api_client.get("/admin/term-requests/suggest-definition",
+        params={"term_name":"변경주소코드","clarification_history":json.dumps(history,ensure_ascii=False)})
+    assert resp.status_code==200
+    body=resp.json()
+    assert body["definition"]=="반영된 정의"
+
+def test_suggest_followups_route_requires_params(api_client):
+    _create_active_admin()
+    api_client.post("/admin/auth/login",json={"username":"admin1","password":"adminpass123"})
+    resp=api_client.get("/admin/term-requests/suggest-followups",params={"term_name":"이름만있음"})
+    assert resp.status_code==400 and resp.json()["error"]=="TERM_NAME_AND_DEFINITION_REQUIRED"
 
 def test_word_request_requires_auth(api_client):
     resp=api_client.post("/admin/word-requests",json={"word_name":"새단어","definition":"테스트","english_abbr":"NEW"})

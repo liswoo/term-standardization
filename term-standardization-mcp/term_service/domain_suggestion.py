@@ -54,6 +54,18 @@ If clarification_history is non-empty, it is the FULL ordered list of every ques
 and how the user answered so far - read all of it together before deciding, and if you now
 have enough, commit to a proposal instead of asking again. Never repeat the same fork or a
 near-identical question, and never ask something an earlier answer already settled.
+known_domains may be intentionally empty/omitted - this means the user is refining a spec you
+already drafted (a correction like "길이를 늘려줘"), not asking for the existing-domain check
+again. In that case never set existing_domain_match (there is nothing to match against).
+If current_draft is present, you are EDITING it, not drafting from scratch - the most recent
+clarification_history entry is the user's correction request describing what to change about
+it. Fill changed_fields with exactly the field names the correction asks to change (nothing
+else) - any field you list there is used as you write it in this response; every field you
+do NOT list is force-copied from current_draft afterward regardless of what value you put in
+this response, so you do not need to (and should not bother trying to) reproduce current_draft's
+untouched values character-for-character yourself. Never list a field in changed_fields unless
+the correction actually implies changing it - do not "helpfully" also rename the code or
+redescribe the domain just because you are regenerating a response.
 Always fill rationale with one short Korean sentence that names the specific word or phrase in
 the definition each proposed field is based on - if you cannot point to such a basis for a
 field (especially data_type/data_length/valid_values), do not propose it; ask a clarifying
@@ -65,7 +77,8 @@ def _known_domains():
             decimal_length,display_format,valid_values FROM domains
             WHERE status='ACTIVE' ORDER BY code""").fetchall()
 
-def suggest_domain(term_name: str, definition: str, clarification_history: list[dict] | None = None) -> DomainSuggestionResult:
+def suggest_domain(term_name: str, definition: str, clarification_history: list[dict] | None = None,
+        allow_existing_match: bool = True, current_draft: dict | None = None) -> DomainSuggestionResult:
     if not llm_configured():
         return DomainSuggestionResult(rationale="추천 모델이 설정되지 않음", method="unavailable", error_code="LLM_NOT_CONFIGURED")
     known = _known_domains()
@@ -78,12 +91,25 @@ def suggest_domain(term_name: str, definition: str, clarification_history: list[
         reserved = {r["code"] for r in conn.execute("SELECT code FROM domains").fetchall()}
         reserved |= {r["code"] for r in conn.execute(
             "SELECT code FROM domain_requests WHERE status<>'REJECTED'").fetchall()}
+    # allow_existing_match=False (conversation.py's confirm_domain_spec correction loop):
+    # the user is refining a spec they already saw and asked to change, not re-answering
+    # "is there an existing domain for this?" - re-running that check against a short
+    # correction fragment ("길이를 12로 해줘") instead of the full definition is exactly
+    # what produced a real false positive (matched an unrelated existing domain that only
+    # happened to share the requested length, silently discarding the user's draft and
+    # correction both - see conversation.py's comment on this parameter). Omitting
+    # known_domains here removes the model's ability to name a match at all; the
+    # deterministic override below is the same defense-in-depth as fixed_name in
+    # word_suggestion.py, never trusting the model's own restraint alone.
     payload = {"term_name": term_name, "definition": definition, "clarification_history": clarification_history or [],
         "known_domains": [{"code": d["code"], "description": d["description"], "domain_group": d["domain_group"],
             "data_type": d["data_type"], "data_length": d["data_length"], "decimal_length": d["decimal_length"],
-            "display_format": d["display_format"], "valid_values": d["valid_values"]} for d in known],
+            "display_format": d["display_format"], "valid_values": d["valid_values"]} for d in known] if allow_existing_match else [],
         "known_data_types": sorted({d["data_type"] for d in known if d["data_type"]}),
-        "guideline_excerpts": [{"section": e.section, "content": e.content} for e in evidence]}
+        "guideline_excerpts": [{"section": e.section, "content": e.content} for e in evidence],
+        "current_draft": {k: current_draft.get(k) for k in
+            ("code", "domain_group", "data_type", "data_length", "decimal_length", "display_format",
+             "valid_values", "description")} if current_draft else None}
     model = current_llm_model()
     try:
         client = llm_client(max_retries=1)
@@ -94,10 +120,14 @@ def suggest_domain(term_name: str, definition: str, clarification_history: list[
         if suggestion is None:
             raise ValueError("Missing structured model output")
         data = suggestion.model_dump()
-        known_codes = {d["code"] for d in known}
+        known_codes = {d["code"] for d in known} if allow_existing_match else set()
         # Deterministic guardrails, same philosophy as word_suggestion.py/definition_
         # suggestion.py/guideline.py: never trust the model's own internal consistency alone.
-        if data["existing_domain_match"] and data["existing_domain_match"] not in known_codes:
+        if not allow_existing_match:
+            # Same deterministic override as word_suggestion.py's fixed_name: never let the
+            # model claim a reuse match during a correction round, no matter what it returned.
+            data["existing_domain_match"] = ""
+        elif data["existing_domain_match"] and data["existing_domain_match"] not in known_codes:
             # Hallucinated a match that wasn't actually offered - treat as no match.
             data["existing_domain_match"] = ""
         if data["existing_domain_match"]:
@@ -115,6 +145,18 @@ def suggest_domain(term_name: str, definition: str, clarification_history: list[
                     valid_values="", description="")
             else:
                 data["question"], data["options"] = "", []
+                if current_draft:
+                    # Deterministic merge, same "never trust the model's own restraint
+                    # alone" philosophy as existing_domain_match above: a live incident
+                    # showed the model changing code/domain_group even when only asked to
+                    # change the length, despite prose instructions not to - force every
+                    # field the model didn't explicitly flag in changed_fields back to
+                    # current_draft's own value instead of trusting it was copied verbatim.
+                    changed = set(data.get("changed_fields") or [])
+                    for name in ("code", "domain_group", "data_type", "data_length",
+                            "decimal_length", "display_format", "valid_values", "description"):
+                        if name not in changed:
+                            data[name] = current_draft.get(name)
                 if not (data["code"] and data["domain_group"] and data["data_type"] and data["description"]):
                     raise ValueError("Model returned an incomplete new-domain proposal")
                 data["code"] = _dedupe_collision(data["code"], reserved)

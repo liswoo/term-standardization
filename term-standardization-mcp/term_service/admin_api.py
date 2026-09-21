@@ -328,6 +328,82 @@ _TERM_QUICK_ERROR_STATUS = {
     "PENDING_REQUEST_ALREADY_EXISTS": 409,
 }
 
+# 간편 입력 폼에 챗봇과 같은 즉각 반응을 주기 위한 3개 읽기전용 라우트(2026-09-21) -
+# 실제 제출 없이 이름/정의/도메인/약어를 미리 점검·추천만 한다. 아래 셋 다 기존 로직을
+# 그대로 재사용(새 판단 로직을 만들지 않음): check-name은 validate_name()+search()로
+# 챗봇의 confirm_term이 정의를 묻기 *전에* 하는 것과 정확히 같은 검사만 수행 - registration.
+# prepare()는 여기서 쓰지 않는다(LLM 기반 SAME_MEANING 비교까지 돌리면 blur 한 번에 수 초가
+# 걸리고, registration_preparations에 부작용 있는 행까지 남긴다 - 그 깊은 판단은 여전히
+# 최종 제출 시점에만 실행됨, 지금과 동일). "이미 있다/없다"는 여기서 답하지만 "의미가 같다"는
+# 여전히 제출 시점의 몫.
+@mcp.custom_route("/admin/term-requests/check-name", methods=["GET"])
+async def check_term_name(request: Request) -> JSONResponse:
+    from . import registration
+    from .search import validate_name, search
+    _, error = require_auth(request)
+    if error: return error
+    term_name = (request.query_params.get("term_name") or "").strip()
+    if not term_name:
+        return JSONResponse({"ok": True, "status": "empty"})
+    validation = validate_name(term_name)
+    if not validation.valid:
+        reason = validation.violations[0].reason if validation.violations else "형식이 올바르지 않습니다."
+        return JSONResponse({"ok": True, "status": "invalid", "message": reason,
+            "suggestions": validation.suggestions})
+    pending = registration.find_pending(term_name)
+    if pending:
+        return JSONResponse({"ok": True, "status": "pending",
+            "message": "이미 검토 대기 중인 동일한 이름의 신청이 있습니다.", "matched": pending})
+    result = search(term_name)
+    if result.match_type == "EXACT_MATCH" and result.exact_matches:
+        match = result.exact_matches[0]
+        return JSONResponse({"ok": True, "status": "exact_match",
+            "message": f"이미 등록된 표준용어입니다(도메인 {match.domain}).", "matched": match.model_dump()})
+    if result.match_type == "SYNONYM_MATCH" and result.synonym_matches:
+        match = result.synonym_matches[0]
+        return JSONResponse({"ok": True, "status": "synonym_match",
+            "message": f"이미 등록된 표준용어 '{match.name}'의 동의어입니다.", "matched": match.model_dump()})
+    return JSONResponse({"ok": True, "status": "available", "message": "사용 가능한 이름입니다."})
+
+@mcp.custom_route("/admin/term-requests/suggest-definition", methods=["GET"])
+async def suggest_term_definition_route(request: Request) -> JSONResponse:
+    import json
+    from .definition_suggestion import suggest_definition
+    _, error = require_auth(request)
+    if error: return error
+    term_name = (request.query_params.get("term_name") or "").strip()
+    if not term_name:
+        return JSONResponse({"ok": False, "error": "TERM_NAME_REQUIRED"}, status_code=400)
+    # 모호함 해소 라운드(클릭한 후보 라벨을 그대로 정의로 쓰면 안 됨 - 그 라벨은 "어떤
+    # 의미인지" 답일 뿐, 완성된 정의 문장이 아니다. 챗봇의 set_definition과 동일하게
+    # clarification_history로 다시 넣어 실제 정의 문장을 받는다).
+    raw_history = request.query_params.get("clarification_history")
+    clarification_history = None
+    if raw_history:
+        try:
+            clarification_history = json.loads(raw_history)
+        except (json.JSONDecodeError, TypeError):
+            return JSONResponse({"ok": False, "error": "INVALID_CLARIFICATION_HISTORY"}, status_code=400)
+    result = suggest_definition(term_name, clarification_history=clarification_history)
+    return JSONResponse({"ok": True, **result.model_dump()})
+
+# 도메인 추천(용어 이름+정의로 비교군을 찾아 domain_usage())과 영문약어 추천을 한 번에 묶음 -
+# 같은 시점(이름+정의 둘 다 준비된 시점)에 함께 필요해서 왕복을 줄인다.
+@mcp.custom_route("/admin/term-requests/suggest-followups", methods=["GET"])
+async def suggest_term_followups(request: Request) -> JSONResponse:
+    from .search import search, domain_usage
+    from .abbreviation import suggest_abbreviation
+    _, error = require_auth(request)
+    if error: return error
+    term_name = (request.query_params.get("term_name") or "").strip()
+    definition = (request.query_params.get("definition") or "").strip()
+    if not term_name or not definition:
+        return JSONResponse({"ok": False, "error": "TERM_NAME_AND_DEFINITION_REQUIRED"}, status_code=400)
+    result = search(term_name, definition, limit=30)
+    domains = domain_usage(term_name, [c.term_id for c in result.candidates][:30])
+    abbreviation = suggest_abbreviation(term_name)
+    return JSONResponse({"ok": True, "domain": domains, "abbreviation": abbreviation.model_dump()})
+
 @mcp.custom_route("/admin/term-requests", methods=["POST"])
 async def create_term_request(request: Request) -> JSONResponse:
     from pydantic import ValidationError

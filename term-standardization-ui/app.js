@@ -977,6 +977,158 @@ document.getElementById("tr-domain").addEventListener("input", () => {
   termDomainDerivedTimer = setTimeout(populateTermDomainDerivedFields, 300);
 });
 
+// ── 용어 신청 간편 입력: 챗봇처럼 즉시 반응하는 이름 확인 + 정의/도메인/약어 추천 ──
+// (2026-09-21) 제출 전에는 몰랐던 것들(이미 있는 이름인지, 정의/도메인/약어 초안)을
+// 필드를 벗어나는 즉시 알려준다. 전부 기존 챗봇/제출 경로가 쓰는 로직을 그대로 재사용하는
+// 읽기전용 라우트라, "이미 있다/없다"는 여기서 바로 답하지만 의미 기반 중복 판정(SAME_
+// MEANING)처럼 더 깊은 판단은 여전히 제출 시점에만 실행된다(느리고 부작용 있는 registration.
+// prepare()를 여기서 또 돌리지 않음).
+let termNameStatus = ""; // "" | "checking" | "available" | "invalid" | "exact_match" | "synonym_match" | "pending"
+let termNameCheckToken = 0;
+
+function setFieldState(inputEl, hintEl, kind, message) {
+  inputEl.classList.remove("field-valid", "field-invalid");
+  if (kind === "ok") inputEl.classList.add("field-valid");
+  else if (kind === "error") inputEl.classList.add("field-invalid");
+  if (hintEl) {
+    hintEl.classList.remove("field-hint-ok", "field-hint-error");
+    if (message) {
+      hintEl.textContent = message;
+      hintEl.classList.add(kind === "error" ? "field-hint-error" : "field-hint-ok");
+      hintEl.hidden = false;
+    } else {
+      hintEl.hidden = true;
+    }
+  }
+}
+
+async function checkTermName() {
+  const input = document.getElementById("tr-term-name");
+  const hint = document.getElementById("tr-term-name-hint");
+  const termName = input.value.trim();
+  const myToken = ++termNameCheckToken;
+  if (!termName) {
+    termNameStatus = "";
+    setFieldState(input, hint, "", "");
+    return;
+  }
+  let data;
+  try {
+    const res = await fetch(`/admin/term-requests/check-name?term_name=${encodeURIComponent(termName)}`);
+    data = await res.json();
+  } catch {
+    return; // 네트워크 오류는 조용히 무시 - 제출 시점에 어차피 다시 검증된다.
+  }
+  if (myToken !== termNameCheckToken || input.value.trim() !== termName) return; // 그새 값이 바뀜 - 낡은 응답 폐기.
+  if (!data.ok || data.status === "empty") {
+    termNameStatus = "";
+    setFieldState(input, hint, "", "");
+    return;
+  }
+  termNameStatus = data.status;
+  if (data.status === "available") {
+    setFieldState(input, hint, "ok", data.message);
+    suggestDefinitionForTerm(termName);
+  } else {
+    setFieldState(input, hint, "error", data.message);
+    document.getElementById("tr-definition-suggestion").hidden = true;
+  }
+}
+document.getElementById("tr-term-name").addEventListener("blur", checkTermName);
+document.getElementById("tr-term-name").addEventListener("input", () => {
+  // 값이 바뀌는 순간 이전 판정은 더 이상 유효하지 않음 - blur가 다시 돌 때까지 중립 상태로.
+  termNameStatus = "";
+  setFieldState(document.getElementById("tr-term-name"), document.getElementById("tr-term-name-hint"), "", "");
+});
+
+let termDefinitionSuggestToken = 0;
+// history: 지금까지의 {question,answer} 목록(챗봇의 definition_clarification_history와
+// 동형) - 후보 라벨을 고르는 건 "이 의미가 맞다"는 답일 뿐 완성된 정의 문장이 아니므로,
+// 클릭해도 바로 적용하지 않고 그 답까지 반영해서 다시 추천을 받는다(서버가 진짜 정의
+// 문장을 새로 써서 돌려줌 - suggest_definition()의 clarification_history 경로 재사용).
+async function suggestDefinitionForTerm(termName, history) {
+  history = history || [];
+  const wrap = document.getElementById("tr-definition-suggestion");
+  const myToken = ++termDefinitionSuggestToken;
+  let data;
+  try {
+    const params = new URLSearchParams({ term_name: termName });
+    if (history.length) params.set("clarification_history", JSON.stringify(history));
+    const res = await fetch(`/admin/term-requests/suggest-definition?${params.toString()}`);
+    data = await res.json();
+  } catch {
+    return;
+  }
+  if (myToken !== termDefinitionSuggestToken || termNameStatus !== "available") return;
+  if (!data.ok) { wrap.hidden = true; return; }
+  if (data.ambiguous && (data.options || []).length) {
+    wrap.innerHTML = `<p class="field-suggestion-question">${escapeHtml(data.question || "정의가 명확하지 않습니다 - 아래 중 선택하거나 직접 작성하세요.")}</p>
+      <div class="field-suggestion-options">${data.options.map((o) => `<button type="button" class="btn-ghost field-option-btn">${escapeHtml(o)}</button>`).join("")}</div>`;
+    wrap.querySelectorAll(".field-option-btn").forEach((btn, i) => {
+      btn.addEventListener("click", () => {
+        suggestDefinitionForTerm(termName, [...history, { question: data.question, answer: data.options[i] }]);
+      });
+    });
+    wrap.hidden = false;
+  } else if (data.definition) {
+    if (history.length) {
+      // 이미 한 번 이상 명확화 질문에 답한 뒤 나온 결과 - 사용자가 이미 선택으로 의사를
+      // 표시했으니 한 번 더 클릭을 요구하지 않고 바로 반영한다.
+      document.getElementById("tr-definition").value = data.definition;
+      wrap.hidden = true;
+      maybeSuggestFollowups();
+    } else {
+      wrap.innerHTML = `<button type="button" class="field-suggestion-chip"><strong>추천 정의 (클릭하여 적용)</strong><span>${escapeHtml(data.definition)}</span></button>`;
+      wrap.querySelector(".field-suggestion-chip").addEventListener("click", () => {
+        document.getElementById("tr-definition").value = data.definition;
+        wrap.hidden = true;
+        maybeSuggestFollowups();
+      });
+      wrap.hidden = false;
+    }
+  } else {
+    wrap.hidden = true;
+  }
+}
+
+// 용어명이 "사용 가능"으로 확인됐고 정의도 채워졌을 때만 도메인/약어를 추천한다 - 둘 다
+// "일일이 묻지 않아도 진행 가능한 영역"(사용자 지시, 2026-09-21)이라 버튼 없이 바로 추천.
+let termFollowupsToken = 0;
+async function maybeSuggestFollowups() {
+  if (termNameStatus !== "available") return;
+  const termName = document.getElementById("tr-term-name").value.trim();
+  const definition = document.getElementById("tr-definition").value.trim();
+  if (!termName || !definition) return;
+  const domainInput = document.getElementById("tr-domain");
+  const abbrInput = document.getElementById("tr-english-abbr");
+  const domainNote = document.getElementById("tr-domain-suggestion-note");
+  const abbrNote = document.getElementById("tr-english-abbr-suggestion-note");
+  const myToken = ++termFollowupsToken;
+  let data;
+  try {
+    const res = await fetch(`/admin/term-requests/suggest-followups?term_name=${encodeURIComponent(termName)}&definition=${encodeURIComponent(definition)}`);
+    data = await res.json();
+  } catch {
+    return;
+  }
+  if (myToken !== termFollowupsToken || !data.ok) return;
+  const recommended = data.domain && data.domain.recommended_domain;
+  if (recommended && !domainInput.value.trim()) {
+    domainInput.value = recommended;
+    const pct = Math.round((data.domain.confidence || 0) * 100);
+    domainNote.textContent = `추천: ${recommended}(${data.domain.recommended_domain_description || "설명 없음"}) - 비교군 ${data.domain.sample_size || 0}건 중 ${pct}% 사용. 직접 입력해 바꿀 수 있습니다.`;
+    domainNote.hidden = false;
+    populateTermDomainDerivedFields();
+  }
+  const abbr = data.abbreviation && data.abbreviation.abbreviation;
+  if (abbr && !abbrInput.value.trim()) {
+    abbrInput.value = abbr;
+    abbrNote.textContent = `추천: ${abbr} - ${data.abbreviation.rationale || ""}. 직접 입력해 바꿀 수 있습니다.`;
+    abbrNote.hidden = false;
+  }
+}
+document.getElementById("tr-definition").addEventListener("blur", maybeSuggestFollowups);
+
 document.getElementById("term-request-form").addEventListener("submit", async (e) => {
   e.preventDefault();
   const errorEl = document.getElementById("term-request-error");
@@ -999,6 +1151,11 @@ document.getElementById("term-request-form").addEventListener("submit", async (e
     await submitAuthForm("/admin/term-requests", payload, errorEl);
     document.getElementById("term-request-form").reset();
     document.getElementById("tr-domain-derived").hidden = true;
+    document.getElementById("tr-definition-suggestion").hidden = true;
+    document.getElementById("tr-domain-suggestion-note").hidden = true;
+    document.getElementById("tr-english-abbr-suggestion-note").hidden = true;
+    termNameStatus = "";
+    setFieldState(document.getElementById("tr-term-name"), document.getElementById("tr-term-name-hint"), "", "");
     noticeEl.hidden = false;
     fetchUnifiedCatalog();
   } catch (err) {
@@ -1226,6 +1383,9 @@ function terminalActionsFor(mcpState) {
     case "word_registration_failed":
     case "word_request_blocked":
       return [{ label: "새 단어를 등록할래요", value: CONTINUE_WORD_VALUE }, { label: "여기서 마칠게요", value: CLOSE_VALUE }];
+    case "domain_spec_unavailable":
+    case "domain_request_blocked":
+      return [{ label: "새 용어를 등록할래요", value: CONTINUE_TERM_VALUE }, { label: "여기서 마칠게요", value: CLOSE_VALUE }];
     default:
       return null;
   }
@@ -1353,6 +1513,40 @@ function renderAbbreviationCard(mcpState) {
   const sug = mcpState.abbreviation_suggestion;
   if (!sug || !sug.abbreviation) return "";
   return `<div class="abbr-card"><div class="abbr-code">${escapeHtml(sug.abbreviation)}</div><div class="abbr-rationale">${escapeHtml(sug.rationale || "")}</div></div>`;
+}
+
+function renderDomainSuggestionCard(mcpState) {
+  const sug = mcpState.domain_suggestion;
+  if (!sug) return "";
+  if (sug.ambiguous && (sug.options || []).length) {
+    return `<div class="question-card"><strong>확인이 필요합니다</strong>${escapeHtml(sug.question || "")}</div>`;
+  }
+  if (sug.existing_domain_match) {
+    return summaryCard([
+      ["기존 도메인 코드", sug.existing_domain_match, true],
+      ["재사용 사유", sug.match_reason],
+    ]);
+  }
+  if (sug.code) {
+    return summaryCard([
+      ["도메인명(코드)", sug.code, true],
+      ["도메인그룹", sug.domain_group],
+      ["데이터유형", sug.data_type, true],
+      ["길이", sug.data_length ?? "-", true],
+      ["소수점", sug.decimal_length ?? "-", true],
+      ["표현형식", sug.display_format],
+      ["허용값", sug.valid_values],
+      ["설명", sug.description],
+      ["근거", sug.rationale],
+    ]);
+  }
+  return "";
+}
+
+function renderDomainRequestBlockedCard(mcpState) {
+  const blocked = mcpState.domain_prepare_error;
+  if (!blocked) return "";
+  return summaryCard([["실패 사유 코드", blocked.code, true]], "summary-card-fail");
 }
 
 function renderPendingCard(mcpState) {
@@ -1512,6 +1706,12 @@ async function renderStructuredBlock(mcpState) {
     case "word_registration_failed":
     case "word_request_blocked":
       return renderWordResultCard(mcpState);
+    case "awaiting_domain_spec_clarify":
+    case "awaiting_domain_spec_confirm":
+    case "awaiting_domain_pii_choice":
+      return renderDomainSuggestionCard(mcpState);
+    case "domain_request_blocked":
+      return renderDomainRequestBlockedCard(mcpState);
     default:
       return "";
   }
