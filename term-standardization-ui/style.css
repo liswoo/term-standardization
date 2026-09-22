@@ -206,16 +206,24 @@ svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width:
 .activity-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--primary); margin-top: 6px; flex-shrink: 0; }
 .activity-list p { margin: 0; font-size: 13px; }
 
-/* ── 용어/단어 사전: 필터·페이지네이션 고정, 표 본문만 스크롤 ──
+/* ── 조회 탭: 필터·페이지네이션 고정, 표 본문만 스크롤 ──
    panel을 세로 flex로 만들고 table-wrap만 flex:1 + overflow-y:auto를 가지면
    panel-header/filter-row/pagination-row는 자기 높이만큼만 차지하고 밀려나지
    않는다. min-height:0은 flex 자식이 내용물 크기만큼 무한정 늘어나는 걸
-   막아서 overflow-y:auto가 실제로 작동하게 하는 필수 값. */
+   막아서 overflow-y:auto가 실제로 작동하게 하는 필수 값.
+   이 flex:1/min-height:0 고정은 "조회" 탭(표)에만 필요하다 - 예전엔 #view-catalog .panel로
+   모든 탭(용어/단어/도메인 신청 폼 포함)에 걸려 있어서, 패널을 자기 콘텐츠 높이가 아니라
+   탭 영역의 남은 높이에 눌러 넣었다. 짧은 폼(용어/단어)은 우연히 그 안에 다 들어가서 안
+   보였지만, 필드가 20개인 도메인 신청 폼은 흰 카드 배경이 중간에 잘리고 나머지 필드가 회색
+   페이지 배경 위에 떠 보이는 실제 버그로 나타났다(2026-09-22 실사용 지적) - form에는 이
+   높이를 넘겼을 때 내부 스크롤이 없어서 그냥 카드 밖으로 넘쳐흐른 것. 신청 폼 탭들은 그냥
+   내용물 크기만큼 늘어나게 두고, 넘치는 부분은 .catalog-tab-panel의 overflow-y:auto가
+   맡는다(아래) - 결과적으로 사이드바/상단바/탭 줄은 고정, 그 아래만 스크롤되는 건 동일. */
 #view-catalog { height: 100%; display: flex; flex-direction: column; min-height: 0; }
-#view-catalog .panel { flex: 1; min-height: 0; display: flex; flex-direction: column; }
-#view-catalog .panel-header,
-#view-catalog .filter-row,
-#view-catalog .pagination-row { flex-shrink: 0; }
+#catalog-tab-browse .panel { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+#catalog-tab-browse .panel-header,
+#catalog-tab-browse .filter-row,
+#catalog-tab-browse .pagination-row { flex-shrink: 0; }
 
 /* ── 표준 데이터 조회 상단 탭(조회/용어 신청/단어 신청/도메인 신청) ── */
 .catalog-tabs { display: flex; gap: 4px; flex-shrink: 0; margin-bottom: 14px; border-bottom: 1px solid var(--border); }
@@ -556,6 +564,20 @@ body.pre-auth .app-shell, body.pre-auth .chat-fab, body.pre-auth .chat-panel { d
 .field-suggestion-question { font-size: 12px; color: var(--text-muted); margin: 2px 0 8px; }
 .field-suggestion-options { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 4px; }
 .field-suggestion-note { font-size: 11.5px; color: var(--text-muted); margin: -6px 0 0; }
+/* 이미 있는 단어/도메인 재사용을 권하는 경고 - 초록 칩(추천 적용)이나 회색 안내(참고)와 달리
+   "지금 값을 그대로 쓰지 말라"는 뜻이라 danger 톤으로 구분한다(2026-09-22). */
+.field-suggestion-warning {
+  font-size: 12px; color: var(--danger); background: var(--danger-soft);
+  border-radius: var(--radius-sm); padding: 8px 10px; margin: -6px 0 8px;
+}
+.field-suggestion-warning strong { display: block; margin-bottom: 2px; }
+/* 단어/도메인 신청의 AI 추천 결과(#wr-word-suggestion/#dr-domain-suggestion)는 textarea 바로
+   아래 형제 요소라 위 두 클래스의 음수 top margin이 textarea에 바짝 붙어 겹쳐 보였다(2026-09-22
+   실사용 지적) - 이 두 자리에서만 여백을 양수로 되돌린다. */
+#wr-word-suggestion .field-suggestion-note, #wr-word-suggestion .field-suggestion-warning,
+#dr-domain-suggestion .field-suggestion-note, #dr-domain-suggestion .field-suggestion-warning {
+  margin-top: 8px;
+}
 .btn-danger { background: var(--danger-soft); color: var(--danger); }
 .btn-danger:hover { background: #fde2e2; }
 .table-actions { display: flex; gap: 8px; flex-wrap: wrap; }

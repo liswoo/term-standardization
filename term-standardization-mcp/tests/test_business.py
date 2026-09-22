@@ -11,7 +11,7 @@ from term_service.comparison import compare
 from term_service.word_suggestion import suggest_word
 from term_service.tools import list_terms, list_standard_words
 from term_service import domain_registration, mock_operations
-from term_service.schemas import DomainRequestInput
+from term_service.schemas import DomainRequestInput, WordSuggestionResult, DomainSuggestionResult
 from manage import import_guideline, create_admin, seed_mockops
 
 def insert_guideline_chunk(section,content):
@@ -23,17 +23,17 @@ def insert_guideline_chunk(section,content):
             VALUES(%s,%s,%s,%s,%s,%s) ON CONFLICT(section) DO UPDATE SET content=excluded.content""",
             (str(uuid.uuid4()),section,content,vector,EMBEDDING_MODEL,"TEST_FIXTURE_NOT_PRODUCTION"))
 
-def insert_standard_word(name,english_abbr,definition=""):
+def insert_standard_word(name,english_abbr,definition="",domain_classification=""):
     from term_service.config import EMBEDDING_MODEL
     from term_service.embeddings import embed
     from term_service.naming import key
     vector=embed(name+" : "+definition) if definition else embed(name)
     with db.connect() as conn:
-        conn.execute("""INSERT INTO standard_words(id,name,normalized_name,english_abbr,definition,status,source,embedding,embedding_model)
-            VALUES(%s,%s,%s,%s,%s,'ACTIVE','TEST_FIXTURE_NOT_PRODUCTION',%s,%s)
+        conn.execute("""INSERT INTO standard_words(id,name,normalized_name,english_abbr,definition,domain_classification,status,source,embedding,embedding_model)
+            VALUES(%s,%s,%s,%s,%s,%s,'ACTIVE','TEST_FIXTURE_NOT_PRODUCTION',%s,%s)
             ON CONFLICT(normalized_name) DO UPDATE SET english_abbr=excluded.english_abbr,definition=excluded.definition,
-            embedding=excluded.embedding,embedding_model=excluded.embedding_model""",
-            (str(uuid.uuid4()),name,key(name),english_abbr,definition,vector,EMBEDDING_MODEL))
+            domain_classification=excluded.domain_classification,embedding=excluded.embedding,embedding_model=excluded.embedding_model""",
+            (str(uuid.uuid4()),name,key(name),english_abbr,definition,domain_classification,vector,EMBEDDING_MODEL))
 
 def insert_pending_term(term_name,definition="테스트 정의",domain="수N7",requester="tester",status="PENDING_REVIEW"):
     from term_service.naming import key
@@ -1261,6 +1261,110 @@ def test_term_request_word_gap_rejected_without_calling_llm(api_client):
     body=resp.json()
     assert body["error"]=="WORD_GAP_REQUIRES_REGISTRATION" and body["gaps"]
 
+def test_word_request_options_requires_auth(api_client):
+    resp=api_client.get("/admin/word-requests/options")
+    assert resp.status_code==401
+
+def test_word_request_options_lists_distinct_nonempty_domain_classifications(api_client):
+    insert_standard_word("금액단어","AMT",domain_classification="금액")
+    insert_standard_word("또다른금액단어","AMT2",domain_classification="금액")
+    insert_standard_word("빈분류단어","BLNK",domain_classification="")
+    _create_active_admin()
+    api_client.post("/admin/auth/login",json={"username":"admin1","password":"adminpass123"})
+    resp=api_client.get("/admin/word-requests/options")
+    assert resp.status_code==200
+    body=resp.json()
+    assert body["ok"]
+    assert body["domain_classifications"].count("금액")==1
+    assert "" not in body["domain_classifications"]
+
+def test_suggest_word_route_requires_auth(api_client):
+    resp=api_client.get("/admin/word-requests/suggest",params={"usage_description":"등기부에 적힌 사실을 증명하는 문서"})
+    assert resp.status_code==401
+
+def test_suggest_word_route_requires_usage_description(api_client):
+    _create_active_admin()
+    api_client.post("/admin/auth/login",json={"username":"admin1","password":"adminpass123"})
+    resp=api_client.get("/admin/word-requests/suggest",params={"usage_description":""})
+    assert resp.status_code==400 and resp.json()["error"]=="USAGE_DESCRIPTION_REQUIRED"
+
+def test_suggest_word_route_rejects_invalid_clarification_history(api_client):
+    _create_active_admin()
+    api_client.post("/admin/auth/login",json={"username":"admin1","password":"adminpass123"})
+    resp=api_client.get("/admin/word-requests/suggest",
+        params={"usage_description":"아무 의미","clarification_history":"이건 JSON이 아님"})
+    assert resp.status_code==400 and resp.json()["error"]=="INVALID_CLARIFICATION_HISTORY"
+
+def test_suggest_word_route_passes_clarification_history_through_and_never_pins_a_name(api_client,monkeypatch):
+    # 간편 입력은 독립 진입(용어 갭을 메우는 임베디드 진입이 아님)이라 fixed_name이 항상 비어야 한다 -
+    # conversation.py의 임베디드 진입만 특정 표기를 강제로 고정할 이유가 있다(word_suggestion.py 참고).
+    import json
+    import term_service.word_suggestion as word_suggestion_module
+    captured={}
+    def fake_suggest_word(usage_description,clarification_history=None,fixed_name=""):
+        captured["usage_description"]=usage_description
+        captured["clarification_history"]=clarification_history
+        captured["fixed_name"]=fixed_name
+        return WordSuggestionResult(existing_word_match="",name="새단어",english_abbr="NEWWRD",
+            definition="반영된 정의",rationale="",method="test_stub")
+    monkeypatch.setattr(word_suggestion_module,"suggest_word",fake_suggest_word)
+    _create_active_admin()
+    api_client.post("/admin/auth/login",json={"username":"admin1","password":"adminpass123"})
+    history=[{"question":"어떤 종류인가요?","answer":"공문서"}]
+    resp=api_client.get("/admin/word-requests/suggest",
+        params={"usage_description":"등기부에 적힌 사실을 증명하는 문서","clarification_history":json.dumps(history)})
+    assert resp.status_code==200
+    body=resp.json()
+    assert body["ok"] and body["name"]=="새단어" and body["english_abbr"]=="NEWWRD"
+    assert captured["clarification_history"]==history
+    assert captured["fixed_name"]==""
+
+def test_suggest_domain_route_requires_auth(api_client):
+    resp=api_client.get("/admin/domain-requests/suggest",params={"description":"결제 방법을 구분하는 코드"})
+    assert resp.status_code==401
+
+def test_suggest_domain_route_requires_description(api_client):
+    _create_active_admin()
+    api_client.post("/admin/auth/login",json={"username":"admin1","password":"adminpass123"})
+    resp=api_client.get("/admin/domain-requests/suggest",params={"description":""})
+    assert resp.status_code==400 and resp.json()["error"]=="DESCRIPTION_REQUIRED"
+
+def test_suggest_domain_route_rejects_invalid_clarification_history(api_client):
+    _create_active_admin()
+    api_client.post("/admin/auth/login",json={"username":"admin1","password":"adminpass123"})
+    resp=api_client.get("/admin/domain-requests/suggest",
+        params={"description":"아무 설명","clarification_history":"이건 JSON이 아님"})
+    assert resp.status_code==400 and resp.json()["error"]=="INVALID_CLARIFICATION_HISTORY"
+
+def test_suggest_domain_route_uses_code_as_term_name_hint_and_passes_history(api_client,monkeypatch):
+    # "code"가 채워져 있으면 term_name 힌트로 그걸 쓰고, 없으면 domain_group으로 대체한다(라우트의
+    # name_hint 계산 로직) - suggest_domain()에 실제로 전달되는 첫 인자를 직접 확인.
+    import json
+    import term_service.domain_suggestion as domain_suggestion_module
+    captured={}
+    def fake_suggest_domain(term_name,definition,clarification_history=None,allow_existing_match=True,current_draft=None):
+        captured["term_name"]=term_name
+        captured["definition"]=definition
+        captured["clarification_history"]=clarification_history
+        return DomainSuggestionResult(existing_domain_match="",code="결제수단_코드",domain_group="코드",
+            data_type="CHAR",data_length=1,description="결제 방법을 구분하는 코드",rationale="",method="test_stub")
+    monkeypatch.setattr(domain_suggestion_module,"suggest_domain",fake_suggest_domain)
+    _create_active_admin()
+    api_client.post("/admin/auth/login",json={"username":"admin1","password":"adminpass123"})
+    history=[{"question":"어떤 값들인가요?","answer":"신용카드, 계좌이체"}]
+    resp=api_client.get("/admin/domain-requests/suggest",
+        params={"description":"결제 방법을 구분하는 코드","code":"결제수단_코드","clarification_history":json.dumps(history)})
+    assert resp.status_code==200
+    body=resp.json()
+    assert body["ok"] and body["code"]=="결제수단_코드" and body["data_type"]=="CHAR"
+    assert captured["term_name"]=="결제수단_코드"
+    assert captured["definition"]=="결제 방법을 구분하는 코드"
+    assert captured["clarification_history"]==history
+    # code가 비어 있으면 domain_group을 대신 힌트로 쓴다.
+    captured.clear()
+    api_client.get("/admin/domain-requests/suggest",params={"description":"설명","domain_group":"결제"})
+    assert captured["term_name"]=="결제"
+
 def test_term_request_overlong_synonym_returns_400_not_500(api_client):
     # 회귀: RegistrationInput의 synonyms field_validator가 던지는 ValueError가 pydantic errors()의
     # ctx에 객체로 실려, INVALID_FIELDS 응답을 JSON으로 만들 때 TypeError -> 500이 되던 문제.
@@ -1294,6 +1398,27 @@ def test_term_request_invalid_fields_rejected(api_client):
     api_client.post("/admin/auth/login",json={"username":"admin1","password":"adminpass123"})
     resp=api_client.post("/admin/term-requests",json={"definition":"테스트"})
     assert resp.status_code==400 and resp.json()["error"]=="INVALID_FIELDS"
+
+def test_check_concept_requires_auth(api_client):
+    resp=api_client.get("/admin/term-requests/check-concept",params={"description":"아무 개념 설명"})
+    assert resp.status_code==401
+
+def test_check_concept_empty_description_returns_no_matches(api_client):
+    _create_active_admin()
+    api_client.post("/admin/auth/login",json={"username":"admin1","password":"adminpass123"})
+    resp=api_client.get("/admin/term-requests/check-concept",params={"description":""})
+    assert resp.status_code==200 and resp.json()["matches"]==[]
+
+def test_check_concept_finds_semantically_close_existing_term(api_client,catalog):
+    # validate_name()을 거치지 않으므로 자유 서술문(명사형으로 안 끝남)도 그대로 통과해야 한다 -
+    # catalog fixture가 심어둔 실제 용어와 의미가 겹치는 설명을 던져 semantic_matches로 잡히는지 확인.
+    _create_active_admin()
+    api_client.post("/admin/auth/login",json={"username":"admin1","password":"adminpass123"})
+    resp=api_client.get("/admin/term-requests/check-concept",
+        params={"description":"하루 동안 섭취한 열량의 총합을 나타내는 값입니다"})
+    assert resp.status_code==200
+    body=resp.json()
+    assert any(m["name"]=="일일섭취칼로리" for m in body["matches"])
 
 def test_check_term_name_requires_auth(api_client):
     resp=api_client.get("/admin/term-requests/check-name",params={"term_name":"아무이름"})

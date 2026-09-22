@@ -237,6 +237,7 @@ function switchCatalogTab(tab) {
   });
   if (tab === "browse") fetchUnifiedCatalog();
   if (tab === "term-req") populateTermDomainOptions();
+  if (tab === "word-req") populateWordRequestOptions();
   if (tab === "domain-req") populateDomainRequestOptions();
 }
 document.querySelectorAll(".catalog-tab-btn").forEach((btn) => {
@@ -872,6 +873,144 @@ document.getElementById("dr-is-personal-info").addEventListener("change", () =>
 document.getElementById("dr-is-encrypted").addEventListener("change", () =>
   toggleDrField("dr-is-encrypted", "dr-encryption-method"));
 
+// ── 도메인 신청 AI 추천 (2026-09-22) ──────────────────────────────────
+// 챗봇의 신규도메인 서브플로우(domain_suggestion.suggest_domain)를 그대로 재사용한다. 그 모듈은
+// 원래 "용어의 정의를 보고 그 용어에 필요한 도메인 스펙을 짓는" 용도라 term_name이 필요한데, 이
+// 폼엔 용어가 없어서 사용자가 이미 적어둔 도메인명(코드)/도메인그룹을 힌트로 대신 넘긴다(백엔드
+// admin_api.py의 /admin/domain-requests/suggest 참고 - 실제로는 프롬프트 문맥에만 쓰여 대체 가능).
+let domainAiAssist = true;
+let domainSuggestToken = 0;
+
+function setDomainAiAssist(on) {
+  domainAiAssist = on;
+  const toggle = document.getElementById("domain-ai-toggle");
+  toggle.classList.toggle("is-on", on);
+  toggle.setAttribute("aria-checked", String(on));
+  document.getElementById("domain-ai-toggle-label").textContent = on ? "AI 추천 ON" : "AI 추천 OFF";
+  if (!on) {
+    domainSuggestToken++;
+    document.getElementById("dr-domain-suggestion").hidden = true;
+  }
+}
+document.getElementById("domain-ai-toggle").addEventListener("click", () => setDomainAiAssist(!domainAiAssist));
+
+async function suggestDomainFromDescription(description, history) {
+  history = history || [];
+  const wrap = document.getElementById("dr-domain-suggestion");
+  const myToken = ++domainSuggestToken;
+  const nameHint = document.getElementById("dr-code").value.trim() || document.getElementById("dr-domain-group").value.trim();
+  let data;
+  try {
+    const params = new URLSearchParams({ description });
+    if (nameHint) params.set("code", nameHint);
+    if (history.length) params.set("clarification_history", JSON.stringify(history));
+    const res = await fetch(`/admin/domain-requests/suggest?${params.toString()}`);
+    data = await res.json();
+  } catch {
+    return;
+  }
+  if (myToken !== domainSuggestToken || !domainAiAssist) return;
+  if (!data.ok) { wrap.hidden = true; return; }
+  if (data.existing_domain_match) {
+    // 재사용을 권할 뿐 자동으로 채우지 않는다 - 기존 도메인 선택은 사용자 몫(용어 신청의
+    // EXACT_MATCH가 후속 추천을 안 하는 것과 같은 원칙).
+    wrap.innerHTML = `<p class="field-suggestion-warning"><strong>이미 비슷한 도메인이 있습니다: ${escapeHtml(data.existing_domain_match)}</strong>${escapeHtml(data.match_reason || "")}<br>새로 만들기보다 이 도메인을 재사용하는 걸 권장합니다.</p>`;
+    wrap.hidden = false;
+    return;
+  }
+  if (data.ambiguous && (data.options || []).length) {
+    wrap.innerHTML = `<p class="field-suggestion-question">${escapeHtml(data.question || "설명이 명확하지 않습니다 - 아래 중 선택하거나 직접 작성하세요.")}</p>
+      <div class="field-suggestion-options">${data.options.map((o) => `<button type="button" class="btn-ghost field-option-btn">${escapeHtml(o)}</button>`).join("")}</div>`;
+    wrap.querySelectorAll(".field-option-btn").forEach((btn, i) => {
+      btn.addEventListener("click", () => {
+        suggestDomainFromDescription(description, [...history, { question: data.question, answer: data.options[i] }]);
+      });
+    });
+    wrap.hidden = false;
+    return;
+  }
+  if (data.code || data.data_type) {
+    const fillIfEmpty = (id, value) => {
+      if (value === null || value === undefined || value === "") return;
+      const el = document.getElementById(id);
+      if (!el.value.trim()) { el.value = value; clearDomainFieldError(el.id === "dr-code" ? "code" : el.id === "dr-domain-group" ? "domain_group" : el.id === "dr-data-type" ? "data_type" : ""); }
+    };
+    fillIfEmpty("dr-code", data.code);
+    fillIfEmpty("dr-domain-group", data.domain_group);
+    fillIfEmpty("dr-data-type", data.data_type);
+    fillIfEmpty("dr-data-length", data.data_length);
+    fillIfEmpty("dr-decimal-length", data.decimal_length);
+    fillIfEmpty("dr-display-format", data.display_format);
+    fillIfEmpty("dr-valid-values", data.valid_values);
+    // description은 사용자가 이미 적어 이 추천을 촉발한 트리거 텍스트라 AI가 다시 쓴 문장으로
+    // 덮어쓰지 않는다(term의 정의 추천과 달리, 여기선 입력 자체가 곧 정의문 역할을 함).
+    wrap.innerHTML = `<p class="field-suggestion-note"><strong>AI 추천</strong> - ${escapeHtml(data.rationale || "제안된 값을 검토 후 필요하면 직접 수정하세요.")}</p>`;
+    wrap.hidden = false;
+  } else {
+    wrap.hidden = true;
+  }
+}
+document.getElementById("dr-description").addEventListener("blur", () => {
+  if (!domainAiAssist) return;
+  const value = document.getElementById("dr-description").value.trim();
+  if (!value) { document.getElementById("dr-domain-suggestion").hidden = true; domainSuggestToken++; return; }
+  suggestDomainFromDescription(value);
+});
+document.getElementById("dr-description").addEventListener("input", () => {
+  domainSuggestToken++;
+  document.getElementById("dr-domain-suggestion").hidden = true;
+});
+
+// ── 도메인 신청 제출 시 칸별 빨간 테두리 (2026-09-22, 용어 신청과 동일한 패턴) ──
+// 필드가 20개나 되지만, 실제로 자주 틀리는/서버가 거부하는 지점(코드·그룹·유형·길이·소수점)만
+// 칸별 표시를 두고 나머지는 하단 오류 문구만 표시한다.
+const DOMAIN_FIELDS = {
+  code: ["dr-code", "dr-code-hint"],
+  domain_group: ["dr-domain-group", "dr-domain-group-hint"],
+  data_type: ["dr-data-type", "dr-data-type-hint"],
+  data_length: ["dr-data-length", "dr-data-length-hint"],
+  decimal_length: ["dr-decimal-length", "dr-decimal-length-hint"],
+};
+function markDomainFieldError(field, message) {
+  const [inputId, hintId] = DOMAIN_FIELDS[field];
+  setFieldState(document.getElementById(inputId), document.getElementById(hintId), "error", message);
+}
+function clearDomainFieldError(field) {
+  if (!field || !DOMAIN_FIELDS[field]) return;
+  const [inputId, hintId] = DOMAIN_FIELDS[field];
+  const input = document.getElementById(inputId);
+  if (input.classList.contains("field-invalid")) setFieldState(input, document.getElementById(hintId), "", "");
+}
+Object.keys(DOMAIN_FIELDS).forEach((field) => {
+  document.getElementById(DOMAIN_FIELDS[field][0]).addEventListener("input", () => clearDomainFieldError(field));
+});
+const DOMAIN_ERROR_FIELDS = {
+  CODE_ALREADY_EXISTS: ["code"], DOMAIN_CODE_ALREADY_EXISTS: ["code"], PENDING_REQUEST_ALREADY_EXISTS: ["code"],
+};
+function validateDomainForm(payload) {
+  const problems = [];
+  if (!payload.code) problems.push(["code", "도메인명(코드)을 입력해주세요."]);
+  else if (payload.code.length > 50) problems.push(["code", "도메인명(코드)은 50자 이내로 입력해주세요."]);
+  if (!payload.domain_group) problems.push(["domain_group", "도메인그룹을 입력해주세요."]);
+  if (!payload.data_type) problems.push(["data_type", "데이터유형을 입력해주세요."]);
+  if (payload.data_length !== null && (payload.data_length < 0 || payload.data_length > 100000))
+    problems.push(["data_length", "길이는 0~100000 사이여야 합니다."]);
+  if (payload.decimal_length !== null && (payload.decimal_length < 0 || payload.decimal_length > 100))
+    problems.push(["decimal_length", "소수점은 0~100 사이여야 합니다."]);
+  return problems;
+}
+
+function resetDomainRequestForm() {
+  document.getElementById("domain-request-form").reset();
+  updateMappingColumnOptions();
+  toggleDrField("dr-is-personal-info", "dr-personal-info-type", "dr-protection-level", "dr-mapping-table", "dr-mapping-column");
+  toggleDrField("dr-is-encrypted", "dr-encryption-method");
+  domainSuggestToken++;
+  document.getElementById("dr-domain-suggestion").hidden = true;
+  Object.keys(DOMAIN_FIELDS).forEach(clearDomainFieldError);
+}
+document.getElementById("domain-request-reset").addEventListener("click", resetDomainRequestForm);
+
 document.getElementById("domain-request-form").addEventListener("submit", async (e) => {
   e.preventDefault();
   const errorEl = document.getElementById("domain-request-error");
@@ -901,28 +1040,41 @@ document.getElementById("domain-request-form").addEventListener("submit", async 
     mapping_table: document.getElementById("dr-mapping-table").value,
     mapping_column: document.getElementById("dr-mapping-column").value,
   };
+  Object.keys(DOMAIN_FIELDS).forEach(clearDomainFieldError);
+  errorEl.hidden = true;
+  const problems = validateDomainForm(payload);
+  if (problems.length) {
+    problems.forEach(([field, message]) => markDomainFieldError(field, message));
+    errorEl.textContent = AUTH_ERROR_LABELS.INVALID_FIELDS;
+    errorEl.hidden = false;
+    document.getElementById(DOMAIN_FIELDS[problems[0][0]][0]).scrollIntoView({ block: "center", behavior: "smooth" });
+    return;
+  }
   try {
     await submitAuthForm("/admin/domain-requests", payload, errorEl);
-    document.getElementById("domain-request-form").reset();
-    updateMappingColumnOptions();
-    toggleDrField("dr-is-personal-info", "dr-personal-info-type", "dr-protection-level", "dr-mapping-table", "dr-mapping-column");
-    toggleDrField("dr-is-encrypted", "dr-encryption-method");
+    resetDomainRequestForm();
     noticeEl.hidden = false;
     fetchUnifiedCatalog();
-  } catch { /* 에러는 submitAuthForm이 이미 표시함 */ }
+  } catch (err) {
+    const code = err.data?.error;
+    const message = AUTH_ERROR_LABELS[code] || err.message;
+    let fields = DOMAIN_ERROR_FIELDS[code] || [];
+    if (code === "INVALID_FIELDS" && Array.isArray(err.data.detail)) {
+      fields = [...new Set(err.data.detail.map((d) => d.loc?.[0]).filter((f) => f in DOMAIN_FIELDS))];
+    }
+    fields.forEach((field) => markDomainFieldError(field, message));
+    if (fields.length) document.getElementById(DOMAIN_FIELDS[fields[0]][0]).scrollIntoView({ block: "center", behavior: "smooth" });
+  }
 });
 
 // ── 용어/단어 신청 (표준 데이터 조회의 "용어 신청"/"단어 신청" 탭) ──────────
 // 간편 입력 - 폼 한 번 제출로 끝나되 /admin/term-requests·/admin/word-requests가
 // registration.py/word_registration.py의 prepare()/submit()을 그대로 태우므로 챗봇과 동일한
 // 품질 검증(용어는 임베딩+LLM 의미비교까지)을 거친다 - 단, 다단계 안내 없이 실패 사유를 한 번에
-// 에러로 보여줌. 단어 신청 탭은 추가로 "AI와 대화하며 등록"(기존 플로팅 챗봇 재사용) 진입점이
-// 있다. 용어 신청 탭은 그 진입점을 없앴다(2026-09-21) - 헤더의 "신규 용어 등록" 버튼과 같은
-// 챗봇을 여는 중복 기능이라서 - 대신 이 탭 안의 AI 추천을 ON/OFF 하는 토글이 있다(아래).
-document.getElementById("word-ai-start-btn").addEventListener("click", () => {
-  openChat();
-  submitChatMessage("단어를 등록할래요");
-});
+// 에러로 보여줌. "AI와 대화하며 등록"(기존 플로팅 챗봇을 열어 대신 말해주는 진입점) 카드는
+// 용어 신청(2026-09-21)에 이어 단어 신청에서도 없앴다(2026-09-22) - 헤더의 "+ 신규 용어 등록"
+// 버튼이 여는 챗봇 인사말에 이미 "③ 단어를 등록할래요" 옵션이 있어 완전히 중복이었음. 대신 이
+// 탭 안의 AI 추천을 ON/OFF 하는 토글이 있다(아래).
 
 let termDomainOptionsLoaded = false;
 function populateTermDomainOptions() {
@@ -933,6 +1085,22 @@ function populateTermDomainOptions() {
     .sort((a, b) => a.code.localeCompare(b.code))
     .map((d) => `<option value="${escapeHtml(d.code)}">${escapeHtml(d.description || "")}</option>`)
     .join("");
+}
+
+// "도메인분류"는 자유 입력이지만 실제 정부 표준 사전에 이미 쓰이는 값(수/금액/율 등)이 있어 -
+// 선택지가 하나도 안 보이는 칸이라는 지적(2026-09-22)에 따라 datalist로 실제 값을 보여준다.
+let wordRequestOptionsLoaded = false;
+async function populateWordRequestOptions() {
+  if (wordRequestOptionsLoaded) return;
+  wordRequestOptionsLoaded = true;
+  try {
+    const res = await fetch("/admin/word-requests/options");
+    const data = await res.json();
+    if (data.ok) {
+      document.getElementById("wr-domain-classification-options").innerHTML =
+        data.domain_classifications.map((c) => `<option value="${escapeHtml(c)}"></option>`).join("");
+    }
+  } catch { /* datalist는 없어도 입력 자체는 가능하므로 조용히 무시 */ }
 }
 
 // 도메인 하나의 상세(허용값/표현형식/저장형식 등)를 가져온다 - list_data_domains()
@@ -986,6 +1154,39 @@ let termAiAssist = true;
 let termNameStatus = ""; // "" | "checking" | "available" | "invalid" | "exact_match" | "synonym_match" | "pending"
 let termNameCheckToken = 0;
 
+// 용어 신청 폼 맨 위 "사용하고자 하는 용어는 어떤 개념인가요?"(2026-09-22) - 단어/도메인과 달리
+// 이 설명으로 AI가 용어명을 짓지는 않는다(사용자 결정 - 표준용어는 표준단어의 조합이어야 해서
+// 이름은 계속 직접 입력). 역할은 둘: (1) 이름을 정하기도 전에 의미상 겹치는 기존 용어를 미리
+// 경고(아래 checkConceptDescription), (2) 이름이 확정되면 정의 추천의 근거로 실어 보냄(아래
+// checkTermName이 suggestDefinitionForTerm을 부를 때 clarification_history 첫 항목으로 얹음).
+// 서버로 제출되는 필드가 아님(RegistrationInput에 없음) - 참고용으로만 브라우저에 남는다.
+let termConceptCheckToken = 0;
+async function checkConceptDescription() {
+  if (!termAiAssist) return;
+  const wrap = document.getElementById("tr-concept-suggestion");
+  const description = document.getElementById("tr-concept-description").value.trim();
+  const myToken = ++termConceptCheckToken;
+  if (!description) { wrap.hidden = true; return; }
+  let data;
+  try {
+    const res = await fetch(`/admin/term-requests/check-concept?description=${encodeURIComponent(description)}`);
+    data = await res.json();
+  } catch {
+    return;
+  }
+  if (myToken !== termConceptCheckToken || !termAiAssist) return;
+  if (!data.ok || !(data.matches || []).length) { wrap.hidden = true; return; }
+  wrap.innerHTML = `<p class="field-suggestion-warning"><strong>이미 비슷한 용어가 있을 수 있습니다</strong>${data.matches
+    .map((m) => `${escapeHtml(m.name)}(${Math.round((m.similarity || 0) * 100)}%) - ${escapeHtml(m.definition || "")}`)
+    .join("<br>")}<br>새로 신청하기 전에 "조회" 탭에서 먼저 확인해보세요.</p>`;
+  wrap.hidden = false;
+}
+document.getElementById("tr-concept-description").addEventListener("blur", checkConceptDescription);
+document.getElementById("tr-concept-description").addEventListener("input", () => {
+  termConceptCheckToken++;
+  document.getElementById("tr-concept-suggestion").hidden = true;
+});
+
 function setFieldState(inputEl, hintEl, kind, message) {
   inputEl.classList.remove("field-valid", "field-invalid");
   if (kind === "ok") inputEl.classList.add("field-valid");
@@ -1029,7 +1230,11 @@ async function checkTermName() {
   termNameStatus = data.status;
   if (data.status === "available") {
     setFieldState(input, hint, "ok", data.message);
-    suggestDefinitionForTerm(termName);
+    // 맨 위에 "무슨 개념인지" 설명이 채워져 있으면 정의 추천의 씨앗으로 넘긴다 - 새 백엔드 필드
+    // 없이 suggest_definition()이 이미 받는 clarification_history를 재사용(첫 답으로 얹음).
+    const concept = document.getElementById("tr-concept-description").value.trim();
+    const seedHistory = concept ? [{ question: "이 용어를 어떤 개념으로 사용하려고 하나요?", answer: concept }] : [];
+    suggestDefinitionForTerm(termName, seedHistory);
   } else {
     setFieldState(input, hint, "error", data.message);
     document.getElementById("tr-definition-suggestion").hidden = true;
@@ -1047,8 +1252,14 @@ let termDefinitionSuggestToken = 0;
 // 동형) - 후보 라벨을 고르는 건 "이 의미가 맞다"는 답일 뿐 완성된 정의 문장이 아니므로,
 // 클릭해도 바로 적용하지 않고 그 답까지 반영해서 다시 추천을 받는다(서버가 진짜 정의
 // 문장을 새로 써서 돌려줌 - suggest_definition()의 clarification_history 경로 재사용).
-async function suggestDefinitionForTerm(termName, history) {
+// confirmed: history가 있어도 "자동 적용해도 되는 답"인지는 별도로 명시한다(2026-09-22) -
+// 처음엔 history.length만 보고 판단했는데, 맨 위 "무슨 개념인지" 설명을 정의 추천의 씨앗으로
+// 얹으면서(checkTermName 참고) 그 값도 history를 채우게 됐다. 그건 사용자가 "이 후보가 맞다"고
+// 클릭해서 확정한 답이 아니라 그냥 참고 설명이므로, 여전히 칩을 눌러야 적용되게 해야 한다 -
+// confirmed=true는 모호함 질문에 실제로 답(클릭)한 재귀 호출에서만 넘어온다.
+async function suggestDefinitionForTerm(termName, history, confirmed) {
   history = history || [];
+  confirmed = confirmed || false;
   const wrap = document.getElementById("tr-definition-suggestion");
   const myToken = ++termDefinitionSuggestToken;
   let data;
@@ -1067,13 +1278,13 @@ async function suggestDefinitionForTerm(termName, history) {
       <div class="field-suggestion-options">${data.options.map((o) => `<button type="button" class="btn-ghost field-option-btn">${escapeHtml(o)}</button>`).join("")}</div>`;
     wrap.querySelectorAll(".field-option-btn").forEach((btn, i) => {
       btn.addEventListener("click", () => {
-        suggestDefinitionForTerm(termName, [...history, { question: data.question, answer: data.options[i] }]);
+        suggestDefinitionForTerm(termName, [...history, { question: data.question, answer: data.options[i] }], true);
       });
     });
     wrap.hidden = false;
   } else if (data.definition) {
-    if (history.length) {
-      // 이미 한 번 이상 명확화 질문에 답한 뒤 나온 결과 - 사용자가 이미 선택으로 의사를
+    if (confirmed) {
+      // 모호함 질문에 실제로 답(클릭)한 뒤 나온 결과 - 사용자가 이미 선택으로 의사를
       // 표시했으니 한 번 더 클릭을 요구하지 않고 바로 반영한다.
       document.getElementById("tr-definition").value = data.definition;
       wrap.hidden = true;
@@ -1193,6 +1404,7 @@ function clearTermAiSuggestions() {
   termDefinitionSuggestToken++;
   termFollowupsToken++;
   termDomainDerivedFetchToken++;
+  termConceptCheckToken++;
   clearTimeout(termDomainDerivedTimer);
   termNameStatus = "";
   const nameInput = document.getElementById("tr-term-name");
@@ -1203,6 +1415,7 @@ function clearTermAiSuggestions() {
   suggestion.hidden = true;
   document.getElementById("tr-domain-suggestion-note").hidden = true;
   document.getElementById("tr-english-abbr-suggestion-note").hidden = true;
+  document.getElementById("tr-concept-suggestion").hidden = true;
 }
 
 // 모든 칸과 추천/판정/오류 표시를 처음 상태로 되돌린다(초기화 버튼 + 제출 성공 후 공용).
@@ -1223,10 +1436,12 @@ function setTermAiAssist(on) {
   toggle.classList.toggle("is-on", on);
   toggle.setAttribute("aria-checked", String(on));
   document.getElementById("term-ai-toggle-label").textContent = on ? "AI 추천 ON" : "AI 추천 OFF";
+  document.getElementById("tr-ai-suggest-block").hidden = !on;
   if (!on) {
     clearTermAiSuggestions(); // 화면에 떠 있던 추천/판정과 진행 중이던 요청을 정리(입력값은 유지)
-  } else if (document.getElementById("tr-term-name").value.trim()) {
-    checkTermName(); // 이미 이름을 적어둔 채 켰다면 지금 값으로 바로 확인/추천을 시작
+  } else {
+    if (document.getElementById("tr-concept-description").value.trim()) checkConceptDescription();
+    if (document.getElementById("tr-term-name").value.trim()) checkTermName(); // 이미 이름을 적어둔 채 켰다면 지금 값으로 바로 확인/추천을 시작
   }
 }
 document.getElementById("term-ai-toggle").addEventListener("click", () => setTermAiAssist(!termAiAssist));
@@ -1296,6 +1511,133 @@ document.getElementById("term-request-form").addEventListener("submit", async (e
   }
 });
 
+// ── 단어 신청 AI 추천 (2026-09-22) ────────────────────────────────────
+// "단어 등록은 이름이 아니라 의미가 입력"(word_suggestion.py의 설계 원칙) - 그래서 용어 신청과
+// 달리 사용자가 적은 이름을 검사하는 라우트가 아니라, "이 개념을 이렇게 씁니다"라는 의미 설명
+// 하나를 받아 기존 단어와 겹치는지/모호한지/새 이름·정의·영문약어·형식단어 초안까지 한 번에
+// 돌려주는 word_suggestion.suggest_word()를 그대로 재사용한다(admin_api.py의
+// /admin/word-requests/suggest). 트리거 시점이 "의미 설명 칸을 벗어날 때" 하나뿐이라, 용어
+// 신청처럼 라우트를 여러 개로 쪼갤 필요가 없다.
+let wordAiAssist = true;
+let wordSuggestToken = 0;
+
+function setWordAiAssist(on) {
+  wordAiAssist = on;
+  const toggle = document.getElementById("word-ai-toggle");
+  toggle.classList.toggle("is-on", on);
+  toggle.setAttribute("aria-checked", String(on));
+  document.getElementById("word-ai-toggle-label").textContent = on ? "AI 추천 ON" : "AI 추천 OFF";
+  document.getElementById("wr-ai-suggest-block").hidden = !on;
+  if (!on) {
+    wordSuggestToken++;
+    document.getElementById("wr-word-suggestion").hidden = true;
+  }
+}
+document.getElementById("word-ai-toggle").addEventListener("click", () => setWordAiAssist(!wordAiAssist));
+
+async function suggestWordFromUsage(usageDescription, history) {
+  history = history || [];
+  const wrap = document.getElementById("wr-word-suggestion");
+  const myToken = ++wordSuggestToken;
+  let data;
+  try {
+    const params = new URLSearchParams({ usage_description: usageDescription });
+    if (history.length) params.set("clarification_history", JSON.stringify(history));
+    const res = await fetch(`/admin/word-requests/suggest?${params.toString()}`);
+    data = await res.json();
+  } catch {
+    return;
+  }
+  if (myToken !== wordSuggestToken || !wordAiAssist) return;
+  if (!data.ok) { wrap.hidden = true; return; }
+  if (data.existing_word_match) {
+    // 이름/정의/약어는 채우지 않는다 - 재사용 여부는 사용자가 결정할 몫(용어 신청의 EXACT_MATCH가
+    // 후속 추천을 안 하는 것과 같은 원칙).
+    wrap.innerHTML = `<p class="field-suggestion-warning"><strong>이미 있는 단어: ${escapeHtml(data.existing_word_match)}</strong>${escapeHtml(data.match_reason || "")}<br>새로 만들기보다 이 단어를 재사용하는 걸 권장합니다.</p>`;
+    wrap.hidden = false;
+    return;
+  }
+  if (data.ambiguous && (data.options || []).length) {
+    wrap.innerHTML = `<p class="field-suggestion-question">${escapeHtml(data.question || "의미가 명확하지 않습니다 - 아래 중 선택하거나 직접 작성하세요.")}</p>
+      <div class="field-suggestion-options">${data.options.map((o) => `<button type="button" class="btn-ghost field-option-btn">${escapeHtml(o)}</button>`).join("")}</div>`;
+    wrap.querySelectorAll(".field-option-btn").forEach((btn, i) => {
+      btn.addEventListener("click", () => {
+        suggestWordFromUsage(usageDescription, [...history, { question: data.question, answer: data.options[i] }]);
+      });
+    });
+    wrap.hidden = false;
+    return;
+  }
+  if (data.name) {
+    // 이름/정의/약어/형식단어를 하나의 "AI 초안" 묶음으로 취급 - 단어명이 비어있을 때만 채운다
+    // (term의 "빈 칸에만 채운다" 원칙과 동일, 사용자가 이미 직접 고친 값은 덮어쓰지 않음).
+    const nameInput = document.getElementById("wr-word-name");
+    if (!nameInput.value.trim()) {
+      nameInput.value = data.name;
+      document.getElementById("wr-definition").value = data.definition || "";
+      document.getElementById("wr-english-abbr").value = data.english_abbr || "";
+      document.getElementById("wr-is-format-word").checked = !!data.is_format_word;
+      clearWordFieldError("word_name"); clearWordFieldError("definition"); clearWordFieldError("english_abbr");
+    }
+    wrap.innerHTML = `<p class="field-suggestion-note"><strong>AI 추천</strong> - ${escapeHtml(data.rationale || "제안된 이름/정의/약어를 검토 후 필요하면 직접 수정하세요.")}</p>`;
+    wrap.hidden = false;
+  } else {
+    wrap.hidden = true;
+  }
+}
+document.getElementById("wr-usage-description").addEventListener("blur", () => {
+  if (!wordAiAssist) return;
+  const value = document.getElementById("wr-usage-description").value.trim();
+  if (!value) { document.getElementById("wr-word-suggestion").hidden = true; wordSuggestToken++; return; }
+  suggestWordFromUsage(value);
+});
+document.getElementById("wr-usage-description").addEventListener("input", () => {
+  wordSuggestToken++;
+  document.getElementById("wr-word-suggestion").hidden = true;
+});
+
+// ── 단어 신청 제출 시 칸별 빨간 테두리 (2026-09-22, 용어 신청과 동일한 패턴) ──
+const WORD_FIELDS = {
+  word_name: ["wr-word-name", "wr-word-name-hint"],
+  definition: ["wr-definition", "wr-definition-hint"],
+  english_abbr: ["wr-english-abbr", "wr-english-abbr-hint"],
+};
+function markWordFieldError(field, message) {
+  const [inputId, hintId] = WORD_FIELDS[field];
+  setFieldState(document.getElementById(inputId), document.getElementById(hintId), "error", message);
+}
+function clearWordFieldError(field) {
+  if (!field || !WORD_FIELDS[field]) return;
+  const [inputId, hintId] = WORD_FIELDS[field];
+  const input = document.getElementById(inputId);
+  if (input.classList.contains("field-invalid")) setFieldState(input, document.getElementById(hintId), "", "");
+}
+Object.keys(WORD_FIELDS).forEach((field) => {
+  document.getElementById(WORD_FIELDS[field][0]).addEventListener("input", () => clearWordFieldError(field));
+});
+const WORD_ERROR_FIELDS = {
+  EXACT_MATCH: ["word_name"], PENDING_REQUEST_ALREADY_EXISTS: ["word_name"], ABBREVIATION_ALREADY_USED: ["english_abbr"],
+};
+function validateWordForm(payload) {
+  const problems = [];
+  if (!payload.word_name) problems.push(["word_name", "단어명을 입력해주세요."]);
+  else if (payload.word_name.length > 20) problems.push(["word_name", "단어명은 20자 이내로 입력해주세요."]);
+  if (!payload.definition) problems.push(["definition", "정의를 입력해주세요."]);
+  else if (payload.definition.length < 5) problems.push(["definition", "정의는 5자 이상 입력해주세요."]);
+  else if (payload.definition.length > 4000) problems.push(["definition", "정의는 4000자 이내로 입력해주세요."]);
+  if (!payload.english_abbr) problems.push(["english_abbr", "영문 약어를 입력해주세요."]);
+  else if (payload.english_abbr.length > 20) problems.push(["english_abbr", "영문 약어는 20자 이내로 입력해주세요."]);
+  return problems;
+}
+
+function resetWordRequestForm() {
+  document.getElementById("word-request-form").reset();
+  wordSuggestToken++;
+  document.getElementById("wr-word-suggestion").hidden = true;
+  Object.keys(WORD_FIELDS).forEach(clearWordFieldError);
+}
+document.getElementById("word-request-reset").addEventListener("click", resetWordRequestForm);
+
 document.getElementById("word-request-form").addEventListener("submit", async (e) => {
   e.preventDefault();
   const errorEl = document.getElementById("word-request-error");
@@ -1308,12 +1650,31 @@ document.getElementById("word-request-form").addEventListener("submit", async (e
     is_format_word: document.getElementById("wr-is-format-word").checked,
     domain_classification: document.getElementById("wr-domain-classification").value.trim(),
   };
+  Object.keys(WORD_FIELDS).forEach(clearWordFieldError);
+  errorEl.hidden = true;
+  const problems = validateWordForm(payload);
+  if (problems.length) {
+    problems.forEach(([field, message]) => markWordFieldError(field, message));
+    errorEl.textContent = AUTH_ERROR_LABELS.INVALID_FIELDS;
+    errorEl.hidden = false;
+    document.getElementById(WORD_FIELDS[problems[0][0]][0]).scrollIntoView({ block: "center", behavior: "smooth" });
+    return;
+  }
   try {
     await submitAuthForm("/admin/word-requests", payload, errorEl);
-    document.getElementById("word-request-form").reset();
+    resetWordRequestForm();
     noticeEl.hidden = false;
     fetchUnifiedCatalog();
-  } catch { /* 에러는 submitAuthForm이 이미 표시함 */ }
+  } catch (err) {
+    const code = err.data?.error;
+    const message = AUTH_ERROR_LABELS[code] || err.message;
+    let fields = WORD_ERROR_FIELDS[code] || [];
+    if (code === "INVALID_FIELDS" && Array.isArray(err.data.detail)) {
+      fields = [...new Set(err.data.detail.map((d) => d.loc?.[0]).filter((f) => f in WORD_FIELDS))];
+    }
+    fields.forEach((field) => markWordFieldError(field, message));
+    if (fields.length) document.getElementById(WORD_FIELDS[fields[0]][0]).scrollIntoView({ block: "center", behavior: "smooth" });
+  }
 });
 
 // ── 채팅 UI 헬퍼 ────────────────────────────────────────────────

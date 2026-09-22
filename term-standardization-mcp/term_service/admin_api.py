@@ -273,6 +273,34 @@ async def create_domain_request(request: Request) -> JSONResponse:
             status_code=_DOMAIN_REQUEST_ERROR_STATUS.get(result.get("code"), 409))
     return JSONResponse({"ok": True, **result})
 
+# 도메인 신청 간편 입력에 챗봇 신규도메인 서브플로우 수준의 AI 추천을 붙임(2026-09-22) - "설명"
+# 칸을 domain_suggestion.suggest_domain()의 definition 자리에 그대로 넘긴다. 이 모듈은 원래
+# "용어의 정의를 보고 그 용어에 필요한 도메인 스펙을 짓는" 용도(신규 도메인 챗봇 서브플로우)라
+# term_name이 필수 인자인데, 도메인 신청 폼엔 "용어"가 없다 - 사용자가 이미 적어둔 도메인명(코드)이나
+# 도메인그룹을 term_name 자리에 힌트로 대신 넘긴다(실제로는 프롬프트 문맥과 가이드라인 검색 쿼리에만
+# 쓰이므로 완전히 대체 가능 - domain_suggestion.py의 term_name 사용처 참고). 결과의 code/domain_group/
+# data_type/data_length/decimal_length/display_format/valid_values만 프론트가 빈 칸에 채워 넣고,
+# description은 사용자가 이미 쓴 트리거 텍스트 그 자체이므로 AI가 다시 쓴 문장으로 덮어쓰지 않는다.
+@mcp.custom_route("/admin/domain-requests/suggest", methods=["GET"])
+async def suggest_domain_route(request: Request) -> JSONResponse:
+    import json
+    from .domain_suggestion import suggest_domain
+    _, error = require_auth(request)
+    if error: return error
+    description = (request.query_params.get("description") or "").strip()
+    if not description:
+        return JSONResponse({"ok": False, "error": "DESCRIPTION_REQUIRED"}, status_code=400)
+    name_hint = (request.query_params.get("code") or request.query_params.get("domain_group") or "").strip()
+    raw_history = request.query_params.get("clarification_history")
+    clarification_history = None
+    if raw_history:
+        try:
+            clarification_history = json.loads(raw_history)
+        except (json.JSONDecodeError, TypeError):
+            return JSONResponse({"ok": False, "error": "INVALID_CLARIFICATION_HISTORY"}, status_code=400)
+    result = suggest_domain(name_hint, description, clarification_history=clarification_history)
+    return JSONResponse({"ok": True, **result.model_dump()})
+
 @mcp.custom_route("/admin/domain-requests", methods=["GET"])
 async def list_own_domain_requests(request: Request) -> JSONResponse:
     user, error = require_auth(request)
@@ -346,6 +374,30 @@ _TERM_QUICK_ERROR_STATUS = {
 # 걸리고, registration_preparations에 부작용 있는 행까지 남긴다 - 그 깊은 판단은 여전히
 # 최종 제출 시점에만 실행됨, 지금과 동일). "이미 있다/없다"는 여기서 답하지만 "의미가 같다"는
 # 여전히 제출 시점의 몫.
+# 용어 신청 폼 맨 위에 "사용하고자 하는 용어는 어떤 개념인가요?"를 먼저 받는 입력(2026-09-22) -
+# 단, 단어/도메인과 달리 이 설명으로 AI가 용어명을 짓지는 않는다(사용자 결정 - "표준용어는
+# 표준단어의 조합"이어야 하므로 이름은 항상 사용자가 직접 입력). 이 라우트의 역할은 딱 둘:
+# (1) 여기서 - 이름을 정하기도 전에 의미상 겹치는 기존 용어가 있는지 미리 경고(참고용, 제출을
+# 막지 않음). check-name과 달리 validate_name()을 거치지 않는다 - 이 입력은 애초에 이름이
+# 아니라 자유 서술문이라 명명 규칙(마지막 형태소 명사형 등)에 맞을 이유가 없음. search()의
+# term 인자는 최소 1자 제약만 있고 형식 검증이 없어 자유 서술문을 그대로 넘겨도 안전 - 의미
+# 기반 임베딩 검색(semantic_matches)이 실제 신호이고, exact/synonym/lexical은 문장을 이름처럼
+# 취급하니 사실상 항상 빈 값. (2) checkTermName()이 통과한 뒤 정의 추천(suggest-definition)을
+# 부를 때, 프론트가 이 설명을 clarification_history의 첫 답으로 얹어 넘긴다(별도 백엔드 변경
+# 없음 - suggest_definition()이 이미 받는 파라미터 재사용).
+@mcp.custom_route("/admin/term-requests/check-concept", methods=["GET"])
+async def check_term_concept(request: Request) -> JSONResponse:
+    from .search import search
+    _, error = require_auth(request)
+    if error: return error
+    description = (request.query_params.get("description") or "").strip()
+    if not description:
+        return JSONResponse({"ok": True, "matches": []})
+    result = search(description, limit=5)
+    matches = [{"name": c.name, "definition": c.definition, "domain": c.domain, "similarity": c.similarity}
+        for c in result.semantic_matches]
+    return JSONResponse({"ok": True, "matches": matches})
+
 @mcp.custom_route("/admin/term-requests/check-name", methods=["GET"])
 async def check_term_name(request: Request) -> JSONResponse:
     from . import quick_registration, registration
@@ -451,6 +503,47 @@ _WORD_QUICK_ERROR_STATUS = {
     "CATALOG_CHANGED_RETRY": 409, "CATALOG_CHANGED_REVALIDATE": 409,
     "PENDING_REQUEST_ALREADY_EXISTS": 409,
 }
+
+# "도메인분류"는 자유 입력 칸이지만 실제 정부 표준 사전에 이미 쓰이고 있는 값(수/금액/율/비용 등,
+# 3,281건 중 545건에 값이 있음 - 나머지는 빈 문자열)이 있어서, 아무 선택지 없이 빈 텍스트 칸만
+# 보여주면 사용자가 뭘 적어야 할지 알 수 없다는 지적(2026-09-22)에 따라 실제 값 목록을 돌려준다 -
+# domain-requests/options의 dr-domain-group-options와 같은 패턴(자유 입력은 그대로 유지 - 강제
+# 선택형 <select>가 아니라 <datalist>).
+@mcp.custom_route("/admin/word-requests/options", methods=["GET"])
+async def word_request_options(request: Request) -> JSONResponse:
+    _, error = require_auth(request)
+    if error: return error
+    with db.connect() as conn:
+        classifications = [r["domain_classification"] for r in conn.execute(
+            "SELECT DISTINCT domain_classification FROM standard_words WHERE status='ACTIVE' AND domain_classification<>'' ORDER BY domain_classification").fetchall()]
+    return JSONResponse({"ok": True, "domain_classifications": classifications})
+
+# 단어 신청 간편 입력에 챗봇 수준의 AI 추천을 붙임(2026-09-22) - 단, "단어 등록은 이름이 아니라
+# 의미가 입력"(위 CLAUDE.md 원칙, word_suggestion.py 참고)이라 용어 신청과 달리 사용자가 입력하는
+# 이름을 그대로 검사하는 라우트가 아니다. "이 개념을 이렇게 씁니다"라는 의미 설명 하나를 받아
+# word_suggestion.suggest_word()에 그대로 넘기면, 기존 단어와 겹치는지(existing_word_match)·의미가
+# 모호한지(ambiguous)·아니면 새 이름/정의/영문약어/형식단어 초안까지 한 번의 호출로 전부 나온다 -
+# 용어 신청처럼 이름 확인/정의 추천/후속 추천을 별도 라우트 3개로 쪼갤 필요가 없다(트리거 시점이
+# "의미 설명 칸을 벗어날 때" 하나뿐이라서). fixed_name은 용어 등록 도중 자동 분기된 단어 서브플로우
+# 전용(conversation.py)이라 여기서는 항상 빈 문자열 - 간편 입력은 독립 진입이라 고정할 표기가 없음.
+@mcp.custom_route("/admin/word-requests/suggest", methods=["GET"])
+async def suggest_word_route(request: Request) -> JSONResponse:
+    import json
+    from .word_suggestion import suggest_word
+    _, error = require_auth(request)
+    if error: return error
+    usage_description = (request.query_params.get("usage_description") or "").strip()
+    if not usage_description:
+        return JSONResponse({"ok": False, "error": "USAGE_DESCRIPTION_REQUIRED"}, status_code=400)
+    raw_history = request.query_params.get("clarification_history")
+    clarification_history = None
+    if raw_history:
+        try:
+            clarification_history = json.loads(raw_history)
+        except (json.JSONDecodeError, TypeError):
+            return JSONResponse({"ok": False, "error": "INVALID_CLARIFICATION_HISTORY"}, status_code=400)
+    result = suggest_word(usage_description, clarification_history=clarification_history)
+    return JSONResponse({"ok": True, **result.model_dump()})
 
 @mcp.custom_route("/admin/word-requests", methods=["POST"])
 async def create_word_request(request: Request) -> JSONResponse:

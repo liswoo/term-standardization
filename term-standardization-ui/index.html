@@ -9,7 +9,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
 <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
-<link rel="stylesheet" href="style.css?v=13" />
+<link rel="stylesheet" href="style.css?v=16" />
 </head>
 <body class="pre-auth">
 
@@ -220,6 +220,15 @@
               </div>
             </div>
             <form id="term-request-form" class="auth-form" novalidate>
+              <!-- 단어/도메인 신청과 같은 패턴 - 맨 위에서 "무슨 개념인지"부터 받는다(2026-09-22).
+                   다만 용어명은 AI가 짓지 않는다("표준용어는 표준단어의 조합"이어야 하므로 계속
+                   사용자가 직접 입력 - 사용자 결정) - 이 설명은 (1) 의미상 겹치는 기존 용어가
+                   있는지 미리 경고, (2) 이름을 확정하면 정의 추천의 근거로 그대로 실려 감(별도
+                   제출 필드 아님 - RegistrationInput에 없고 서버로 전송되지 않음, 참고용). -->
+              <div id="tr-ai-suggest-block">
+                <label>사용하고자 하는 용어는 어떤 개념인가요?<textarea id="tr-concept-description" placeholder="예: 하루 동안 섭취한 열량의 총합을 나타내는 값입니다" maxlength="2000"></textarea></label>
+                <div id="tr-concept-suggestion" hidden></div>
+              </div>
               <label>용어명<input type="text" id="tr-term-name" required minlength="2" maxlength="20" /></label>
               <p class="field-hint" id="tr-term-name-hint" hidden></p>
               <label>정의<textarea id="tr-definition" required minlength="5" maxlength="4000"></textarea></label>
@@ -251,23 +260,37 @@
         <!-- 단어 신청 -->
         <div class="catalog-tab-panel" id="catalog-tab-word-req" hidden>
           <div class="panel">
-            <div class="panel-header">
-              <h2>단어 신청</h2>
-              <p class="muted">간편 입력으로 바로 신청하거나, AI와 대화하며 의미를 설명하고 이름·약어를 제안받아 등록할 수 있습니다.</p>
-            </div>
-            <div class="ai-register-card">
+            <div class="panel-header panel-header-row">
               <div>
-                <strong>AI와 대화하며 등록</strong>
-                <p class="muted">단어명이 아니라 "의미"를 설명하면, 기존 단어와 겹치는지 먼저 확인하고 이름·약어를 제안합니다.</p>
+                <h2>단어 신청</h2>
+                <p class="muted">간편 입력으로 바로 신청하거나, AI와 대화하며 의미를 설명하고 이름·약어를 제안받아 등록할 수 있습니다.</p>
               </div>
-              <button type="button" class="btn btn-primary" id="word-ai-start-btn">대화로 등록 시작</button>
+              <div class="panel-header-actions">
+                <button type="button" class="ai-toggle is-on" id="word-ai-toggle" role="switch" aria-checked="true" title="AI 추천 켜기/끄기">
+                  <span class="ai-toggle-track" aria-hidden="true"></span>
+                  <span class="ai-toggle-label" id="word-ai-toggle-label">AI 추천 ON</span>
+                </button>
+                <button type="button" class="chat-icon-btn" id="word-request-reset" aria-label="초기화" title="초기화 (입력한 내용과 추천 표시를 모두 지웁니다)">
+                  <svg viewBox="0 0 24 24"><path d="M20 11A8 8 0 1 0 18.6 15.5M20 5v6h-6"/></svg>
+                </button>
+              </div>
             </div>
-            <form id="word-request-form" class="auth-form">
+            <form id="word-request-form" class="auth-form" novalidate>
+              <!-- 단어 등록은 이름이 아니라 의미가 입력(CLAUDE.md 원칙) - AI 추천 ON일 때만 보이는
+                   이 칸에 의미를 적으면 아래 이름/정의/영문약어/형식단어를 한 번에 초안해준다. -->
+              <div id="wr-ai-suggest-block">
+                <label>사용하고자 하는 단어는 어떤 개념인가요?<textarea id="wr-usage-description" placeholder="예: 등기부에 기재된 사실을 증명하는 문서를 이렇게 부릅니다" maxlength="1000"></textarea></label>
+                <div id="wr-word-suggestion" hidden></div>
+              </div>
               <label>단어명<input type="text" id="wr-word-name" required minlength="1" maxlength="20" /></label>
+              <p class="field-hint" id="wr-word-name-hint" hidden></p>
               <label>정의<textarea id="wr-definition" required minlength="5" maxlength="4000"></textarea></label>
+              <p class="field-hint" id="wr-definition-hint" hidden></p>
               <label>영문 약어<input type="text" id="wr-english-abbr" required maxlength="20" /></label>
+              <p class="field-hint" id="wr-english-abbr-hint" hidden></p>
               <label class="checkbox-label"><input type="checkbox" id="wr-is-format-word" />형식단어</label>
-              <label>도메인분류<input type="text" id="wr-domain-classification" placeholder="선택" maxlength="100" /></label>
+              <label>도메인분류<input type="text" id="wr-domain-classification" list="wr-domain-classification-options" placeholder="선택 입력 (예: 금액, 수, 율)" maxlength="100" /></label>
+              <datalist id="wr-domain-classification-options"></datalist>
 
               <p class="auth-error" id="word-request-error" hidden></p>
               <p class="auth-notice" id="word-request-notice" hidden>단어 신청이 접수되었습니다. 관리자 승인 후 표준 데이터 조회에 반영됩니다.</p>
@@ -279,26 +302,47 @@
         <!-- 도메인 신청 (버튼 기반 직접 입력 폼, 챗봇 없음 - 코드 유일성만 확인) -->
         <div class="catalog-tab-panel" id="catalog-tab-domain-req" hidden>
           <div class="panel">
-            <div class="panel-header">
-              <h2>도메인 신청</h2>
-              <p class="muted">신규 데이터 도메인 표준을 직접 입력해서 신청합니다. 제출 후 검토 대기 상태가 되며, 관리자 승인 후 표준 데이터 조회에 반영됩니다.</p>
+            <div class="panel-header panel-header-row">
+              <div>
+                <h2>도메인 신청</h2>
+                <p class="muted">신규 데이터 도메인 표준을 직접 입력해서 신청합니다. 제출 후 검토 대기 상태가 되며, 관리자 승인 후 표준 데이터 조회에 반영됩니다.</p>
+              </div>
+              <div class="panel-header-actions">
+                <button type="button" class="ai-toggle is-on" id="domain-ai-toggle" role="switch" aria-checked="true" title="AI 추천 켜기/끄기">
+                  <span class="ai-toggle-track" aria-hidden="true"></span>
+                  <span class="ai-toggle-label" id="domain-ai-toggle-label">AI 추천 ON</span>
+                </button>
+                <button type="button" class="chat-icon-btn" id="domain-request-reset" aria-label="초기화" title="초기화 (입력한 내용과 추천 표시를 모두 지웁니다)">
+                  <svg viewBox="0 0 24 24"><path d="M20 11A8 8 0 1 0 18.6 15.5M20 5v6h-6"/></svg>
+                </button>
+              </div>
             </div>
-            <form id="domain-request-form" class="auth-form domain-request-form">
+            <form id="domain-request-form" class="auth-form domain-request-form" novalidate>
+              <!-- 용어/단어 신청과 같은 패턴 - 맨 위에서 "무슨 개념인지"부터 받는다(2026-09-22).
+                   AI 추천 ON이면 blur 시 domain_suggestion을 재사용해 이 설명으로 데이터유형/길이/
+                   소수점/데이터형식/유효값목록을 아래 빈 칸에 자동 초안하고, 의미상 비슷한 기존
+                   도메인이 있으면 경고한다 - 도메인 신청은 지금까지 코드 문자열 중복만 확인했다. -->
+              <label>사용하고자 하는 도메인은 어떤 개념인가요?<textarea id="dr-description" maxlength="2000"></textarea></label>
+              <div id="dr-domain-suggestion" hidden></div>
               <label>도메인명(코드)<input type="text" id="dr-code" required maxlength="50" /></label>
+              <p class="field-hint" id="dr-code-hint" hidden></p>
               <label>도메인그룹<input type="text" id="dr-domain-group" list="dr-domain-group-options" required maxlength="100" /></label>
               <datalist id="dr-domain-group-options"></datalist>
+              <p class="field-hint" id="dr-domain-group-hint" hidden></p>
               <label>물리명<input type="text" id="dr-physical-name" maxlength="200" /></label>
               <label>데이터유형<input type="text" id="dr-data-type" list="dr-data-type-options" required maxlength="50" /></label>
               <datalist id="dr-data-type-options"></datalist>
+              <p class="field-hint" id="dr-data-type-hint" hidden></p>
               <label>길이<input type="number" id="dr-data-length" min="0" /></label>
+              <p class="field-hint" id="dr-data-length-hint" hidden></p>
               <label>소수점<input type="number" id="dr-decimal-length" min="0" /></label>
+              <p class="field-hint" id="dr-decimal-length-hint" hidden></p>
               <label>최소값<input type="text" id="dr-min-value" maxlength="200" /></label>
               <label>최대값<input type="text" id="dr-max-value" maxlength="200" /></label>
               <label>데이터형식<input type="text" id="dr-display-format" maxlength="100" /></label>
               <label>출처구분<input type="text" id="dr-source-classification" maxlength="100" /></label>
               <label>유효값목록<input type="text" id="dr-valid-values" placeholder="값1,값2,값3" maxlength="2000" /></label>
               <label>기본값<input type="text" id="dr-default-value" maxlength="200" /></label>
-              <label>설명<textarea id="dr-description" maxlength="2000"></textarea></label>
               <label>신청사유<textarea id="dr-request-reason" maxlength="2000"></textarea></label>
 
               <h3>개인정보여부</h3>
@@ -463,6 +507,6 @@
 
 <script src="runtime-config.js"></script>
 <script src="mock-data.js"></script>
-<script src="app.js?v=14"></script>
+<script src="app.js?v=18"></script>
 </body>
 </html>
