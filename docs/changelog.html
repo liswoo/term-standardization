@@ -572,6 +572,22 @@
         </div>
       </div>
 
+      <!-- ══════════════════════ 2026-09-22 ══════════════════════ -->
+      <div class="docs-daygroup">
+        <h2>2026-09-22</h2>
+
+        <div class="changelog-entry">
+          <div class="changelog-date">2026-09-22</div>
+          <div class="changelog-title">용어 신청: 입력 중 이름 확인이 "사용 가능"이라고 한 이름이 제출에서 "단어부터 등록"으로 거절되던 불일치 수정 <span class="pill pill-fixed">fixed</span></div>
+          <div class="changelog-body">
+            <p><strong>증상</strong>: "가드레일"을 입력하면 초록(사용 가능)이 되고 정의·도메인·영문약어 추천까지 채워지는데, 신청하면 "표준단어로 등록되지 않은 부분: 가드레일"로 거절됨. 사전에 없는 단어가 섞인 이름("주간식단" 등) 전부 같은 증상.</p>
+            <p><strong>원인</strong>: 제출(<code>quick_registration.prepare_term</code>)은 표준단어 사전 완전분해 검사를 맨 먼저 하는데, 입력 중 확인(<code>GET /admin/term-requests/check-name</code>)에는 이 검사가 없었음(전날 즉시 반응 작업에서 챗봇 <code>confirm_term</code>의 단어 갭 검사를 옮기다 빠뜨림). 초록 판정이 후속 추천(LLM)의 게이트라서 등록 못 할 이름에 대해 정의/도메인/약어 추천이 전부 돌았고, 스크린샷의 도메인 "요금N15"·약어 "GDRL"은 그렇게 지어낸 값이었음.</p>
+            <p><strong>수정</strong>: 공통 헬퍼 <code>find_word_gaps()</code>를 만들어 제출과 check-name이 같은 함수를 쓰게 함. check-name이 새 상태 <code>word_gap</code>을 돌려주면 프론트는 기존 "available이 아니면 빨강+사유, 후속 추천 없음" 경로로 처리(프론트 판정 로직 변경 없음, 제출 시 문구만 서버 문구로 통일). LLM 없이 DB 1회+문자열 처리라 입력 중 호출해도 안전. 회귀 테스트 3개 추가(마지막은 두 경로의 판정이 같은지 직접 대조).</p>
+            <p>실제 화면으로 재현·확인: "가드레일" → 즉시 빨강+"가드레일" 안내, 이후 추천 요청 0건. 대조군: "공사구분코드"(공사+구분+코드)와 "구내식당점검일"(구내+식당+점검+일)은 사전 분해 결과와 일치하게 초록 유지. 전체 테스트 103 passed / 11 skipped.</p>
+          </div>
+        </div>
+      </div>
+
     </div>
   </main>
 </div>

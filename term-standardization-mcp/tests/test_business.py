@@ -1271,6 +1271,40 @@ def test_check_term_name_pending(api_client):
     resp=api_client.get("/admin/term-requests/check-name",params={"term_name":"검토대기용어신청"})
     assert resp.json()["status"]=="pending"
 
+def test_check_term_name_word_gap_is_not_reported_as_available(api_client):
+    # 회귀: 사전에 없는 단어가 섞인 이름("가드레일"처럼)을 check-name이 "사용 가능"(초록)이라고
+    # 답하고 제출에서야 WORD_GAP_REQUIRES_REGISTRATION으로 거절되던 불일치. 두 경로가 같은
+    # 판정을 해야 한다 - 그렇지 않으면 이후 정의/도메인/약어 추천도 등록 못 할 이름에 대해 돈다.
+    insert_standard_word("일일","DAILY")
+    _create_active_admin()
+    api_client.post("/admin/auth/login",json={"username":"admin1","password":"adminpass123"})
+    resp=api_client.get("/admin/term-requests/check-name",params={"term_name":"일일측정계기"})
+    body=resp.json()
+    assert body["status"]=="word_gap"
+    assert body["gaps"] and "측정계기" in "".join(body["gaps"])
+    assert "단어 신청" in body["message"]
+
+def test_check_term_name_fully_decomposable_name_stays_available(api_client):
+    insert_standard_word("일일","DAILY")
+    insert_standard_word("측정","MSR")
+    _create_active_admin()
+    api_client.post("/admin/auth/login",json={"username":"admin1","password":"adminpass123"})
+    resp=api_client.get("/admin/term-requests/check-name",params={"term_name":"일일측정"})
+    assert resp.json()["status"]=="available"
+
+def test_check_name_verdict_agrees_with_submit_word_gap_check(api_client):
+    # check-name이 available이라고 한 이름은 제출 쪽 표준단어 검사(prepare_term)에서도 갭으로
+    # 걸리면 안 되고, word_gap이라고 한 이름은 제출에서도 같은 갭으로 걸려야 한다.
+    from term_service import quick_registration
+    insert_standard_word("일일","DAILY")
+    insert_standard_word("측정","MSR")
+    _create_active_admin()
+    api_client.post("/admin/auth/login",json={"username":"admin1","password":"adminpass123"})
+    for name in ["일일측정","일일측정계기","가드레일","측정일일"]:
+        status=api_client.get("/admin/term-requests/check-name",params={"term_name":name}).json()["status"]
+        has_gap=quick_registration.find_word_gaps(name) is not None
+        assert (status=="word_gap")==has_gap,(name,status,has_gap)
+
 def test_suggest_definition_route_requires_auth(api_client):
     resp=api_client.get("/admin/term-requests/suggest-definition",params={"term_name":"아무이름"})
     assert resp.status_code==401

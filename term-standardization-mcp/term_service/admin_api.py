@@ -338,7 +338,7 @@ _TERM_QUICK_ERROR_STATUS = {
 # 여전히 제출 시점의 몫.
 @mcp.custom_route("/admin/term-requests/check-name", methods=["GET"])
 async def check_term_name(request: Request) -> JSONResponse:
-    from . import registration
+    from . import quick_registration, registration
     from .search import validate_name, search
     _, error = require_auth(request)
     if error: return error
@@ -363,6 +363,14 @@ async def check_term_name(request: Request) -> JSONResponse:
         match = result.synonym_matches[0]
         return JSONResponse({"ok": True, "status": "synonym_match",
             "message": f"이미 등록된 표준용어 '{match.name}'의 동의어입니다.", "matched": match.model_dump()})
+    # 마지막 관문: 표준단어 사전으로 완전분해되는가. 제출(quick_registration.prepare_term)이 하는
+    # 검사와 같은 함수를 쓴다 - 여기서 빠지면 "사용 가능"(초록)이라고 답한 뒤 제출에서야 "단어부터
+    # 등록하라"로 거절되고, 그 사이 정의/도메인/약어 추천(LLM)까지 등록 못 할 이름에 대해 돈다.
+    # 순서는 챗봇 confirm_term과 같다(정확일치/대기중복/형식 다음이 단어 갭). LLM 없음.
+    gaps = quick_registration.find_word_gaps(term_name)
+    if gaps is not None:
+        return JSONResponse({"ok": True, "status": "word_gap", "gaps": gaps,
+            "message": quick_registration.word_gap_message(gaps)})
     return JSONResponse({"ok": True, "status": "available", "message": "사용 가능한 이름입니다."})
 
 @mcp.custom_route("/admin/term-requests/suggest-definition", methods=["GET"])

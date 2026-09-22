@@ -1270,8 +1270,10 @@ document.getElementById("term-request-form").addEventListener("submit", async (e
     let message = AUTH_ERROR_LABELS[code] || err.message;
     if (code === "GUIDELINE_VIOLATION") {
       message = err.data.validation?.violations?.[0]?.reason || message;
-    } else if (code === "WORD_GAP_REQUIRES_REGISTRATION" && err.data.gaps?.length) {
-      message = `다음 부분이 아직 표준단어로 등록되지 않았습니다: ${err.data.gaps.join(", ")}. "단어 신청" 탭에서 먼저 등록해주세요.`;
+    } else if (code === "WORD_GAP_REQUIRES_REGISTRATION" && err.data.message) {
+      // 문구는 서버(quick_registration.word_gap_message)가 정한다 - 입력 중 이름 확인(check-name)이
+      // 주는 문구와 같아서 두 시점에 같은 말이 나온다.
+      message = err.data.message;
       errorEl.textContent = message;
       errorEl.hidden = false;
     }

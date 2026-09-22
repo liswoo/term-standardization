@@ -129,7 +129,7 @@ propose_term → awaiting_term_confirm → confirm_term
 
 **동기**: 사용자 요구 — "챗봇에서 반응해주듯이" 간편 입력 폼도 제출 전에 이름 중복 여부를 바로 알려주고, 정의·도메인·영문약어까지 "일일이 묻지 않아도 진행 가능한 영역"은 자동으로 추천해달라는 것. 새 판단 로직은 하나도 만들지 않음 — 챗봇이 이미 쓰는 모듈(`search()`/`validate_name()`/`definition_suggestion.suggest_definition()`/`search.domain_usage()`/`abbreviation.suggest_abbreviation()`)을 그대로 재사용하는 3개 읽기전용 GET 라우트(`admin_api.py`)와 프론트 이벤트 바인딩만 추가.
 
-- **`GET /admin/term-requests/check-name`**: `validate_name()`(형식) → `registration.find_pending()`(대기 중 중복) → `search()`(EXACT_MATCH/SYNONYM_MATCH, 임베딩만 - LLM 없음)를 이 순서로 검사. `registration.prepare()`를 여기서 재사용하지 않은 이유: LLM 기반 SAME_MEANING 비교까지 돌리면 blur 한 번에 수 초가 걸리고 `registration_preparations`에 부작용 있는 행까지 남김 — 그 더 깊은 의미 판단은 여전히 최종 제출 시점의 몫(기존과 동일, 퇴보 아님). `tr-term-name`의 `blur` 이벤트에서 호출 → 통과 시 초록 테두리, 실패 시 빨강 테두리 + 사유 문구(`app.js`의 `setFieldState()`).
+- **`GET /admin/term-requests/check-name`**: `validate_name()`(형식) → `registration.find_pending()`(대기 중 중복) → `search()`(EXACT_MATCH/SYNONYM_MATCH, 임베딩만 - LLM 없음)를 이 순서로 검사한 뒤 **마지막으로 표준단어 완전분해 검사(`quick_registration.find_word_gaps()`, 2026-09-22 추가 — 아래 "check-name과 제출의 판정 불일치" 참고)**. `registration.prepare()`를 여기서 재사용하지 않은 이유: LLM 기반 SAME_MEANING 비교까지 돌리면 blur 한 번에 수 초가 걸리고 `registration_preparations`에 부작용 있는 행까지 남김 — 그 더 깊은 의미 판단은 여전히 최종 제출 시점의 몫(기존과 동일, 퇴보 아님). `tr-term-name`의 `blur` 이벤트에서 호출 → 통과 시 초록 테두리, 실패 시 빨강 테두리 + 사유 문구(`app.js`의 `setFieldState()`).
 - **`GET /admin/term-requests/suggest-definition`**: 이름이 "사용 가능" 판정을 받은 직후 자동 호출 - 버튼 없음. 구체적 정의가 나오면 클릭해서 적용하는 카드(`.field-suggestion-chip`)로, 모호하면(질문+후보) 클릭형 옵션 버튼으로 보여줌 - 둘 다 적용 전까지는 `tr-definition`을 건드리지 않음(챗봇 카드와 같은 "제안 vs 자동적용" 원칙).
 - **`GET /admin/term-requests/suggest-followups`**: 이름 통과 + 정의 입력(제안 클릭 또는 직접 작성 후 blur) 시점에 도메인 추천(`domain_usage()`)과 영문약어 추천(`suggest_abbreviation()`)을 한 번에 묶어 호출. **도메인/영문약어 필드가 비어있을 때만** 값을 채워넣음(사용자가 이미 직접 입력한 값은 절대 덮어쓰지 않음) - 추천 근거는 필드 아래 회색 문구로만 표시(`.field-suggestion-note`), "직접 입력해 바꿀 수 있습니다"라고 항상 안내. 도메인 추천이 채워지면 기존 `populateTermDomainDerivedFields()`(허용값/표현형식/저장형식 참고 표시)도 자동으로 같이 실행됨.
 
@@ -140,6 +140,18 @@ propose_term → awaiting_term_confirm → confirm_term
 2. **후보 버튼을 클릭하면 그 라벨이 그대로 정의로 들어감** — "변경 이후에 할당된 주소 코드"라는 후보 라벨은 "이 의미가 맞다"는 답일 뿐 완성된 정의 문장이 아닌데, 그대로 `tr-definition`에 꽂아 넣고 있었음. 챗봇의 `set_definition`이 옵션 선택을 절대 정의 자체로 취급하지 않고 `clarification_history`에 답을 추가해 `suggest_definition()`을 다시 부르는 것과 똑같이 고침 — `suggest-definition` 라우트가 이제 `clarification_history`(JSON 쿼리 파라미터) 를 받아 `suggest_definition()`에 그대로 전달하고, 프론트는 후보 클릭 시 이 라운드트립을 거쳐 받은 진짜 정의 문장을 적용함(이미 한 번 선택이라는 의사표시를 했으므로 추가 클릭 요구 없이 바로 반영). fetch를 모킹해 모호함→후보 클릭→완성된 정의 문장 반영까지 결정론적으로 재현해 확인(LLM이 항상 모호하게 답하진 않아 실제 API로는 재현이 들쭉날쭉했음).
 
 **실 배포 후 curl 대신 진짜 `/v1/chat-messages` 스트리밍으로 처음부터 끝까지 3회 검증**(단어 갭 있는 용어 → 도메인 전체 거절 → 신규 스펙 초안 → PII 질문 → 약어 → 최종 등록 → `manage.py approve-domain` → 용어 자동 `PENDING_REVIEW` 승격까지 실제 DB에서 확인) 하는 과정에서 **이번 작업과 무관한 기존 버그**를 하나 발견: `set_word_abbreviation`이 `word_registration.submit()`의 `PENDING_REQUEST_ALREADY_EXISTS`(같은 이름의 단어가 다른 대화에서 이미 대기 중일 때)를 처리하지 않고 `term_pending_words`에 아무것도 추가하지 않은 채 그냥 용어 흐름을 재개시켜버립니다 — 그 결과 용어가 실제로는 미승인 단어에 의존하면서도 의존성 추적 없이 곧장 `PENDING_REVIEW`로 제출됩니다. pytest는 매 테스트마다 `word_registration_requests`를 비우는 `terms_test` DB를 써서 이 경로를 한 번도 못 건드렸습니다 — 이번 세션에서 같은 신규 단어("간편")로 반복 테스트하다가 실제 개발 DB에서 처음 걸림. 별도 작업으로 남겨둠(수정 안 함) — 다음에 다룰 때는 `set_word_abbreviation`의 `result.get("request_id")` 체크와 `_resume_or_finish_word_flow`가 성공/실패를 구분 안 하는 지점부터 보세요.
+
+## check-name과 제출의 판정 불일치: "가드레일" (2026-09-22)
+
+**증상(사용자 실사용)**: 용어명 "가드레일"을 입력하면 초록("사용 가능한 이름입니다")이 되고 정의·도메인·영문약어 추천까지 채워지는데, 신청 버튼을 누르면 "다음 부분이 아직 표준단어로 등록되지 않았습니다: 가드레일"로 거절됨.
+
+**원인**: 입력 중 이름 확인(`GET /admin/term-requests/check-name`)과 제출(`quick_registration.prepare_term`)이 **서로 다른 검사 집합**을 돌고 있었음. 제출은 표준단어 사전 완전분해(`segment_words`)를 맨 먼저 하는데, check-name은 형식→대기중복→정확/동의어 일치만 하고 이 검사가 없어서 사전에 없는 단어("가드"/"레일"은 실제로 사전에 없음, 이름 전체가 gap)가 섞인 이름도 "사용 가능"이라고 답했음. 2026-09-21의 즉시 반응 작업 때 "챗봇이 정의를 묻기 *전에* 하는 검사"를 옮기면서 `confirm_term`의 단어 갭 검사(같은 위치에 있음)를 빠뜨린 것. 더 나쁜 점은 그 초록 판정이 후속 추천(LLM)의 **게이트**라서, 등록 못 할 이름에 대해 정의/도메인/약어 추천이 다 돌았다는 것(스크린샷의 `가드레일` → 도메인 "요금N15", 약어 "GDRL"은 LLM이 지어낸 값이었음). "주간식단"처럼 사전에 없는 단어가 섞인 이름은 전부 같은 증상이었음.
+
+**수정**: `quick_registration.find_word_gaps(term_name)`(사전 완전분해 실패 시 gap 목록, 통과/사전 비어 있음이면 `None`)를 만들어 **제출(`prepare_term`)과 check-name이 같은 함수**를 쓰게 함. check-name은 새 상태 `word_gap`(+`gaps`, `message`)을 돌려주고 프론트는 이미 "available이 아니면 빨강+사유, 후속 추천 안 함"으로 처리하므로 프론트 판정 로직 변경은 없음(제출 시 문구만 서버의 `word_gap_message()`를 그대로 쓰도록 통일). LLM/임베딩 없이 DB 1회+문자열 처리뿐이라 입력 중 호출해도 안전. 회귀 테스트 3개(`test_check_term_name_word_gap_is_not_reported_as_available`, `..._fully_decomposable_name_stays_available`, `test_check_name_verdict_agrees_with_submit_word_gap_check` — 마지막은 두 경로의 판정이 같은지 직접 대조).
+
+**일반화 — 새 검사를 제출 경로에 추가할 때**: check-name(입력 중 미리보기)은 제출 검사의 **부분집합이 아니라 "LLM/부작용 없는 검사 전부"** 여야 함. 제출 쪽에 저렴한 결정론적 검사를 추가하면 check-name에도 같은 함수로 넣을 것(지금 남은 차이는 `registration.prepare()`의 LLM 기반 SAME_MEANING 비교뿐이고 이건 의도적 — 위 즉시 반응 절 참고). 반대로 check-name이 "초록"이라고 한 이름이 제출에서 다른 이유로 거절되는 경우가 생기면 이 절과 같은 종류의 버그임.
+
+**알려진 한계(수정 안 함)**: `word_gap`으로 막힌 사용자를 "단어 신청" 탭으로 바로 안내하는 링크/버튼은 없음(문구로만 안내). 갭이 여러 단어로 쪼개질 수 있는 경우("소리동굴" → "소리"+"동굴")의 선택 UI는 챗봇의 `awaiting_word_split_choice`에만 있고 간편 입력엔 없음.
 
 ## 용어 신청: AI 추천 ON/OFF 토글 + 제출 시 칸별 빨간 테두리 + 초기화 아이콘 이동 (2026-09-21)
 
