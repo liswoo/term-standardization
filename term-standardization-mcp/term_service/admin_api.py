@@ -13,12 +13,14 @@ import subprocess
 import sys
 import uuid
 from pathlib import Path
+import httpx
 import psycopg
 from starlette.requests import Request
-from starlette.responses import JSONResponse
+from starlette.responses import JSONResponse, StreamingResponse
 from .tools import mcp
 from . import db
-from .credentials import active_provider, set_active_provider, llm_configured
+from .config import DIFY_API_BASE_URL
+from .credentials import active_provider, set_active_provider, llm_configured, dify_chat_key, dify_list_terms_key
 from .auth import (hash_password, verify_password, create_session, delete_session,
     require_auth, require_admin, active_admin_count, SESSION_COOKIE_NAME, SESSION_TTL)
 
@@ -585,3 +587,70 @@ async def list_standard_data_catalog(request: Request) -> JSONResponse:
         if r.get("created_at"):
             r["created_at"] = r["created_at"].isoformat()
     return JSONResponse({"ok": True, **result})
+
+# ── Dify 프록시 (2026-09-22) ────────────────────────────────────────────
+# 이전엔 app.js가 DIFY_CHAT_KEY/LIST_TERMS_KEY를 직접 들고 Dify를 호출했다 -
+# 두 키 다 실제 비밀값이라 그 페이지를 여는 누구든(레포 공개 여부와 무관하게)
+# devtools로 바로 읽을 수 있었다. 이제 프론트는 세션 쿠키로만 이 두 라우트를
+# 부르고, 실제 Dify 키는 서버(.runtime/*.txt, 배포 스크립트가 씀)만 안다.
+# user는 클라이언트가 보낸 값을 절대 신뢰하지 않고 세션의 실제 사용자명으로
+# 강제한다 - 예전엔 아무 user 값이나 보내 다른 사람인 척 대화를 남길 수 있었다.
+@mcp.custom_route("/admin/chat", methods=["POST"])
+async def chat_proxy(request: Request):
+    user, error = require_auth(request)
+    if error: return error
+    key = dify_chat_key()
+    if not key:
+        return JSONResponse({"ok": False, "error": "CHATFLOW_NOT_DEPLOYED"}, status_code=503)
+    body = await request.json()
+    query = (body.get("query") or "").strip()
+    if not query:
+        return JSONResponse({"ok": False, "error": "QUERY_REQUIRED"}, status_code=400)
+    upstream_body = {"query": query, "inputs": {}, "response_mode": "streaming", "user": user["username"]}
+    conversation_id = (body.get("conversation_id") or "").strip()
+    if conversation_id:
+        upstream_body["conversation_id"] = conversation_id
+
+    # 스트리밍 그대로 중계 - 여기서 파싱/버퍼링하지 않는다. 프론트의 SSE 파서
+    # (streamChatMessage)가 각 청크를 실시간으로 소비해 "답변 작성 중..." 타이핑
+    # 효과와 노드별 진행 표시를 하므로, 여기서 한 번에 모아 보내면 그 효과가 죽는다.
+    client = httpx.AsyncClient(timeout=httpx.Timeout(120.0, connect=10.0))
+    upstream_req = client.build_request("POST", f"{DIFY_API_BASE_URL}/v1/chat-messages",
+        headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"}, json=upstream_body)
+    try:
+        upstream = await client.send(upstream_req, stream=True)
+    except httpx.HTTPError as exc:
+        await client.aclose()
+        return JSONResponse({"ok": False, "error": "UPSTREAM_UNREACHABLE", "detail": str(exc)}, status_code=502)
+    if upstream.status_code != 200:
+        detail = (await upstream.aread())[:2000].decode("utf-8", "replace")
+        await upstream.aclose()
+        await client.aclose()
+        return JSONResponse({"ok": False, "error": "UPSTREAM_ERROR", "detail": detail}, status_code=upstream.status_code)
+
+    async def relay():
+        try:
+            async for chunk in upstream.aiter_raw():
+                yield chunk
+        finally:
+            await upstream.aclose()
+            await client.aclose()
+    return StreamingResponse(relay(), media_type=upstream.headers.get("content-type", "text/event-stream"))
+
+@mcp.custom_route("/admin/list-terms", methods=["POST"])
+async def list_terms_proxy(request: Request) -> JSONResponse:
+    user, error = require_auth(request)
+    if error: return error
+    key = dify_list_terms_key()
+    if not key:
+        return JSONResponse({"ok": False, "error": "LIST_TERMS_WORKFLOW_NOT_DEPLOYED"}, status_code=503)
+    body = await request.json()
+    inputs = body.get("inputs") or {}
+    upstream_body = {"inputs": inputs, "response_mode": "blocking", "user": user["username"]}
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            upstream = await client.post(f"{DIFY_API_BASE_URL}/v1/workflows/run",
+                headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"}, json=upstream_body)
+    except httpx.HTTPError as exc:
+        return JSONResponse({"ok": False, "error": "UPSTREAM_UNREACHABLE", "detail": str(exc)}, status_code=502)
+    return JSONResponse(upstream.json(), status_code=upstream.status_code)

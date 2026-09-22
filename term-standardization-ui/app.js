@@ -1,14 +1,12 @@
 // ── Dify Chatflow 연동 설정 ─────────────────────────────────────
-// 주의: 이 키는 로컬 프로토타입 전용입니다. 실제 서비스에서는 절대
-// 프론트엔드에 API 키를 노출하지 말고 백엔드 프록시를 통해 호출하세요.
-// 상대 경로를 쓰는 이유: 이 페이지는 Caddy(tools/Caddyfile)가 정적 파일과 /v1/*
-// 프록시를 같은 오리진(:8090)으로 묶어서 서빙합니다. "http://localhost/..."처럼
-// 절대 주소를 박아두면 Cloudflare Tunnel 등으로 외부에서 접속했을 때 방문자
-// 자신의 localhost를 가리키게 되어 무조건 실패합니다 — 상대 경로는 로컬이든
-// 터널을 통한 외부 접속이든 항상 "지금 이 페이지를 서빙 중인 오리진"으로 풀립니다.
-const DIFY_CHAT_API = "/v1/chat-messages";
-const DIFY_CHAT_KEY = "app-7MbTrZRjWuMz1uVc7y62E9kd";
-let CHAT_USER = null; // set to the logged-in username by showApp() below, once requireAuth() resolves
+// 2026-09-22: 더 이상 Dify API 키를 프론트가 들고 있지 않는다 - 그 페이지를 여는
+// 누구든(레포 공개 여부와 무관하게) devtools로 실제 비밀 키를 읽을 수 있었던
+// 문제라, 세션 쿠키로 인증하는 우리 백엔드 프록시(/admin/chat, /admin/list-terms
+// - admin_api.py)를 거치도록 바꿨다. 상대 경로를 쓰는 이유는 그대로: 이 페이지는
+// Caddy(tools/Caddyfile)가 정적 파일과 /admin/* 프록시를 같은 오리진(:8090)으로
+// 묶어서 서빙하므로, 절대 주소를 박아두면 Cloudflare Tunnel 등 외부 접속 시 방문자
+// 자신의 localhost를 가리키게 되어 무조건 실패한다.
+const DIFY_CHAT_API = "/admin/chat";
 
 // ── 로그인 / 세션 게이트 ────────────────────────────────────────
 // 로그인 전엔 대시보드/챗봇 등 실제 데이터를 전혀 렌더링·조회하지 않는다(아래
@@ -29,7 +27,6 @@ function showApp(user) {
   document.getElementById("dify-admin-row").hidden = !isAdmin;
   document.getElementById("members-row").hidden = !isAdmin;
   document.getElementById("llm-model-row").hidden = !isAdmin;
-  CHAT_USER = user.username;
   renderAll();
   fetchCatalogFromBackend();
 }
@@ -156,9 +153,9 @@ document.getElementById("change-password-form").addEventListener("submit", async
 })();
 
 // 읽기 전용 목록조회 워크플로우(용어표준화-목록조회). 대화 상태가 필요 없는 단순 조회라
-// LLM 분류 파이프라인을 타는 Chatflow 대신 1회성 /v1/workflows/run으로 분리했습니다.
-const LIST_TERMS_API = "/v1/workflows/run";
-const LIST_TERMS_KEY = "app-U0pwaq4eXx9buXrPLtrqoEF0";
+// LLM 분류 파이프라인을 타는 Chatflow 대신 1회성 워크플로우로 분리했습니다 - 2026-09-22
+// 부터 DIFY_CHAT_API와 같은 이유로 백엔드 프록시(/admin/list-terms) 경유.
+const LIST_TERMS_API = "/admin/list-terms";
 const STATUS_LABELS = { APPROVED: "승인", PENDING_REVIEW: "검토중", REJECTED: "반려", ACTIVE: "사용중", WAITING_FOR_WORD_APPROVAL: "단어 승인 대기", WAITING_FOR_DOMAIN_APPROVAL: "도메인 승인 대기" };
 
 // 워크플로우 그래프의 실제 노드 순서(빌드 스크립트 build_chatflow.py 기준).
@@ -483,7 +480,7 @@ async function fetchCatalogFromBackend() {
   try {
     const res = await fetch(LIST_TERMS_API, {
       method: "POST",
-      headers: { Authorization: `Bearer ${LIST_TERMS_KEY}`, "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         inputs: {
           limit: state.termsPage.limit, offset: state.termsPage.offset, q: state.termsPage.q,
@@ -492,7 +489,6 @@ async function fetchCatalogFromBackend() {
           words_status: state.wordsPage.status, words_requester: "",
           words_is_format_word: state.wordsPage.isFormatWord,
         },
-        response_mode: "blocking", user: CHAT_USER,
       }),
     });
     if (!res.ok) throw new Error(`목록 조회 실패 (${res.status})`);
@@ -2218,16 +2214,10 @@ async function renderStructuredBlock(mcpState) {
 async function streamChatMessage(query, { onStep, onAnswerChunk } = {}) {
   const res = await fetch(DIFY_CHAT_API, {
     method: "POST",
-    headers: {
-      Authorization: `Bearer ${DIFY_CHAT_KEY}`,
-      "Content-Type": "application/json",
-    },
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       query,
-      inputs: {},
-      response_mode: "streaming",
       conversation_id: chatConversationId || undefined,
-      user: CHAT_USER,
     }),
   });
 

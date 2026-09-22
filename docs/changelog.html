@@ -649,6 +649,16 @@
             <p>실제 화면·실제 LLM으로 확인: "하루 동안 섭취한 열량의 총합을 나타내는 값입니다" → 기존 정부 표준 4건(일일섭취칼로리 88% 등)을 정확히 경고, 이름 입력 후 정의 추천 호출에 그 설명이 실려 가는 것을 네트워크 요청으로 직접 확인, 클릭 전까지 정의 칸이 비어있는 것(자동 적용 안 됨) 확인. 회귀 테스트 3개 추가. 전체 테스트 119 passed / 11 skipped.</p>
           </div>
         </div>
+
+        <div class="changelog-entry">
+          <div class="changelog-date">2026-09-22</div>
+          <div class="changelog-title">Dify API 키를 프론트엔드에서 제거 — 백엔드 프록시로 전환 <span class="pill pill-fixed">fixed</span></div>
+          <div class="changelog-body">
+            <p><strong>계기</strong>: 레포를 퍼블릭으로 전환해달라는 요청을 받고 확인하던 중, <code>app.js</code>에 실제 Dify 앱 API 키 2개(<code>DIFY_CHAT_KEY</code>/<code>LIST_TERMS_KEY</code>)가 하드코딩된 걸 발견. 레포 공개 여부와 무관하게 이미 보안 문제였음 - <code>app.js</code>는 브라우저가 통째로 다운로드해서 실행하는 파일이라, 배포된 URL을 여는 사람은 로그인 여부와 무관하게(로그인 페이지에서도 로드됨) devtools로 두 키를 그대로 읽을 수 있었음. 레포 공개는 그 키를 찾는 경로가 하나(GitHub 소스 스캔) 더 느는 것뿐이었음.</p>
+            <p><strong>수정</strong>: 프론트가 Dify를 직접 부르던 두 지점을 백엔드 프록시로 교체 - <code>POST /admin/chat</code>(챗봇 스트리밍, 파싱·버퍼링 없이 그대로 중계해 타이핑 효과·노드별 진행 표시 유지), <code>POST /admin/list-terms</code>(대시보드 워크플로우, blocking). 둘 다 세션 쿠키로 인증하고, <code>user</code>는 클라이언트 값을 무시하고 세션의 실제 사용자명으로 서버가 강제(예전엔 아무 user 값이나 보내 다른 사람인 척할 수 있었던 부수적 구멍도 같이 막힘). 실제 키는 <code>.runtime/chatflow-key.txt</code>/<code>.runtime/list-terms-key.txt</code>에서 읽고(둘 다 gitignore 대상, 배포 스크립트가 자동으로 최신 유지), <code>app.js</code>의 <code>CHAT_USER</code>/<code>DIFY_CHAT_KEY</code>/<code>LIST_TERMS_KEY</code>는 전부 삭제.</p>
+            <p><strong>검증</strong>: 새 라우트 2개에 회귀 테스트 7개 - <code>httpx.AsyncClient</code>를 <code>MockTransport</code>로 바꿔치기해 실제 키가 헤더에 실리는지·클라이언트 <code>user</code>가 세션 사용자명으로 강제되는지 확인(스트리밍 응답은 평범한 bytes 대신 진짜 비동기 제너레이터로 모킹해야 운영 코드의 <code>aiter_raw()</code> 경로가 실제로 검증됨). 실제 로그인 화면에서 대시보드 로딩(<code>/admin/list-terms</code>)과 챗봇 대화(<code>/admin/chat</code>, 노드별 진행 표시 포함) 둘 다 정상 동작 확인, <code>/v1/*</code> 직접 호출이 0건인 것도 네트워크 탭으로 확인. 전체 테스트 126 passed / 11 skipped.</p>
+          </div>
+        </div>
       </div>
 
     </div>

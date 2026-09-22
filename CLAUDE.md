@@ -216,6 +216,20 @@ propose_term → awaiting_term_confirm → confirm_term
   4. `tr-concept-description`은 **제출되는 필드가 아님** - `RegistrationInput`에 없고, 제출 payload에도 안 실림(참고용으로만 브라우저에 남음). `clearTermAiSuggestions()`/`setTermAiAssist()`/`resetTermRequestForm()`도 각각 이 블록의 표시/토큰/값을 같이 정리하도록 확장.
 - **검증**: 새 라우트에 회귀 테스트 3개(인증/빈 설명/실제 겹치는 용어 탐지 - `catalog` fixture의 "일일섭취칼로리" 재사용). 실제 화면: 겹치는 개념 설명 → 경고 카드 4건 정확히 표시, 이름 입력 후 정의 추천이 개념 설명을 `clarification_history`로 실어 호출하는 것을 네트워크 요청으로 직접 확인, 클릭 전까지 정의 칸 비어있음(자동 적용 안 됨) 확인, AI OFF 시 개념 블록 숨김/ON 복귀 시 재표시 확인. 전체 테스트 119 passed / 11 skipped.
 
+## Dify API 키를 프론트엔드에서 제거 — 백엔드 프록시로 전환 (2026-09-22)
+
+**계기**: 이 레포를 퍼블릭으로 전환해달라는 요청을 받고 확인하던 중, `app.js`에 실제 Dify 앱 API 키 2개(`DIFY_CHAT_KEY`/`LIST_TERMS_KEY`)가 그대로 하드코딩돼 있는 걸 발견. **레포 공개 여부와 무관하게 이미 보안 문제였다** — `app.js`는 브라우저가 통째로 다운로드해서 실행하는 파일이라, 이 앱을 배포된 URL로 여는 사람은 로그인 여부와 무관하게(로그인 페이지에서도 로드됨) devtools로 두 키를 그대로 읽을 수 있었다. 레포를 퍼블릭으로 바꾸면 그 키를 찾는 경로가 하나(GitHub 소스 스캔) 더 늘 뿐이었다. `app.js` 맨 위에 이미 "실제 서비스에서는 절대 프론트엔드에 API 키를 노출하지 말고 백엔드 프록시를 통해 호출하세요"라는 경고 주석이 있었던, 알려진 PoC 단계 지름길이었음.
+
+**해결**: 프론트가 Dify를 직접 부르던 두 지점을 전부 `admin_api.py`의 백엔드 프록시로 교체 — 프론트는 이제 세션 쿠키로만 인증하고, 실제 Dify 키는 서버만 안다.
+- **`POST /admin/chat`** — 챗봇 스트리밍(`/v1/chat-messages`) 프록시. `httpx.AsyncClient`로 업스트림에 `stream=True` 요청을 보내고, 응답을 파싱·버퍼링 없이 **그대로 중계**(`aiter_raw()` → `StreamingResponse`) - 프론트의 기존 SSE 파서(`streamChatMessage`)가 청크 단위로 소비해 "답변 작성 중..." 타이핑 효과·노드별 진행 표시를 하므로, 여기서 한 번에 모아 보내면 그 효과가 죽는다.
+- **`POST /admin/list-terms`** — 대시보드가 쓰는 `list_terms` 워크플로우(`/v1/workflows/run`, blocking) 프록시.
+- **`user`는 클라이언트 값을 절대 신뢰하지 않고 세션의 실제 사용자명으로 서버가 강제** — 예전 구조는 프론트가 아무 `user` 값이나 보낼 수 있어서 다른 사람인 척 대화를 남길 수 있었던 부수적 구멍도 같이 막힘.
+- 실제 키는 `.runtime/chatflow-key.txt`/`.runtime/list-terms-key.txt`(둘 다 gitignore 대상)에서 읽음(`credentials.dify_chat_key()`/`dify_list_terms_key()`) — 전자는 `scripts/publish_chatflow.py`가 이미 쓰고 있었고, 후자는 이번에 같은 패턴으로 새로 추가(`scripts/publish_list_terms_workflow.py`가 이제 여기도 씀) — 배포 스크립트를 다시 돌릴 때마다 두 파일 다 자동으로 최신 키를 유지하고, 프론트에 손으로 옮겨 적을 필요가 없어짐.
+- `DIFY_API_BASE_URL`(기본 `http://localhost:80`, `config.py`) — MCP 서버가 직접 이 호스트에서 실행되므로(Docker 아님) `tools/Caddyfile`이 `/v1/*`를 프록시하던 것과 같은 주소.
+- `app.js`의 `CHAT_USER`/`DIFY_CHAT_KEY`/`LIST_TERMS_KEY` 상수는 전부 삭제 — 이제 아무 비밀값도 프론트에 없음.
+
+**검증**: 새 라우트 2개에 회귀 테스트 7개 — `httpx.AsyncClient`를 `httpx.MockTransport`로 바꿔치기해서(진짜 네트워크 없이) 실제 Dify 키가 헤더에 실리는지, 클라이언트가 보낸 `user`("someone-else")가 세션의 실제 사용자명("admin1")으로 강제 교체되는지, `conversation_id`가 그대로 전달되는지 확인 - 스트리밍 프록시는 `content=b"..."`처럼 평범한 bytes를 쓰면 `httpx.StreamConsumed`가 나서(이미 다 읽은 것으로 취급됨), 진짜 비동기 제너레이터를 `content=`에 넘겨야 `aiter_raw()`가 실제로 작동함(운영 코드가 정확히 그 경로를 타므로 테스트도 그래야 의미가 있음). 전체 테스트 126 passed / 11 skipped. `httpx`를 `requirements.txt`에 명시(이전엔 `openai`의 전이 의존성으로만 설치돼 있었음).
+
 ## 두 개의 독립된 벡터/RAG 시스템 — 절대 섞지 마세요
 
 1. **MCP 자체 pgvector** (`term_service/embeddings.py`, `search.py`, `guideline.py`) — `standard_terms`(용어 유사도/중복 판정), `guideline_chunks`(`standard_guide.md`를 벡터화, 가이드라인 준수 검사·약어 추천·정의 추천의 근거), `standard_words`(2026-09-14 추가 — 의미로 기존 단어 찾기, 위 "표준단어 계층" 절 참고)를 담당. **이게 업무 판단의 기준**입니다.

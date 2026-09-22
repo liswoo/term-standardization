@@ -1,6 +1,8 @@
-"""Build, import and publish the read-only list_terms Dify Workflow, and provision a
-plaintext frontend API key (this app returns no sensitive data, so unlike the chatflow's
-test key there's no reason to DPAPI-protect it; it's meant to be embedded in app.js).
+"""Build, import and publish the read-only list_terms Dify Workflow, and provision an
+API key. 2026-09-22: no longer embedded in app.js (see admin_api.py's list-terms
+proxy and credentials.dify_list_terms_key()) - written to .runtime/list-terms-key.txt
+instead, same pattern as scripts/publish_chatflow.py's chatflow-key.txt, so the
+backend always has the current key without ever handing it to the browser.
 Re-running this script updates the existing app in place (tracked by app_id).
 """
 import json
@@ -45,4 +47,7 @@ if token is None:
 session.commit()
 print('RESULT='+json.dumps({'app_id':app.id,'key':token.token,'workflow_id':workflow.id}))
 """)
+key=publish_result.pop('key')
+(ROOT/'.runtime/list-terms-key.txt').write_text(key,encoding='utf-8')
+publish_result['key']=key
 print(json.dumps(publish_result,ensure_ascii=False))

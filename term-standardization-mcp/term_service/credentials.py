@@ -14,6 +14,21 @@ def api_key():
         return win32crypt.CryptUnprotectData(path.read_bytes(),None,None,None,0)[1].decode()
     return None
 
+# Dify app API keys (2026-09-22) - previously hardcoded straight into app.js and
+# shipped to every browser (a real, live secret anyone loading the page - not just
+# anyone with repo access - could read via devtools; see admin_api.py's chat/
+# list-terms proxies, the actual fix). scripts/publish_chatflow.py already wrote
+# chatflow-key.txt on every deploy; list-terms-key.txt is new here, written the
+# same way by scripts/publish_list_terms_workflow.py so re-publishing keeps both
+# in sync without ever needing to hand either key to the frontend again.
+def dify_chat_key():
+    path=ROOT/".runtime/chatflow-key.txt"
+    return path.read_text(encoding="utf-8").strip() if path.exists() else None
+
+def dify_list_terms_key():
+    path=ROOT/".runtime/list-terms-key.txt"
+    return path.read_text(encoding="utf-8").strip() if path.exists() else None
+
 def active_provider():
     """"openai" or "local". Read fresh every call (not cached at import) so the
     Settings-screen switch (set_active_provider) takes effect on the very next

@@ -1,3 +1,4 @@
+import json
 import os
 import uuid
 from concurrent.futures import ThreadPoolExecutor
@@ -1579,3 +1580,96 @@ def test_real_llm_definition_comparison(catalog):
     assert different.method=="structured_llm"
     assert different.relation in {"RELATED_BUT_DISTINCT","UNCERTAIN"}
     print("LLM evidence:",same.model_dump(),different.model_dump())
+
+# ── Dify 프록시 (2026-09-22) ────────────────────────────────────────────
+# 프론트가 더 이상 Dify API 키를 안 들고 있고 세션 쿠키로 이 두 라우트를 거친다 -
+# 실제 네트워크 없이 httpx.AsyncClient를 MockTransport로 바꿔치기해서, 서버가
+# (1) 클라이언트가 보낸 user 값을 무시하고 세션의 실제 사용자명을 강제하는지,
+# (2) 진짜 Dify 키를 헤더에 넣는지, (3) 올바른 업스트림 URL을 부르는지 확인한다.
+def _mock_dify_transport(monkeypatch,handler):
+    import httpx as httpx_module
+    class _FakeAsyncClient(httpx_module.AsyncClient):
+        def __init__(self,*args,**kwargs):
+            kwargs.pop("timeout",None)
+            super().__init__(transport=httpx_module.MockTransport(handler))
+    monkeypatch.setattr(httpx_module,"AsyncClient",_FakeAsyncClient)
+
+def test_chat_proxy_requires_auth(api_client):
+    resp=api_client.post("/admin/chat",json={"query":"안녕"})
+    assert resp.status_code==401
+
+def test_chat_proxy_requires_query(api_client):
+    _create_active_admin()
+    api_client.post("/admin/auth/login",json={"username":"admin1","password":"adminpass123"})
+    resp=api_client.post("/admin/chat",json={"query":"  "})
+    assert resp.status_code==400 and resp.json()["error"]=="QUERY_REQUIRED"
+
+def test_chat_proxy_refuses_when_not_deployed(api_client,monkeypatch):
+    import term_service.admin_api as admin_api_module
+    monkeypatch.setattr(admin_api_module,"dify_chat_key",lambda:None)
+    _create_active_admin()
+    api_client.post("/admin/auth/login",json={"username":"admin1","password":"adminpass123"})
+    resp=api_client.post("/admin/chat",json={"query":"안녕"})
+    assert resp.status_code==503 and resp.json()["error"]=="CHATFLOW_NOT_DEPLOYED"
+
+def test_chat_proxy_forces_session_user_and_hides_real_key(api_client,monkeypatch):
+    import httpx as httpx_module
+    import term_service.admin_api as admin_api_module
+    monkeypatch.setattr(admin_api_module,"dify_chat_key",lambda:"test-dify-secret-key")
+    captured={}
+    async def handler(request):
+        captured["url"]=str(request.url)
+        captured["auth"]=request.headers.get("authorization")
+        captured["body"]=json.loads(request.content)
+        async def body():
+            yield b'data: {"event":"ping"}\n\n'
+        # A real (non-mocked) httpx stream response is genuinely async, unlike a plain
+        # bytes/list content - aiter_raw() (what chat_proxy's relay() actually calls)
+        # only works against a true async source, so the mock must use one too.
+        return httpx_module.Response(200,headers={"content-type":"text/event-stream"},content=body())
+    _mock_dify_transport(monkeypatch,handler)
+    _create_active_admin()
+    api_client.post("/admin/auth/login",json={"username":"admin1","password":"adminpass123"})
+    resp=api_client.post("/admin/chat",json={"query":"안녕","conversation_id":"conv-1","user":"someone-else"})
+    assert resp.status_code==200
+    assert b'data: {"event":"ping"}' in resp.content
+    assert captured["url"].endswith("/v1/chat-messages")
+    assert captured["auth"]=="Bearer test-dify-secret-key"
+    # The whole point: the client-supplied "someone-else" never reaches Dify.
+    assert captured["body"]["user"]=="admin1"
+    assert captured["body"]["conversation_id"]=="conv-1"
+    assert captured["body"]["response_mode"]=="streaming"
+
+def test_list_terms_proxy_requires_auth(api_client):
+    resp=api_client.post("/admin/list-terms",json={"inputs":{}})
+    assert resp.status_code==401
+
+def test_list_terms_proxy_refuses_when_not_deployed(api_client,monkeypatch):
+    import term_service.admin_api as admin_api_module
+    monkeypatch.setattr(admin_api_module,"dify_list_terms_key",lambda:None)
+    _create_active_admin()
+    api_client.post("/admin/auth/login",json={"username":"admin1","password":"adminpass123"})
+    resp=api_client.post("/admin/list-terms",json={"inputs":{}})
+    assert resp.status_code==503 and resp.json()["error"]=="LIST_TERMS_WORKFLOW_NOT_DEPLOYED"
+
+def test_list_terms_proxy_forces_session_user_and_hides_real_key(api_client,monkeypatch):
+    import httpx as httpx_module
+    import term_service.admin_api as admin_api_module
+    monkeypatch.setattr(admin_api_module,"dify_list_terms_key",lambda:"test-list-terms-secret-key")
+    captured={}
+    def handler(request):
+        captured["url"]=str(request.url)
+        captured["auth"]=request.headers.get("authorization")
+        captured["body"]=json.loads(request.content)
+        return httpx_module.Response(200,json={"data":{"outputs":{"terms":[{"terms":[],"total_count":0}]}}})
+    _mock_dify_transport(monkeypatch,handler)
+    _create_active_admin()
+    api_client.post("/admin/auth/login",json={"username":"admin1","password":"adminpass123"})
+    resp=api_client.post("/admin/list-terms",json={"inputs":{"limit":10},"user":"someone-else"})
+    assert resp.status_code==200
+    assert resp.json()["data"]["outputs"]["terms"][0]["total_count"]==0
+    assert captured["url"].endswith("/v1/workflows/run")
+    assert captured["auth"]=="Bearer test-list-terms-secret-key"
+    assert captured["body"]["user"]=="admin1"
+    assert captured["body"]["inputs"]["limit"]==10
+    assert captured["body"]["response_mode"]=="blocking"

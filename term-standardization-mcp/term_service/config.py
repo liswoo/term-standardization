@@ -13,6 +13,12 @@ CONFIDENCE_THRESHOLD = float(os.getenv("DEFINITION_CONFIDENCE_THRESHOLD", "0.85"
 # active_provider()) can flip between them at runtime without editing .env -
 # unlike the old single LLM_MODEL/LLM_BASE_URL pair, both providers' settings
 # stay loaded simultaneously.
+# Same host as this MCP server itself (not in Docker) - matches what tools/
+# Caddyfile already proxies /v1/* to from the browser. Only the backend talks
+# to this now (see admin_api.py's chat/list-terms proxies) - the frontend no
+# longer calls Dify directly or holds either app API key.
+DIFY_API_BASE_URL = os.getenv("DIFY_API_BASE_URL", "http://localhost:80")
+
 OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
 LOCAL_LLM_MODEL = os.getenv("LOCAL_LLM_MODEL", "qwen3-8b-q8")
 LOCAL_LLM_BASE_URL = os.getenv("LOCAL_LLM_BASE_URL", "http://localhost:11434/v1")
