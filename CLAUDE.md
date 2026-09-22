@@ -230,6 +230,10 @@ propose_term → awaiting_term_confirm → confirm_term
 
 **검증**: 새 라우트 2개에 회귀 테스트 7개 — `httpx.AsyncClient`를 `httpx.MockTransport`로 바꿔치기해서(진짜 네트워크 없이) 실제 Dify 키가 헤더에 실리는지, 클라이언트가 보낸 `user`("someone-else")가 세션의 실제 사용자명("admin1")으로 강제 교체되는지, `conversation_id`가 그대로 전달되는지 확인 - 스트리밍 프록시는 `content=b"..."`처럼 평범한 bytes를 쓰면 `httpx.StreamConsumed`가 나서(이미 다 읽은 것으로 취급됨), 진짜 비동기 제너레이터를 `content=`에 넘겨야 `aiter_raw()`가 실제로 작동함(운영 코드가 정확히 그 경로를 타므로 테스트도 그래야 의미가 있음). 전체 테스트 126 passed / 11 skipped. `httpx`를 `requirements.txt`에 명시(이전엔 `openai`의 전이 의존성으로만 설치돼 있었음).
 
+**키 로테이션**: `app.js`에서 지운 것만으로는 git 히스토리에 남은 옛 키 값 자체가 무효화되지 않으므로, Dify DB에서 두 앱의 기존 `ApiToken` 행을 직접 지우고 재발급했습니다(`scripts/rotate_dify_keys.py`, 신규 — `dify_admin.execute()`로 컨테이너 안 SQLAlchemy 세션을 열어 삭제 후 `publish_chatflow.py`/`publish_list_terms_workflow.py`를 다시 실행하는 방식, 반드시 `.venv/bin/python`으로 실행 — 시스템 파이썬엔 `PyYAML`이 없어 `build_list_terms_workflow.py`가 죽습니다). 실행 후 브라우저로 대시보드 로딩과 챗봇 대화를 새 키로 끝까지 검증.
+
+**설치 자동화가 이 변경으로 깨져 있던 걸 발견/수정**: `setup_dify.py`의 마지막 단계가 여전히 `app.js`에서 `const DIFY_CHAT_KEY = "...";`/`const LIST_TERMS_KEY = "...";` 패턴을 정규식으로 찾아 키를 주입하려 했는데, 그 상수 선언 자체가 이번에 삭제됐으므로 매치 수가 0이 되어 **새 환경에서 `setup_dify.py`를 실행하면 마지막 단계에서 무조건 `RuntimeError`로 죽는 상태**였습니다(SETUP.md를 그대로 따라간 신규 설치자가 직접 겪었을 문제 — 이번에 레포를 퍼블릭으로 돌리기 전 설치 가능 여부를 점검하다 발견). `publish_chatflow.py`/`publish_list_terms_workflow.py`가 이미 각자 `.runtime/*.txt`에 키를 쓰고 있어서 `app.js` 패치 자체가 애초에 불필요했으므로, `patch_app_js()` 함수와 그 호출을 통째로 제거(6단계 → 5단계). `SETUP.md`의 "3. Dify 설정 자동화" 절 6번 항목과 `.env.example`의 스텁 존재 안 하는 "SETUP.md's Ollama section" 참조(실제로는 CLAUDE.md에 있음)도 같이 바로잡음.
+
 ## 두 개의 독립된 벡터/RAG 시스템 — 절대 섞지 마세요
 
 1. **MCP 자체 pgvector** (`term_service/embeddings.py`, `search.py`, `guideline.py`) — `standard_terms`(용어 유사도/중복 판정), `guideline_chunks`(`standard_guide.md`를 벡터화, 가이드라인 준수 검사·약어 추천·정의 추천의 근거), `standard_words`(2026-09-14 추가 — 의미로 기존 단어 찾기, 위 "표준단어 계층" 절 참고)를 담당. **이게 업무 판단의 기준**입니다.

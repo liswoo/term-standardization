@@ -130,7 +130,7 @@ python -m venv .venv
 3. `data/scenario_catalog.json`의 "[가상]" 시나리오 문서를 지식베이스로 업로드 (이미 있는 문서는 건너뜀)
 4. Chatflow(`용어표준화-대화형`) 빌드 → 임포트 → 배포
 5. 목록조회 Workflow(`용어표준화-목록조회`) 빌드 → 임포트 → 배포
-6. 두 앱의 발급 키를 `term-standardization-ui/app.js`의 `DIFY_CHAT_KEY`/`LIST_TERMS_KEY`에 자동 반영
+6. 두 앱의 발급 키를 `.runtime/chatflow-key.txt`/`.runtime/list-terms-key.txt`에 자동 반영 — 프론트엔드는 이 키를 직접 갖지 않고, `admin_api.py`의 `/admin/chat`/`/admin/list-terms` 백엔드 프록시가 이 파일에서 읽어 대신 호출합니다(2026-09-22, CLAUDE.md 참고)
 
 **재실행해도 안전합니다.** 이미 있는 MCP 서버·OpenAI 키·지식베이스 문서·앱은 새로 만들지 않고 갱신만 하므로, 설정을 바꾸고 다시 돌리거나 실수로 두 번 실행해도 중복이 생기지 않습니다. Dify Studio 화면을 직접 조작하는 과정은 이제 없습니다.
 

@@ -19,7 +19,6 @@ Safe to re-run: every step below detects what already exists and reuses it
 rather than duplicated) instead of erroring or creating duplicates.
 """
 import json
-import re
 import sys
 from pathlib import Path
 import subprocess
@@ -44,42 +43,31 @@ def last_json_line(text):
             return json.loads(line)
     raise RuntimeError("No output to parse")
 
-def patch_app_js(chat_key,list_terms_key):
-    app_js=ROOT.parent/"term-standardization-ui"/"app.js"
-    text=app_js.read_text(encoding="utf-8")
-    text,n1=re.subn(r'const DIFY_CHAT_KEY = "[^"]*";',f'const DIFY_CHAT_KEY = "{chat_key}";',text)
-    text,n2=re.subn(r'const LIST_TERMS_KEY = "[^"]*";',f'const LIST_TERMS_KEY = "{list_terms_key}";',text)
-    if n1!=1 or n2!=1:
-        raise RuntimeError(f"Expected exactly one DIFY_CHAT_KEY/LIST_TERMS_KEY declaration in {app_js}, found {n1}/{n2}")
-    app_js.write_text(text,encoding="utf-8")
-    return app_js
-
 def main():
-    print("[1/6] MCP 서버 등록...",flush=True)
+    print("[1/5] MCP 서버 등록...",flush=True)
     print(run("dify_admin.py","mcp-register",capture=True).stdout.strip(),flush=True)
 
-    print("[2/6] OpenAI 자격증명 등록...",flush=True)
+    print("[2/5] OpenAI 자격증명 등록...",flush=True)
     print(run("dify_admin.py","openai-credential",capture=True).stdout.strip(),flush=True)
 
-    print("[3/6] 지식베이스 동기화...",flush=True)
+    print("[3/5] 지식베이스 동기화...",flush=True)
     run("sync_dify_knowledge.py")
 
-    print("[4/6] Chatflow 빌드·임포트·배포...",flush=True)
+    print("[4/5] Chatflow 빌드·임포트·배포...",flush=True)
     run("build_chatflow.py")
     run("dify_admin.py","import","dify-chatflow.yaml")
     chatflow=last_json_line(run("scripts/publish_chatflow.py",capture=True).stdout)
 
-    print("[5/6] 목록조회 Workflow 빌드·임포트·배포...",flush=True)
+    print("[5/5] 목록조회 Workflow 빌드·임포트·배포...",flush=True)
     list_terms=last_json_line(run("scripts/publish_list_terms_workflow.py",capture=True).stdout)
-
-    print("[6/6] 프론트엔드 API 키 반영...",flush=True)
-    app_js=patch_app_js(chatflow["key"],list_terms["key"])
 
     print()
     print("설치 완료.",flush=True)
     print(f"  Chatflow app_id: {chatflow['app_id']}",flush=True)
     print(f"  목록조회 app_id: {list_terms['app_id']}",flush=True)
-    print(f"  app.js 갱신됨:   {app_js}",flush=True)
+    print("  두 앱의 API 키는 admin_api.py의 /admin/chat, /admin/list-terms 프록시가",flush=True)
+    print("  .runtime/chatflow-key.txt, .runtime/list-terms-key.txt에서 직접 읽습니다",flush=True)
+    print("  (프론트엔드는 더 이상 키를 갖고 있지 않음 - CLAUDE.md 2026-09-22 절 참고).",flush=True)
 
 if __name__=="__main__":
     main()
