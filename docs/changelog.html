@@ -567,7 +567,7 @@
           <div class="changelog-body">
             <p>폼에 <code>novalidate</code>를 주고 <code>validateTermForm()</code>이 용어명(2~20자)/정의(5~4000자)/도메인(필수)을 한꺼번에 검사해 문제 칸을 전부 빨갛게 표시(ON/OFF 무관, 브라우저 기본 말풍선 대체). 통과하면 서버로 가고, 서버 거부 코드는 <code>TERM_ERROR_FIELDS</code>로 칸에 매핑(이름 규칙 위반/이미 존재/표준단어 미등록/대기 중 중복 → 용어명, 같은 의미 → 용어명+정의, 동의어 충돌 → 동의어, 영문약어 중복 → 영문 약어). 미등록 도메인은 서버가 거부하지 않고 경고만 붙여 접수하므로 도메인 칸은 "비어 있음"만 실패로 봄. 오류 표시 후 <code>focus()</code>를 쓰지 않는 이유: 이름 칸 blur가 ON 모드의 이름 확인을 다시 돌려 방금 표시한 빨간 표시를 덮어쓸 수 있어서 <code>scrollIntoView</code>만 사용.</p>
             <p>실제 화면으로 확인: OFF에서 이름 blur 시 서버 요청 0건, 정의/도메인 비운 채 신청 → 두 칸만 빨강, 기존 이름 신청 → 서버 <code>EXACT_MATCH</code>로 용어명 칸만 빨강+사유, 초기화 후에도 OFF 유지, ON에서 추천 응답이 오는 도중 초기화해도 칸이 다시 채워지지 않음. 실제 접수(성공 경로)는 DB에 신청이 남아 이번엔 확인하지 않음.</p>
-            <p><strong>알려진 미해결(무관, 확인됨)</strong>: 동의어에 100자 초과 항목이 있으면 <code>INVALID_FIELDS</code> 응답의 <code>exc.errors()</code>(<code>ctx</code>에 <code>ValueError</code> 객체)가 JSON 직렬화에 실패해 500이 됨 — 프론트가 동의어 길이를 미리 검사하지 않아 경로가 열려 있음.</p>
+            <p><strong>알려진 미해결(무관, 확인됨)</strong>: 동의어에 100자 초과 항목이 있으면 <code>INVALID_FIELDS</code> 응답의 <code>exc.errors()</code>(<code>ctx</code>에 <code>ValueError</code> 객체)가 JSON 직렬화에 실패해 500이 됨 — 프론트가 동의어 길이를 미리 검사하지 않아 경로가 열려 있음. <strong>→ 2026-09-22에 수정됨(아래 참고).</strong></p>
           </div>
         </div>
       </div>
@@ -584,6 +584,16 @@
             <p><strong>원인</strong>: 제출(<code>quick_registration.prepare_term</code>)은 표준단어 사전 완전분해 검사를 맨 먼저 하는데, 입력 중 확인(<code>GET /admin/term-requests/check-name</code>)에는 이 검사가 없었음(전날 즉시 반응 작업에서 챗봇 <code>confirm_term</code>의 단어 갭 검사를 옮기다 빠뜨림). 초록 판정이 후속 추천(LLM)의 게이트라서 등록 못 할 이름에 대해 정의/도메인/약어 추천이 전부 돌았고, 스크린샷의 도메인 "요금N15"·약어 "GDRL"은 그렇게 지어낸 값이었음.</p>
             <p><strong>수정</strong>: 공통 헬퍼 <code>find_word_gaps()</code>를 만들어 제출과 check-name이 같은 함수를 쓰게 함. check-name이 새 상태 <code>word_gap</code>을 돌려주면 프론트는 기존 "available이 아니면 빨강+사유, 후속 추천 없음" 경로로 처리(프론트 판정 로직 변경 없음, 제출 시 문구만 서버 문구로 통일). LLM 없이 DB 1회+문자열 처리라 입력 중 호출해도 안전. 회귀 테스트 3개 추가(마지막은 두 경로의 판정이 같은지 직접 대조).</p>
             <p>실제 화면으로 재현·확인: "가드레일" → 즉시 빨강+"가드레일" 안내, 이후 추천 요청 0건. 대조군: "공사구분코드"(공사+구분+코드)와 "구내식당점검일"(구내+식당+점검+일)은 사전 분해 결과와 일치하게 초록 유지. 전체 테스트 103 passed / 11 skipped.</p>
+          </div>
+        </div>
+
+        <div class="changelog-entry">
+          <div class="changelog-date">2026-09-22</div>
+          <div class="changelog-title">신청 폼: 동의어가 100자를 넘으면 400이 아니라 500이 나던 문제 수정 <span class="pill pill-fixed">fixed</span></div>
+          <div class="changelog-body">
+            <p><strong>원인</strong>: 용어/단어/도메인 신청 라우트가 <code>INVALID_FIELDS</code> 응답에 pydantic의 <code>exc.errors()</code>를 그대로 실었는데, <code>RegistrationInput.synonyms</code>의 <code>field_validator</code>가 던진 <code>ValueError</code>가 <code>ctx</code>에 객체로 들어 있어 JSON 직렬화가 <code>TypeError</code>로 실패 → 400이어야 할 응답이 500. 프론트는 동의어 길이를 미리 검사하지 않아 경로가 열려 있었음(실측 확인).</p>
+            <p><strong>수정</strong>: 공용 헬퍼 <code>_validation_detail()</code>(<code>ctx</code>·<code>url</code>·<code>input</code> 제외)을 세 라우트가 쓰도록 교체 — <code>input</code>을 빼서 최대 4000자짜리 사용자 원문을 응답에 되돌려 싣지도 않음. 프론트 <code>validateTermForm()</code>에 동의어 검사(각 100자·최대 30개)를 추가해 서버 왕복 없이 동의어 칸을 빨간 테두리+"동의어는 각각 100자 이내로 입력해주세요."로 표시. 회귀 테스트 2개 추가.</p>
+            <p>확인: 실제 서버에 101자 동의어를 직접 POST → 400 <code>INVALID_FIELDS</code>(<code>loc: synonyms</code>), 단어/도메인 신청 라우트도 400 정상. 화면에서 같은 입력으로 신청 → 서버 요청 0건, 동의어 칸만 빨강. 전체 테스트 105 passed / 11 skipped.</p>
           </div>
         </div>
       </div>

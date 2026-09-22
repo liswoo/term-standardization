@@ -1178,6 +1178,10 @@ function validateTermForm(payload) {
   else if (definition.length < 5) problems.push(["definition", "정의는 5자 이상 입력해주세요."]);
   else if (definition.length > 4000) problems.push(["definition", "정의는 4000자 이내로 입력해주세요."]);
   if (!payload.domain) problems.push(["domain", "도메인을 입력해주세요."]);
+  // 동의어: 각 항목 1~100자, 최대 30개(RegistrationInput). 쉼표로 나눈 뒤 빈 항목은 이미 걸러져 있다.
+  const synonyms = payload.synonyms;
+  if (synonyms.length > 30) problems.push(["synonyms", "동의어는 최대 30개까지 입력할 수 있습니다."]);
+  else if (synonyms.some((x) => x.length > 100)) problems.push(["synonyms", "동의어는 각각 100자 이내로 입력해주세요."]);
   return problems;
 }
 

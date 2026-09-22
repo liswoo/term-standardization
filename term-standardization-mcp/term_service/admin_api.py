@@ -25,6 +25,16 @@ from .auth import (hash_password, verify_password, create_session, delete_sessio
 ROOT = Path(__file__).resolve().parent.parent
 PYTHON = sys.executable  # this same .venv's interpreter
 
+def _validation_detail(exc):
+    """INVALID_FIELDS 응답용 pydantic 오류 목록 - JSON으로 안전하게 직렬화되는 loc/msg/type만.
+
+    exc.errors()를 그대로 실으면 field_validator가 던진 ValueError가 ctx에 **객체로** 들어 있어
+    (예: 동의어 100자 초과) JSONResponse가 TypeError를 내고 400이어야 할 응답이 500이 된다
+    (2026-09-22 실측). input(사용자가 보낸 원문)도 같이 빼서 최대 4000자짜리 정의를 응답에
+    되돌려 싣지 않는다 - 클라이언트가 쓰는 건 loc뿐이다.
+    """
+    return exc.errors(include_url=False, include_context=False, include_input=False)
+
 def _redeploy_chatflow():
     """Rebuild/import/publish the Dify chatflow so its intent/reply nodes pick
     up whatever provider build_chatflow.py's active_provider() reads at import
@@ -248,7 +258,7 @@ async def create_domain_request(request: Request) -> JSONResponse:
     try:
         payload = DomainRequestInput(**{**body, "requester": user["username"], "conversation_id": "direct-form"})
     except ValidationError as exc:
-        return JSONResponse({"ok": False, "error": "INVALID_FIELDS", "detail": exc.errors()}, status_code=400)
+        return JSONResponse({"ok": False, "error": "INVALID_FIELDS", "detail": _validation_detail(exc)}, status_code=400)
     prep = domain_registration.prepare(payload)
     if not prep["ready"]:
         # domain_registration.py uses "code" as its failure-identifier key (matching
@@ -424,7 +434,7 @@ async def create_term_request(request: Request) -> JSONResponse:
     try:
         payload = RegistrationInput(**{**body, "requester": user["username"], "conversation_id": "direct-form"})
     except ValidationError as exc:
-        return JSONResponse({"ok": False, "error": "INVALID_FIELDS", "detail": exc.errors()}, status_code=400)
+        return JSONResponse({"ok": False, "error": "INVALID_FIELDS", "detail": _validation_detail(exc)}, status_code=400)
     prep = quick_registration.prepare_term(payload)
     if not prep["ready"]:
         return JSONResponse({"ok": False, "error": prep.get("code"), **prep},
@@ -453,7 +463,7 @@ async def create_word_request(request: Request) -> JSONResponse:
     try:
         payload = WordRegistrationInput(**{**body, "requester": user["username"], "conversation_id": "direct-form"})
     except ValidationError as exc:
-        return JSONResponse({"ok": False, "error": "INVALID_FIELDS", "detail": exc.errors()}, status_code=400)
+        return JSONResponse({"ok": False, "error": "INVALID_FIELDS", "detail": _validation_detail(exc)}, status_code=400)
     prep = word_registration.prepare(payload)
     if not prep["ready"]:
         return JSONResponse({"ok": False, "error": prep.get("code"), **prep},

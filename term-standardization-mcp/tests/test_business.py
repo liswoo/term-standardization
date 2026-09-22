@@ -1226,6 +1226,34 @@ def test_term_request_word_gap_rejected_without_calling_llm(api_client):
     body=resp.json()
     assert body["error"]=="WORD_GAP_REQUIRES_REGISTRATION" and body["gaps"]
 
+def test_term_request_overlong_synonym_returns_400_not_500(api_client):
+    # 회귀: RegistrationInput의 synonyms field_validator가 던지는 ValueError가 pydantic errors()의
+    # ctx에 객체로 실려, INVALID_FIELDS 응답을 JSON으로 만들 때 TypeError -> 500이 되던 문제.
+    _create_active_admin()
+    api_client.post("/admin/auth/login",json={"username":"admin1","password":"adminpass123"})
+    resp=api_client.post("/admin/term-requests",json={"term_name":"신규용어","definition":"테스트 정의입니다",
+        "domain":"수N7","synonyms":["가"*101]})
+    assert resp.status_code==400
+    body=resp.json()
+    assert body["error"]=="INVALID_FIELDS"
+    assert any(d["loc"][0]=="synonyms" for d in body["detail"])
+
+def test_invalid_fields_detail_is_json_safe_and_does_not_echo_input():
+    # 응답에 사용자가 보낸 원문(input)을 되돌려 싣지 않는다 - 정의는 최대 4000자라 불필요하게 크고,
+    # 클라이언트가 쓰는 건 loc/msg뿐이다.
+    from pydantic import ValidationError
+    from term_service.admin_api import _validation_detail
+    from term_service.schemas import RegistrationInput
+    import json
+    try:
+        RegistrationInput(term_name="가나다",definition="충분히 긴 정의입니다",domain="d",requester="x",
+            conversation_id="c",synonyms=["가"*101])
+    except ValidationError as exc:
+        detail=_validation_detail(exc)
+    json.dumps(detail)
+    assert detail and all({"loc","msg","type"}<=set(d) for d in detail)
+    assert not any("input" in d or "ctx" in d for d in detail)
+
 def test_term_request_invalid_fields_rejected(api_client):
     _create_active_admin()
     api_client.post("/admin/auth/login",json={"username":"admin1","password":"adminpass123"})
