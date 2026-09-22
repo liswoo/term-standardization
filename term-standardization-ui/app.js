@@ -1777,6 +1777,12 @@ function renderWordResultCard(mcpState) {
   }
   const blocked = mcpState.word_prepare_error;
   if (blocked) return summaryCard([["실패 사유 코드", blocked.code, true]], "summary-card-fail");
+  // word_registration은 있지만 request_id가 없는 경우 - 제출 자체가 실패한 것(예: 같은 이름의
+  // 단어가 다른 대화에서 이미 검토 대기 중 - PENDING_REQUEST_ALREADY_EXISTS). word_prepare_error와
+  // 달리 이건 registration.py의 submit() 단계 실패라 별도 필드(mcpState.word_registration.code)에
+  // 담겨 있다 - 2026-09-22 이전엔 이 케이스에서 카드가 아예 안 뜨고 조용히 다음 단계로 진행되는
+  // 버그가 있었음(conversation.py의 _resume_or_finish_word_flow 참고).
+  if (reg && reg.code) return summaryCard([["실패 사유 코드", reg.code, true]], "summary-card-fail");
   return "";
 }
 

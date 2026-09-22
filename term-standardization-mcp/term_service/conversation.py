@@ -86,7 +86,7 @@ def _word_lookup():
         rows=conn.execute("SELECT normalized_name,name,english_abbr FROM standard_words WHERE status='ACTIVE'").fetchall()
     return {r["normalized_name"]:r for r in rows}
 
-def _resume_or_finish_word_flow(s, result_stage):
+def _resume_or_finish_word_flow(s, result_stage, succeeded=True):
     """A word request can start two ways: standalone, or embedded inside a term
     registration whose name didn't fully decompose into known standard_words
     (see confirm_term below). resume_term marks the latter - once the word
@@ -95,11 +95,27 @@ def _resume_or_finish_word_flow(s, result_stage):
     pending_word_names - see set_word_split_choice, populated when the user
     chose to register a multi-noun gap as several separate words instead of
     one) or, once none remain, jump back to exactly where the term flow
-    paused instead of making the user re-state the term."""
+    paused instead of making the user re-state the term.
+
+    succeeded=False (2026-09-22 fix for a real-usage bug, see CLAUDE.md) means the
+    word request this call is reporting on was never actually created (e.g.
+    word_registration.submit() returned PENDING_REQUEST_ALREADY_EXISTS - a
+    same-named word is already awaiting review in another conversation). Silently
+    resuming the term flow in that case used to be the default: this function only
+    branched on whether resume_term was set, never on whether the word attempt
+    that triggered the call actually succeeded. The paused term then got submitted
+    depending on a word that doesn't exist in standard_words AND was never
+    recorded in term_pending_words, so registration.submit()'s
+    depends_on_word_request_ids never named it either - the term reached
+    PENDING_REVIEW with an untracked dependency on a word nobody approved yet.
+    A failure must therefore drop resume_term and land on result_stage exactly
+    like the standalone (no resume_term) case, discarding the paused term instead
+    of ever completing it half-blind - the same thing word_request_blocked already
+    does a few lines up in set_word_abbreviation for a prepare()-time failure."""
     resume=s.pop("resume_term",None)
     for name in ["word_usage_description","word_suggestion","word_registration_payload","word_clarification_history"]:
         s.pop(name,None)
-    if resume:
+    if resume and succeeded:
         pending=resume.get("pending_word_names") or []
         if pending:
             next_span,*rest=pending
@@ -593,7 +609,8 @@ def transition(state, action, requester, conversation_id):
         if result.get("request_id") and s.get("resume_term"):
             s.setdefault("term_pending_words",[]).append({"request_id":result["request_id"],"name":payload["word_name"],
                 "normalized_name":key(payload["word_name"]),"english_abbr":value})
-        return _resume_or_finish_word_flow(s,"word_submitted" if result.get("request_id") else "word_registration_failed")
+        submitted=bool(result.get("request_id"))
+        return _resume_or_finish_word_flow(s,"word_submitted" if submitted else "word_registration_failed",succeeded=submitted)
     if a.intent=="find_term":
         # Search-only, read-only: fires from any idle-ish stage when the user
         # describes a MEANING and asks for the standard TERM (not a raw word) that

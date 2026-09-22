@@ -596,6 +596,17 @@
             <p>확인: 실제 서버에 101자 동의어를 직접 POST → 400 <code>INVALID_FIELDS</code>(<code>loc: synonyms</code>), 단어/도메인 신청 라우트도 400 정상. 화면에서 같은 입력으로 신청 → 서버 요청 0건, 동의어 칸만 빨강. 전체 테스트 105 passed / 11 skipped.</p>
           </div>
         </div>
+
+        <div class="changelog-entry">
+          <div class="changelog-date">2026-09-22</div>
+          <div class="changelog-title">챗봇: 용어 등록 중 임베디드 단어 신청이 실패해도 조용히 이어지던 문제 수정 <span class="pill pill-fixed">fixed</span></div>
+          <div class="changelog-body">
+            <p><strong>증상</strong>: 용어 등록 도중 사전에 없는 단어가 섞여 자동으로 단어 등록 서브플로우로 들어갔을 때, 그 단어 <code>submit()</code>이 <code>PENDING_REQUEST_ALREADY_EXISTS</code>(같은 이름의 단어가 다른 대화에서 이미 검토 대기 중)로 실패해도 대화가 이를 알아채지 못하고 원래 용어 등록을 그대로 이어갔음. 그 결과 용어의 영문약어 추천은 이 단어의 존재를 몰라 LLM이 무관한 약어를 지어냈고, 최종 제출도 <code>depends_on_word_request_ids</code>에 이 단어를 담지 못해 의존성 추적 없이 곧장 <code>PENDING_REVIEW</code>로 등록됐음(2026-09-21 세션에서 실사용 중 처음 발견, pytest는 매 테스트마다 큐를 비우는 DB를 써서 이 경로를 한 번도 못 건드렸음).</p>
+            <p><strong>원인</strong>: <code>_resume_or_finish_word_flow()</code>가 <code>resume_term</code>(용어 등록 도중이라는 표시) 유무만 보고 복귀 여부를 결정했을 뿐, 그 호출을 유발한 단어 등록 시도가 실제로 성공했는지는 전혀 확인하지 않았음.</p>
+            <p><strong>수정</strong>: <code>succeeded</code> 매개변수를 추가해 실패 시(<code>request_id</code> 없음) <code>resume_term</code>이 있어도 복귀하지 않고 <code>word_registration_failed</code>로 종료하며 <code>resume_term</code>/<code>term_pending_words</code>를 버림 - standalone 진입에서 실패했을 때, 그리고 <code>prepare()</code> 단계 실패(<code>word_request_blocked</code>)가 이미 하던 것과 같은 원칙. 프론트 <code>renderWordResultCard</code>도 이 실패 케이스에서 빈 카드 대신 실패 사유 코드를 보여주도록 보강.</p>
+            <p>회귀 테스트로 실제 Postgres에 경쟁 신청을 미리 심어 충돌을 그대로 재현 - 대화가 <code>word_registration_failed</code>로 끝나고 의존성 상태가 남지 않는지 확인. 전체 테스트 106 passed / 11 skipped. Dify 프롬프트 변경은 없어 재배포 3단계 없이 MCP 서버 재시작만으로 반영됨.</p>
+          </div>
+        </div>
       </div>
 
     </div>

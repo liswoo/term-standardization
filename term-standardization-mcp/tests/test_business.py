@@ -681,6 +681,41 @@ def test_term_waits_for_new_word_approval_and_reuses_its_abbreviation(monkeypatc
     assert term_row["english_abbr"]=="DAILY_WALKCNT" and term_row["status"]=="ACTIVE"
     assert word_row["english_abbr"]=="WALKCNT" and word_row["status"]=="ACTIVE"
 
+def test_word_flow_resume_does_not_silently_swallow_a_failed_submit(monkeypatch):
+    # 회귀(실사용 중 발견, 자동테스트에서 한 번도 안 걸렸던 경로 - CLAUDE.md 참고): 용어 등록 도중
+    # 자동으로 들어간 신규 단어 서브플로우에서 word_registration.submit()이 실패해도(여기서는
+    # PENDING_REQUEST_ALREADY_EXISTS - 같은 이름의 단어가 다른 대화에서 이미 검토 대기 중),
+    # _resume_or_finish_word_flow가 resume_term만 보고 성공 여부는 확인하지 않아 용어 등록을
+    # 그대로 이어갔다. 그 결과 용어가 실제로는 존재하지 않는(제출도 실패한) 단어에 의존하면서도
+    # depends_on_word_request_ids에 잡히지 않아 의존성 추적 없이 곧장 PENDING_REVIEW로 제출됐다.
+    insert_standard_word("일일","DAILY")
+    with db.connect() as conn:
+        conn.execute("INSERT INTO domains(code,description,source) VALUES('수N7','테스트 숫자 도메인','TEST') ON CONFLICT DO NOTHING")
+    # 다른 대화에서 같은 이름("보행량")의 단어가 이미 검토 대기 중 - 이게 곧 이어질 submit()을
+    # PENDING_REQUEST_ALREADY_EXISTS로 실패시킨다.
+    insert_pending_word("보행량",requester="other-user")
+    monkeypatch.setattr(conversation,"suggest_word",
+        lambda usage_description,clarification_history=None,fixed_name="": type("R",(),{"model_dump":lambda self: {
+            "existing_word_match":"","match_reason":"","ambiguous":False,"question":"","options":[],
+            "name":fixed_name or "보행량","english_abbr":"WALKCNT","is_format_word":False,
+            "definition":"하루 동안 걸은 걸음 수","rationale":"","method":"test_stub"}})())
+    def apply(revision,intent,value="",confirmed=False):
+        return conversation.apply("word-collision-conv","user",revision,{"intent":intent,"value":value,"confirmed":confirmed})
+    apply(0,"propose_term","일일보행량")
+    result=apply(1,"confirm_term",confirmed=True)
+    assert result["state"]["stage"]=="awaiting_word_meaning"
+    result=apply(2,"propose_word","하루 동안 걸은 걸음 수를 세는 개념")
+    assert result["state"]["stage"]=="awaiting_word_confirm"
+    result=apply(3,"confirm_word",confirmed=True)
+    assert result["state"]["stage"]=="awaiting_word_abbreviation"
+    result=apply(4,"set_word_abbreviation","WALKCNT")
+    # 고치기 전: "awaiting_definition"으로 조용히 복귀 - 실패를 전혀 못 알아챔.
+    assert result["state"]["stage"]=="word_registration_failed"
+    assert result["state"]["word_registration"]["code"]=="PENDING_REQUEST_ALREADY_EXISTS"
+    # 원래 진행하던 용어 등록(resume_term)은 폐기됐다 - 의존 단어 없이 조용히 이어지면 안 되므로.
+    assert "resume_term" not in result["state"]
+    assert not result["state"].get("term_pending_words")
+
 def test_term_waits_for_new_domain_approval_via_chat_and_reuses_it(monkeypatch):
     # End-to-end version of registration.py's test_term_waiting_on_new_domain_released_
     # once_domain_approved, but driven through conversation.py's actual state machine
