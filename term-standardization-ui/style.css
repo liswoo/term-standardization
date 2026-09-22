@@ -4,9 +4,11 @@
   --border: #e5e9f2;
   --text: #101828;
   --text-muted: #667085;
-  --primary: #2563eb;
-  --primary-dark: #1d4ed8;
-  --primary-soft: #eff4ff;
+  /* DATAVE 로고 심볼의 실제 두 색(남색/청록)을 그대로 강조색으로 씀(2026-09-22) - 전에는
+     로고와 무관한 제네릭 블루(#2563eb)라 버튼/탭이 로고와 다른 브랜드처럼 보였음. */
+  --primary: #187C78;
+  --primary-dark: #123047;
+  --primary-soft: #e6f5f4;
   --ok: #059669;
   --ok-soft: #ecfdf5;
   --warn: #d97706;
@@ -117,7 +119,7 @@ svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width:
   transition: transform .1s, box-shadow .15s;
 }
 .btn:active { transform: scale(.97); }
-.btn-primary { background: var(--primary); color: #fff; box-shadow: 0 1px 2px rgba(37,99,235,.3); }
+.btn-primary { background: var(--primary); color: #fff; box-shadow: 0 1px 2px rgba(24,124,120,.3); }
 .btn-primary:hover { background: var(--primary-dark); }
 .btn-primary svg { width: 16px; height: 16px; stroke: #fff; }
 
@@ -335,9 +337,10 @@ svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width:
 .chat-fab {
   position: fixed; right: 28px; bottom: 28px; z-index: 40;
   width: 56px; height: 56px; border-radius: 50%; border: none; cursor: pointer;
-  background: linear-gradient(135deg, var(--primary), #6366f1); color: #fff;
+  /* 로고와 같은 남색→청록 그라데이션(2026-09-22, 예전엔 primary+무관한 인디고였음) */
+  background: linear-gradient(135deg, var(--primary), var(--primary-dark)); color: #fff;
   display: flex; align-items: center; justify-content: center;
-  box-shadow: 0 8px 24px rgba(37,99,235,.35);
+  box-shadow: 0 8px 24px rgba(24,124,120,.35);
   transition: transform .15s;
 }
 .chat-fab:hover { transform: translateY(-2px) scale(1.03); }
@@ -373,7 +376,7 @@ svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width:
 .chat-header-title { display: flex; align-items: center; gap: 10px; }
 .chat-avatar {
   width: 34px; height: 34px; border-radius: 10px;
-  background: linear-gradient(135deg, var(--primary), #6366f1); color: #fff;
+  background: linear-gradient(135deg, var(--primary), var(--primary-dark)); color: #fff;
   display: flex; align-items: center; justify-content: center; font-weight: 800; font-size: 12px;
 }
 .chat-header-title strong { display: block; font-size: 13.5px; }
@@ -507,18 +510,39 @@ svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width:
   .stat-grid { grid-template-columns: repeat(2, 1fr); }
 }
 
-/* ── 로그인 / 회원가입 ── */
-.auth-shell { display: none; min-height: 100vh; align-items: center; justify-content: center; padding: 24px; background: var(--bg); }
+/* ── 로그인 / 회원가입 ──
+   2026-09-22 디자인 정리: 강조색을 로고 실제 색(남색/청록)으로 바꾸면서 이 화면도 같이
+   다듬음(사용자 피드백 - "촌스럽다", 로고 비율, 제목이 제품명이 아니었던 점). */
+.auth-shell {
+  display: none; min-height: 100vh; align-items: center; justify-content: center; padding: 24px;
+  /* 배경에 브랜드색을 아주 옅게 얹어 카드가 밋밋한 평면 배경 위에 붕 떠 보이지 않게 함 -
+     채도를 낮게 유지해 튀지 않고, 카드에서 멀어질수록 --bg로 자연스럽게 섞여 들어감. */
+  background: radial-gradient(ellipse 900px 500px at 50% -10%, var(--primary-soft), var(--bg) 65%);
+}
 body.pre-auth .auth-shell { display: flex; }
 body.pre-auth .app-shell, body.pre-auth .chat-fab, body.pre-auth .chat-panel { display: none; }
 .auth-loading { color: var(--text-muted); font-size: 14px; }
 .auth-card {
+  position: relative; overflow: hidden; /* 아래 ::before 브랜드 바가 둥근 모서리를 넘지 않게 */
   background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius-lg);
-  box-shadow: var(--shadow); padding: 32px 36px; width: 360px; max-width: 100%;
-  display: flex; flex-direction: column; gap: 16px; align-items: center;
+  box-shadow: var(--shadow); padding: 36px 36px 32px; width: 360px; max-width: 100%;
+  display: flex; flex-direction: column; gap: 18px; align-items: center;
 }
-.auth-logo { height: 40px; width: auto; }
-.auth-card h1 { font-size: 16px; margin: 0; }
+/* 로고 심볼의 남색→청록을 그대로 카드 위쪽 얇은 바로 재사용 - 카드 자체가 밋밋한 흰 사각형
+   템플릿처럼 보이지 않게 하는 최소한의 브랜드 포인트. */
+.auth-card::before {
+  content: ""; position: absolute; top: 0; left: 0; right: 0; height: 4px;
+  background: linear-gradient(90deg, var(--primary), var(--primary-dark));
+}
+/* 사용자 피드백(2026-09-22) - 48px는 너무 크고 화질도 흐려 보였음. 작게 줄임(로고는 이제
+   "Standard" 제목을 보조하는 작은 마크 역할 - 큰 히어로 요소는 h1 쪽으로 이미 넘어갔음). */
+.auth-logo { height: 28px; width: auto; }
+/* 로고와 제목을 한 묶음으로 - 예전엔 로고/제목/탭이 똑같은 16px gap으로 나열돼 위계가 없었음. */
+.auth-heading { display: flex; flex-direction: column; align-items: center; gap: 3px; margin-top: -2px; }
+.auth-card h1 {
+  font-size: 22px; font-weight: 800; letter-spacing: -.01em; margin: 0; color: var(--text);
+}
+.auth-tagline { margin: 0; font-size: 12.5px; font-weight: 600; color: var(--text-muted); }
 .auth-tabs { display: flex; gap: 8px; width: 100%; }
 .auth-tab {
   flex: 1; padding: 8px; border-radius: 10px; border: 1px solid var(--border);

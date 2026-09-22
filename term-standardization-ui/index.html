@@ -9,7 +9,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
 <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
-<link rel="stylesheet" href="style.css?v=16" />
+<link rel="stylesheet" href="style.css?v=18" />
 </head>
 <body class="pre-auth">
 
@@ -17,7 +17,13 @@
   <div class="auth-loading" id="auth-loading"><p class="muted">세션 확인 중...</p></div>
   <div class="auth-card" id="auth-card" hidden>
     <img class="auth-logo" src="img/datave-logo-light.svg" alt="DATAVE" />
-    <h1>데이터 용어 표준화</h1>
+    <!-- "데이터 용어 표준화"는 설명 문구일 뿐 제품명이 아니었음 - 실제 제품명은 "Standard"
+         (DATAVE 산하 첫 제품, docs/changelog.html의 브랜드 적용 이력 참고). 제목을 제품명으로
+         올리고, 한글 설명은 서브텍스트로 격하(2026-09-22 디자인 정리). -->
+    <div class="auth-heading">
+      <h1>Standard</h1>
+      <p class="auth-tagline">데이터 용어 표준화</p>
+    </div>
     <div class="auth-tabs">
       <button type="button" class="auth-tab is-active" id="auth-tab-login">로그인</button>
       <button type="button" class="auth-tab" id="auth-tab-signup">회원가입</button>
