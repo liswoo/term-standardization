@@ -197,6 +197,20 @@ const VIEW_META = {
   settings: { title: "설정", subtitle: "백엔드 연동 정보를 확인합니다" },
 };
 
+// 모바일 사이드바(2026-09-22) - 860px 이하에서 CSS가 사이드바를 화면 밖(오프캔버스)으로
+// 숨긴다(style.css 참고). 여기선 그 .is-open 클래스만 토글 - 데스크톱에선 이 클래스가 있어도
+// CSS 미디어쿼리 밖이라 아무 영향 없으므로 열려있는 상태로 데스크톱 폭까지 넓혀도 안전하다.
+function openMobileSidebar() {
+  document.getElementById("sidebar").classList.add("is-open");
+  document.getElementById("sidebar-backdrop").classList.add("is-open");
+}
+function closeMobileSidebar() {
+  document.getElementById("sidebar").classList.remove("is-open");
+  document.getElementById("sidebar-backdrop").classList.remove("is-open");
+}
+document.getElementById("menu-toggle-btn").addEventListener("click", openMobileSidebar);
+document.getElementById("sidebar-backdrop").addEventListener("click", closeMobileSidebar);
+
 function switchView(view) {
   currentView = view;
   document.querySelectorAll(".nav-item").forEach((btn) => {
@@ -213,6 +227,7 @@ function switchView(view) {
   if (view === "catalog" && catalogActiveTab === "browse") {
     fetchUnifiedCatalog();
   }
+  closeMobileSidebar(); // 모바일에서 메뉴로 화면을 고르면 드로어는 자동으로 닫힘(데스크톱에선 no-op)
 }
 
 document.querySelectorAll(".nav-item").forEach((btn) => {

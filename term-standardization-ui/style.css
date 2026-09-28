@@ -112,6 +112,14 @@ svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width:
 .topbar-title p { margin: 2px 0 0; font-size: 13px; color: var(--text-muted); }
 .topbar-actions { display: flex; align-items: center; gap: 12px; }
 
+/* 모바일 사이드바 토글 - 데스크톱에선 안 보임(아래 모바일 미디어쿼리에서 켬). */
+.menu-toggle-btn {
+  display: none; border: none; background: transparent; cursor: pointer;
+  color: var(--text-muted); padding: 6px; border-radius: 8px; flex-shrink: 0;
+}
+.menu-toggle-btn:hover { background: var(--bg); color: var(--text); }
+.sidebar-backdrop { display: none; }
+
 .btn {
   display: inline-flex; align-items: center; gap: 6px;
   border: none; border-radius: 10px; padding: 9px 16px;
@@ -150,21 +158,27 @@ svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width:
 .panel-header-row { display: flex; align-items: center; justify-content: space-between; }
 .panel-header-actions { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
 
-/* AI 추천 ON/OFF 스위치 (용어 신청 헤더). is-on이면 파란 강조, 꺼지면 회색. */
+/* AI 추천 ON/OFF 스위치(용어/단어/도메인 신청 헤더). is-on이면 강조색, 꺼지면 회색.
+   2026-09-22: 헤더 한 줄에 제목과 나란히 놓이게 되면서(위 panel-header-row 재구성 참고)
+   사용자 피드백대로 살짝 축소 - 예전엔 30x17 트랙에 라벨까지 있어 제목 옆에 두기엔 좀 컸음. */
 .ai-toggle {
-  display: inline-flex; align-items: center; gap: 8px; padding: 5px 12px 5px 8px;
+  display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px 4px 7px;
   border: 1px solid var(--border); border-radius: 999px; background: #fff;
-  font: inherit; font-size: 12.5px; font-weight: 700; color: var(--text-muted); cursor: pointer; white-space: nowrap;
+  font: inherit; font-size: 11.5px; font-weight: 700; color: var(--text-muted); cursor: pointer; white-space: nowrap;
 }
 .ai-toggle:hover { border-color: var(--primary); }
-.ai-toggle-track { position: relative; width: 30px; height: 17px; border-radius: 999px; background: #cbd5e1; transition: background .15s; flex-shrink: 0; }
+.ai-toggle-track { position: relative; width: 26px; height: 15px; border-radius: 999px; background: #cbd5e1; transition: background .15s; flex-shrink: 0; }
 .ai-toggle-track::after {
-  content: ""; position: absolute; top: 2px; left: 2px; width: 13px; height: 13px; border-radius: 50%;
+  content: ""; position: absolute; top: 2px; left: 2px; width: 11px; height: 11px; border-radius: 50%;
   background: #fff; box-shadow: 0 1px 2px rgba(0,0,0,.25); transition: transform .15s;
 }
 .ai-toggle.is-on { color: var(--primary); border-color: var(--primary); background: var(--primary-soft); }
 .ai-toggle.is-on .ai-toggle-track { background: var(--primary); }
-.ai-toggle.is-on .ai-toggle-track::after { transform: translateX(13px); }
+.ai-toggle.is-on .ai-toggle-track::after { transform: translateX(11px); }
+/* 같은 헤더의 초기화 아이콘(.chat-icon-btn 공용 클래스, 채팅창 버튼들과 공유) - 이 헤더
+   안에서만 살짝 축소, 채팅창 쪽 크기는 그대로 둠. */
+.panel-header-actions .chat-icon-btn { padding: 5px; }
+.panel-header-actions .chat-icon-btn svg { width: 16px; height: 16px; }
 .pill { background: var(--primary-soft); color: var(--primary); font-size: 12px; font-weight: 700; padding: 4px 10px; border-radius: 999px; }
 
 /* ── 목록 필터 ── */
@@ -508,6 +522,41 @@ svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width:
   .panel-grid { grid-template-columns: 1fr; }
   .domain-grid { grid-template-columns: repeat(2, 1fr); }
   .stat-grid { grid-template-columns: repeat(2, 1fr); }
+}
+
+/* ── 모바일 (2026-09-22) ──
+   사이드바가 고정 248px라 좁은 화면(휴대폰)에서는 본문에 100px 남짓만 남아 모든 글자가
+   한 글자씩 세로로 줄바꿈되던 실제 버그(사용자 지적)를 고침. 사이드바를 오프캔버스
+   드로어로 바꾸고 topbar에 햄버거 버튼(#menu-toggle-btn)을 노출 - 토글/백드롭 닫기/뷰
+   전환 시 자동 닫기는 app.js의 openMobileSidebar()/closeMobileSidebar() 참고. */
+@media (max-width: 860px) {
+  .sidebar {
+    position: fixed; top: 0; left: 0; bottom: 0; z-index: 200; width: 260px;
+    transform: translateX(-100%); transition: transform .2s ease;
+    box-shadow: 8px 0 24px rgba(16,24,40,.18);
+  }
+  .sidebar.is-open { transform: translateX(0); }
+  .sidebar-backdrop {
+    display: none; position: fixed; inset: 0; background: rgba(16,24,40,.45); z-index: 150;
+  }
+  .sidebar-backdrop.is-open { display: block; }
+  .menu-toggle-btn { display: inline-flex; align-items: center; justify-content: center; }
+
+  .topbar { padding: 14px 16px; gap: 12px; }
+  .topbar-title h1 { font-size: 17px; }
+  .topbar-title p { display: none; } /* 좁은 화면에서 부제목까지 넣으면 버튼과 겹쳐서 생략 */
+  .topbar-actions .btn span, .topbar-actions .btn { white-space: nowrap; }
+  .content { padding: 16px 16px 40px; }
+
+  .stat-grid { grid-template-columns: repeat(2, 1fr); gap: 10px; }
+  .stat-card { padding: 14px 14px; }
+  .stat-value { font-size: 21px; }
+  .panel { padding: 16px; }
+
+  /* 조회/용어 신청/단어 신청/도메인 신청 4개 탭 - 좁은 화면에서 찌그러지지 않고
+     가로로 스와이프해서 보게 함(줄바꿈되면 탭 줄 높이가 들쭉날쭉해져 더 보기 나쁨). */
+  .catalog-tabs { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  .catalog-tab-btn { white-space: nowrap; flex-shrink: 0; }
 }
 
 /* ── 로그인 / 회원가입 ──
